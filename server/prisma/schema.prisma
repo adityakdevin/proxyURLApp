@@ -14,14 +14,14 @@ enum Status {
 }
 
 model UserType {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.VarChar(500)
   status      Status   @default(ACTIVE)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
-  createdBy   String?  @map("created_by")
-  updatedBy   String?  @map("updated_by")
+  createdBy   String?  @map("created_by") @db.VarChar(36)
+  updatedBy   String?  @map("updated_by") @db.VarChar(36)
 
   categories        Category[]
   urlConfigurations UrlConfiguration[]
@@ -32,14 +32,14 @@ model UserType {
 }
 
 model ProjectType {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.VarChar(500)
   status      Status   @default(ACTIVE)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
-  createdBy   String?  @map("created_by")
-  updatedBy   String?  @map("updated_by")
+  createdBy   String?  @map("created_by") @db.VarChar(36)
+  updatedBy   String?  @map("updated_by") @db.VarChar(36)
 
   categories        Category[]
   urlConfigurations UrlConfiguration[]
@@ -50,10 +50,10 @@ model ProjectType {
 }
 
 model User {
-  id                  String    @id @default(uuid())
-  username            String    @unique
-  passwordHash        String    @map("password_hash")
-  fullName            String    @map("full_name")
+  id                  String    @id @default(uuid()) @db.VarChar(36)
+  username            String    @unique @db.VarChar(100)
+  passwordHash        String    @map("password_hash") @db.VarChar(255)
+  fullName            String    @map("full_name") @db.VarChar(200)
   isAdmin             Boolean   @default(false) @map("is_admin")
   status              Status    @default(ACTIVE)
   forcePasswordChange Boolean   @default(true) @map("force_password_change")
@@ -61,8 +61,8 @@ model User {
   lockedUntil         DateTime? @map("locked_until")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
-  createdBy           String?   @map("created_by")
-  updatedBy           String?   @map("updated_by")
+  createdBy           String?   @map("created_by") @db.VarChar(36)
+  updatedBy           String?   @map("updated_by") @db.VarChar(36)
 
   assignments UserAssignment[]
   sessions    Session[]
@@ -72,10 +72,10 @@ model User {
 }
 
 model UserAssignment {
-  id            String @id @default(uuid())
-  userId        String @map("user_id")
-  userTypeId    String @map("user_type_id")
-  projectTypeId String @map("project_type_id")
+  id            String @id @default(uuid()) @db.VarChar(36)
+  userId        String @map("user_id") @db.VarChar(36)
+  userTypeId    String @map("user_type_id") @db.VarChar(36)
+  projectTypeId String @map("project_type_id") @db.VarChar(36)
 
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   userType    UserType    @relation(fields: [userTypeId], references: [id])
@@ -86,16 +86,16 @@ model UserAssignment {
 }
 
 model Category {
-  id            String   @id @default(uuid())
-  name          String
-  userTypeId    String   @map("user_type_id")
-  projectTypeId String   @map("project_type_id")
-  description   String?
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  name          String   @db.VarChar(100)
+  userTypeId    String   @map("user_type_id") @db.VarChar(36)
+  projectTypeId String   @map("project_type_id") @db.VarChar(36)
+  description   String?  @db.VarChar(500)
   status        Status   @default(ACTIVE)
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
-  createdBy     String?  @map("created_by")
-  updatedBy     String?  @map("updated_by")
+  createdBy     String?  @map("created_by") @db.VarChar(36)
+  updatedBy     String?  @map("updated_by") @db.VarChar(36)
 
   userType          UserType           @relation(fields: [userTypeId], references: [id])
   projectType       ProjectType        @relation(fields: [projectTypeId], references: [id])
@@ -107,15 +107,15 @@ model Category {
 }
 
 model SubCategory {
-  id          String   @id @default(uuid())
-  name        String
-  categoryId  String   @map("category_id")
-  description String?
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  name        String   @db.VarChar(100)
+  categoryId  String   @map("category_id") @db.VarChar(36)
+  description String?  @db.VarChar(500)
   status      Status   @default(ACTIVE)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
-  createdBy   String?  @map("created_by")
-  updatedBy   String?  @map("updated_by")
+  createdBy   String?  @map("created_by") @db.VarChar(36)
+  updatedBy   String?  @map("updated_by") @db.VarChar(36)
 
   category          Category           @relation(fields: [categoryId], references: [id])
   urlConfigurations UrlConfiguration[]
@@ -125,20 +125,20 @@ model SubCategory {
 }
 
 model UrlConfiguration {
-  id            String   @id @default(uuid())
-  label         String
-  description   String?
-  targetUrl     String   @map("target_url")
-  opaqueId      String   @unique @default(uuid()) @map("opaque_id")
-  userTypeId    String   @map("user_type_id")
-  projectTypeId String   @map("project_type_id")
-  categoryId    String   @map("category_id")
-  subCategoryId String   @map("sub_category_id")
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  label         String   @db.VarChar(200)
+  description   String?  @db.VarChar(500)
+  targetUrl     String   @map("target_url") @db.VarChar(2000)
+  opaqueId      String   @unique @default(uuid()) @map("opaque_id") @db.VarChar(36)
+  userTypeId    String   @map("user_type_id") @db.VarChar(36)
+  projectTypeId String   @map("project_type_id") @db.VarChar(36)
+  categoryId    String   @map("category_id") @db.VarChar(36)
+  subCategoryId String   @map("sub_category_id") @db.VarChar(36)
   status        Status   @default(ACTIVE)
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
-  createdBy     String?  @map("created_by")
-  updatedBy     String?  @map("updated_by")
+  createdBy     String?  @map("created_by") @db.VarChar(36)
+  updatedBy     String?  @map("updated_by") @db.VarChar(36)
 
   userType    UserType    @relation(fields: [userTypeId], references: [id])
   projectType ProjectType @relation(fields: [projectTypeId], references: [id])
@@ -150,14 +150,14 @@ model UrlConfiguration {
 }
 
 model Session {
-  id             String   @id @default(uuid())
-  userId         String   @map("user_id")
-  sessionToken   String   @unique @map("session_token")
-  ipAddress      String?  @map("ip_address")
-  userAgent      String?  @map("user_agent")
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  userId         String   @map("user_id") @db.VarChar(36)
+  sessionToken   String   @unique @map("session_token") @db.VarChar(36)
+  ipAddress      String?  @map("ip_address") @db.VarChar(45)
+  userAgent      String?  @map("user_agent") @db.VarChar(500)
   createdAt      DateTime @default(now()) @map("created_at")
   lastActivity   DateTime @default(now()) @map("last_activity")
-  impersonatedBy String?  @map("impersonated_by")
+  impersonatedBy String?  @map("impersonated_by") @db.VarChar(36)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -167,17 +167,17 @@ model Session {
 }
 
 model AuditLog {
-  id             String   @id @default(uuid())
-  userId         String   @map("user_id")
-  userTypeId     String   @map("user_type_id")
-  projectTypeId  String   @map("project_type_id")
-  urlConfigId    String   @map("url_config_id")
-  targetUrl      String   @map("target_url")
-  requestMethod  String   @map("request_method")
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  userId         String   @map("user_id") @db.VarChar(36)
+  userTypeId     String   @map("user_type_id") @db.VarChar(36)
+  projectTypeId  String   @map("project_type_id") @db.VarChar(36)
+  urlConfigId    String   @map("url_config_id") @db.VarChar(36)
+  targetUrl      String   @map("target_url") @db.VarChar(2000)
+  requestMethod  String   @map("request_method") @db.VarChar(10)
   responseStatus Int      @map("response_status")
   durationMs     Int      @map("duration_ms")
-  ipAddress      String?  @map("ip_address")
-  userAgent      String?  @map("user_agent")
+  ipAddress      String?  @map("ip_address") @db.VarChar(45)
+  userAgent      String?  @map("user_agent") @db.VarChar(500)
   accessedAt     DateTime @default(now()) @map("accessed_at")
 
   user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -193,9 +193,9 @@ model AuditLog {
 }
 
 model Setting {
-  id    String @id @default(uuid())
-  key   String @unique
-  value String
+  id    String @id @default(uuid()) @db.VarChar(36)
+  key   String @unique @db.VarChar(100)
+  value String @db.VarChar(1000)
 
   @@map("settings")
 }
