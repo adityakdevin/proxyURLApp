@@ -19,6 +19,16 @@ echo Running database migrations...
 call npm run db:migrate:deploy --workspace=server
 echo.
 
+REM Build the application
+echo Building application...
+call npm run build
+if %ERRORLEVEL% NEQ 0 (
+    echo Build failed with error code %ERRORLEVEL%
+    pause
+    exit /b %ERRORLEVEL%
+)
+echo.
+
 REM Start the application
 echo Starting server...
 call npm run start
