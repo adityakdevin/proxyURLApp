@@ -15,6 +15,7 @@
     "db:migrate": "npm run db:migrate --workspace=server",
     "db:seed": "npm run db:seed --workspace=server",
     "db:studio": "npm run db:studio --workspace=server",
+    "db:backup": "npm run db:backup --workspace=server",
     "test": "npm run test --workspace=server",
     "lint": "npm run lint --workspaces"
   },

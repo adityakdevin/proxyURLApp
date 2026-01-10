@@ -12,11 +12,13 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
+    "db:backup": "node scripts/backup-db.js",
     "test": "jest",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
     "@prisma/client": "^5.7.1",
+    "dotenv": "^16.3.1",
     "bcrypt": "^5.1.1",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
