@@ -19,8 +19,12 @@ const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
+const isHttps = process.env.CLIENT_URL?.startsWith('https://') ?? false;
 app.use(helmet({
   contentSecurityPolicy: false, // Disabled for proxied content
+  crossOriginOpenerPolicy: isHttps ? { policy: 'same-origin' } : false,
+  crossOriginResourcePolicy: isHttps ? { policy: 'same-origin' } : false,
+  originAgentCluster: isHttps,
 }));
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
