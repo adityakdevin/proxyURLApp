@@ -1,0 +1,201 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["omitApi"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+model UserType {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdBy   String?  @map("created_by")
+  updatedBy   String?  @map("updated_by")
+
+  categories        Category[]
+  urlConfigurations UrlConfiguration[]
+  userAssignments   UserAssignment[]
+  auditLogs         AuditLog[]
+
+  @@map("user_types")
+}
+
+model ProjectType {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdBy   String?  @map("created_by")
+  updatedBy   String?  @map("updated_by")
+
+  categories        Category[]
+  urlConfigurations UrlConfiguration[]
+  userAssignments   UserAssignment[]
+  auditLogs         AuditLog[]
+
+  @@map("project_types")
+}
+
+model User {
+  id                  String    @id @default(uuid())
+  username            String    @unique
+  passwordHash        String    @map("password_hash")
+  fullName            String    @map("full_name")
+  isAdmin             Boolean   @default(false) @map("is_admin")
+  status              Status    @default(ACTIVE)
+  forcePasswordChange Boolean   @default(true) @map("force_password_change")
+  failedAttempts      Int       @default(0) @map("failed_attempts")
+  lockedUntil         DateTime? @map("locked_until")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  createdBy           String?   @map("created_by")
+  updatedBy           String?   @map("updated_by")
+
+  assignments UserAssignment[]
+  sessions    Session[]
+  auditLogs   AuditLog[]
+
+  @@map("users")
+}
+
+model UserAssignment {
+  id            String @id @default(uuid())
+  userId        String @map("user_id")
+  userTypeId    String @map("user_type_id")
+  projectTypeId String @map("project_type_id")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userType    UserType    @relation(fields: [userTypeId], references: [id])
+  projectType ProjectType @relation(fields: [projectTypeId], references: [id])
+
+  @@unique([userId])
+  @@map("user_assignments")
+}
+
+model Category {
+  id            String   @id @default(uuid())
+  name          String
+  userTypeId    String   @map("user_type_id")
+  projectTypeId String   @map("project_type_id")
+  description   String?
+  status        Status   @default(ACTIVE)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdBy     String?  @map("created_by")
+  updatedBy     String?  @map("updated_by")
+
+  userType          UserType           @relation(fields: [userTypeId], references: [id])
+  projectType       ProjectType        @relation(fields: [projectTypeId], references: [id])
+  subCategories     SubCategory[]
+  urlConfigurations UrlConfiguration[]
+
+  @@unique([name, userTypeId, projectTypeId])
+  @@map("categories")
+}
+
+model SubCategory {
+  id          String   @id @default(uuid())
+  name        String
+  categoryId  String   @map("category_id")
+  description String?
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdBy   String?  @map("created_by")
+  updatedBy   String?  @map("updated_by")
+
+  category          Category           @relation(fields: [categoryId], references: [id])
+  urlConfigurations UrlConfiguration[]
+
+  @@unique([name, categoryId])
+  @@map("sub_categories")
+}
+
+model UrlConfiguration {
+  id            String   @id @default(uuid())
+  label         String
+  description   String?
+  targetUrl     String   @map("target_url")
+  opaqueId      String   @unique @default(uuid()) @map("opaque_id")
+  userTypeId    String   @map("user_type_id")
+  projectTypeId String   @map("project_type_id")
+  categoryId    String   @map("category_id")
+  subCategoryId String   @map("sub_category_id")
+  status        Status   @default(ACTIVE)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdBy     String?  @map("created_by")
+  updatedBy     String?  @map("updated_by")
+
+  userType    UserType    @relation(fields: [userTypeId], references: [id])
+  projectType ProjectType @relation(fields: [projectTypeId], references: [id])
+  category    Category    @relation(fields: [categoryId], references: [id])
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id])
+  auditLogs   AuditLog[]
+
+  @@map("url_configurations")
+}
+
+model Session {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  sessionToken   String   @unique @map("session_token")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at")
+  lastActivity   DateTime @default(now()) @map("last_activity")
+  impersonatedBy String?  @map("impersonated_by")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionToken])
+  @@index([userId])
+  @@map("sessions")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  userTypeId     String   @map("user_type_id")
+  projectTypeId  String   @map("project_type_id")
+  urlConfigId    String   @map("url_config_id")
+  targetUrl      String   @map("target_url")
+  requestMethod  String   @map("request_method")
+  responseStatus Int      @map("response_status")
+  durationMs     Int      @map("duration_ms")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  accessedAt     DateTime @default(now()) @map("accessed_at")
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userType    UserType         @relation(fields: [userTypeId], references: [id])
+  projectType ProjectType      @relation(fields: [projectTypeId], references: [id])
+  urlConfig   UrlConfiguration @relation(fields: [urlConfigId], references: [id])
+
+  @@index([userId])
+  @@index([accessedAt])
+  @@index([userTypeId])
+  @@index([projectTypeId])
+  @@map("audit_logs")
+}
+
+model Setting {
+  id    String @id @default(uuid())
+  key   String @unique
+  value String
+
+  @@map("settings")
+}
