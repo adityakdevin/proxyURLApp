@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import path from 'path';
 import { PrismaClient } from '@prisma/client';
 
 // Routes
@@ -45,6 +46,17 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRoutes);
+if (process.env.NODE_ENV === 'production') {
+  const clientPath = path.resolve(process.cwd(), '../client/dist');
+  app.use(express.static(clientPath));
+  app.get('*', (req, res, next) => {
+    if (!req.path.startsWith('/api') && !req.path.startsWith('/proxy') && !req.path.startsWith('/health')) {
+      res.sendFile(path.join(clientPath, 'index.html'));
+    } else {
+      next();
+    }
+  });
+}
 
 // Error handler
 app.use(errorHandler);

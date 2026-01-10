@@ -17,6 +17,11 @@ async function handleResponse<T>(response: Response): Promise<T> {
   const data = await response.json();
 
   if (!response.ok) {
+    if (response.status === 401) {
+      localStorage.removeItem('auth-storage');
+      window.location.href = '/login';
+    }
+
     throw new ApiError(
       response.status,
       data.code || 'UNKNOWN_ERROR',
