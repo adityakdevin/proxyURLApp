@@ -41,3 +41,4 @@ server/prisma/*.db-journal
 # Vite
 client/.vite/
 docs
+start.bat
