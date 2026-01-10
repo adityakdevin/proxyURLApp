@@ -106,9 +106,11 @@ export const passwordChangedMiddleware = (
 
 // Helper to set session cookie
 export const setSessionCookie = (res: Response, sessionToken: string) => {
+  const isHttps = process.env.CLIENT_URL?.startsWith('https://') ?? false;
+
   res.cookie(COOKIE_NAME, sessionToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isHttps,
     sameSite: 'lax',
     maxAge: 30 * 60 * 1000, // 30 minutes
     path: '/',
@@ -117,9 +119,11 @@ export const setSessionCookie = (res: Response, sessionToken: string) => {
 
 // Helper to clear session cookie
 export const clearSessionCookie = (res: Response) => {
+  const isHttps = process.env.CLIENT_URL?.startsWith('https://') ?? false;
+
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isHttps,
     sameSite: 'lax',
     path: '/',
   });
