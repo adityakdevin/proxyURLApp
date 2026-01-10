@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api, PaginatedResponse } from '@/lib/api';
-import { Users, Briefcase, Link2, FolderTree, Activity } from 'lucide-react';
+import { Users, Briefcase, Link2, FolderTree, Folder, Zap } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
 interface Stats {
@@ -10,6 +10,7 @@ interface Stats {
   users: number;
   urlConfigs: number;
   categories: number;
+  subCategories: number;
 }
 
 export default function AdminDashboard() {
@@ -20,18 +21,20 @@ export default function AdminDashboard() {
     users: 0,
     urlConfigs: 0,
     categories: 0,
+    subCategories: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchStats = async () => {
     setIsLoading(true);
     try {
-      const [userTypes, projectTypes, users, urlConfigs, categories] = await Promise.all([
+      const [userTypes, projectTypes, users, urlConfigs, categories, subCategories] = await Promise.all([
         api.get<PaginatedResponse<unknown>>('/admin/user-types?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/project-types?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/users?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/url-configs?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/categories?limit=1'),
+        api.get<PaginatedResponse<unknown>>('/admin/sub-categories?limit=1'),
       ]);
 
       setStats({
@@ -40,6 +43,7 @@ export default function AdminDashboard() {
         users: users.pagination.total,
         urlConfigs: urlConfigs.pagination.total,
         categories: categories.pagination.total,
+        subCategories: subCategories.pagination.total,
       });
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to load dashboard stats', variant: 'destructive' });
@@ -57,6 +61,7 @@ export default function AdminDashboard() {
     { label: 'Project Types', value: stats.projectTypes, icon: Briefcase, link: '/admin/project-types', color: 'text-green-600' },
     { label: 'Users', value: stats.users, icon: Users, link: '/admin/users', color: 'text-purple-600' },
     { label: 'Categories', value: stats.categories, icon: FolderTree, link: '/admin/categories', color: 'text-orange-600' },
+    { label: 'Sub-Categories', value: stats.subCategories, icon: Folder, link: '/admin/sub-categories', color: 'text-cyan-600' },
     { label: 'URL Configs', value: stats.urlConfigs, icon: Link2, link: '/admin/url-configs', color: 'text-red-600' },
   ];
 
@@ -98,7 +103,7 @@ export default function AdminDashboard() {
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-lg shadow border">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Activity className="h-5 w-5" />
+            <Zap className="h-5 w-5" />
             Quick Actions
           </h2>
           <div className="grid grid-cols-2 gap-3">
@@ -114,9 +119,9 @@ export default function AdminDashboard() {
               <FolderTree className="h-5 w-5 mx-auto mb-1" />
               <span className="text-sm">Categories</span>
             </Link>
-            <Link to="/admin/settings" className="p-3 border rounded-lg hover:bg-gray-50 text-center">
-              <Activity className="h-5 w-5 mx-auto mb-1" />
-              <span className="text-sm">Settings</span>
+            <Link to="/admin/user-types" className="p-3 border rounded-lg hover:bg-gray-50 text-center">
+              <Users className="h-5 w-5 mx-auto mb-1" />
+              <span className="text-sm">User Types</span>
             </Link>
           </div>
         </div>
@@ -129,12 +134,12 @@ export default function AdminDashboard() {
               <span className="font-medium">{stats.urlConfigs}</span>
             </div>
             <div className="flex justify-between py-2 border-b">
-              <span className="text-gray-500">User Types</span>
-              <span className="font-medium">{stats.userTypes}</span>
+              <span className="text-gray-500">Categories</span>
+              <span className="font-medium">{stats.categories}</span>
             </div>
             <div className="flex justify-between py-2 border-b">
-              <span className="text-gray-500">Project Types</span>
-              <span className="font-medium">{stats.projectTypes}</span>
+              <span className="text-gray-500">Sub-Categories</span>
+              <span className="font-medium">{stats.subCategories}</span>
             </div>
             <div className="flex justify-between py-2">
               <span className="text-gray-500">Total Users</span>
