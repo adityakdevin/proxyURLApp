@@ -6,9 +6,6 @@ import {
   FolderTree,
   Folder,
   Link2,
-  Monitor,
-  FileText,
-  Settings,
   User,
   LogOut,
   LayoutDashboard,
@@ -23,9 +20,6 @@ const navItems = [
   { path: '/admin/categories', label: 'Categories', icon: FolderTree },
   { path: '/admin/sub-categories', label: 'Sub-Categories', icon: Folder },
   { path: '/admin/url-configs', label: 'URL Configs', icon: Link2 },
-  { path: '/admin/sessions', label: 'Sessions', icon: Monitor },
-  { path: '/admin/audit-logs', label: 'Audit Logs', icon: FileText },
-  { path: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 
 export default function AdminLayout() {

@@ -15,8 +15,6 @@ import Users from '@/pages/admin/Users';
 import Categories from '@/pages/admin/Categories';
 import SubCategories from '@/pages/admin/SubCategories';
 import UrlConfigs from '@/pages/admin/UrlConfigs';
-import Sessions from '@/pages/admin/Sessions';
-import AuditLogs from '@/pages/admin/AuditLogs';
 import Settings from '@/pages/admin/Settings';
 import Profile from '@/pages/admin/Profile';
 
@@ -68,8 +66,6 @@ function App() {
           <Route path="categories" element={<Categories />} />
           <Route path="sub-categories" element={<SubCategories />} />
           <Route path="url-configs" element={<UrlConfigs />} />
-          <Route path="sessions" element={<Sessions />} />
-          <Route path="audit-logs" element={<AuditLogs />} />
           <Route path="settings" element={<Settings />} />
           <Route path="profile" element={<Profile />} />
         </Route>

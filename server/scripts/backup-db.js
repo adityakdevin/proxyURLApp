@@ -37,30 +37,49 @@ const backupFile = path.join(backupDir, `${database}_${time}.sql`);
 console.log(`Starting backup of database: ${database}`);
 console.log(`Backup file: ${backupFile}`);
 
-try {
-  const args = [
-    '-h', host,
-    '-P', port,
-    '-u', user,
-  ];
+// Tables to backup structure only (no data)
+const structureOnlyTables = ['Session', 'AuditLog'];
 
+try {
+  // Base connection args
+  const baseArgs = ['-h', host, '-P', port, '-u', user];
   if (password) {
-    args.push(`--password=${password}`);
+    baseArgs.push(`--password=${password}`);
   }
 
-  args.push(
+  // Step 1: Backup all tables except structure-only tables
+  const dataArgs = [
+    ...baseArgs,
     '--routines',
     '--triggers',
     '--single-transaction',
+    ...structureOnlyTables.map(t => `--ignore-table=${database}.${t}`),
     database
-  );
+  ];
 
-  const output = execFileSync('mysqldump', args, {
-    maxBuffer: 1024 * 1024 * 100 // 100MB buffer
+  const dataOutput = execFileSync('mysqldump', dataArgs, {
+    maxBuffer: 1024 * 1024 * 100
   });
+
+  // Step 2: Backup structure only for Session and AuditLog
+  const structureArgs = [
+    ...baseArgs,
+    '--no-data',
+    database,
+    ...structureOnlyTables
+  ];
+
+  const structureOutput = execFileSync('mysqldump', structureArgs, {
+    maxBuffer: 1024 * 1024 * 10
+  });
+
+  // Combine outputs
+  const output = Buffer.concat([dataOutput, structureOutput]);
 
   // Write to file
   fs.writeFileSync(backupFile, output);
+
+  console.log(`(Excluded data: ${structureOnlyTables.join(', ')})`);
 
   console.log(`Backup completed successfully!`);
   console.log(`File size: ${(fs.statSync(backupFile).size / 1024 / 1024).toFixed(2)} MB`);

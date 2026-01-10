@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api, PaginatedResponse } from '@/lib/api';
-import { Users, Briefcase, Link2, FolderTree, Monitor, Activity } from 'lucide-react';
+import { Users, Briefcase, Link2, FolderTree, Activity } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
 interface Stats {
@@ -10,7 +10,6 @@ interface Stats {
   users: number;
   urlConfigs: number;
   categories: number;
-  sessions: number;
 }
 
 export default function AdminDashboard() {
@@ -21,20 +20,18 @@ export default function AdminDashboard() {
     users: 0,
     urlConfigs: 0,
     categories: 0,
-    sessions: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchStats = async () => {
     setIsLoading(true);
     try {
-      const [userTypes, projectTypes, users, urlConfigs, categories, sessions] = await Promise.all([
+      const [userTypes, projectTypes, users, urlConfigs, categories] = await Promise.all([
         api.get<PaginatedResponse<unknown>>('/admin/user-types?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/project-types?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/users?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/url-configs?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/categories?limit=1'),
-        api.get<{ data: unknown[] }>('/admin/sessions'),
       ]);
 
       setStats({
@@ -43,7 +40,6 @@ export default function AdminDashboard() {
         users: users.pagination.total,
         urlConfigs: urlConfigs.pagination.total,
         categories: categories.pagination.total,
-        sessions: sessions.data.length,
       });
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to load dashboard stats', variant: 'destructive' });
@@ -62,7 +58,6 @@ export default function AdminDashboard() {
     { label: 'Users', value: stats.users, icon: Users, link: '/admin/users', color: 'text-purple-600' },
     { label: 'Categories', value: stats.categories, icon: FolderTree, link: '/admin/categories', color: 'text-orange-600' },
     { label: 'URL Configs', value: stats.urlConfigs, icon: Link2, link: '/admin/url-configs', color: 'text-red-600' },
-    { label: 'Active Sessions', value: stats.sessions, icon: Monitor, link: '/admin/sessions', color: 'text-cyan-600' },
   ];
 
   return (
@@ -115,13 +110,13 @@ export default function AdminDashboard() {
               <Link2 className="h-5 w-5 mx-auto mb-1" />
               <span className="text-sm">URL Configs</span>
             </Link>
-            <Link to="/admin/sessions" className="p-3 border rounded-lg hover:bg-gray-50 text-center">
-              <Monitor className="h-5 w-5 mx-auto mb-1" />
-              <span className="text-sm">Sessions</span>
+            <Link to="/admin/categories" className="p-3 border rounded-lg hover:bg-gray-50 text-center">
+              <FolderTree className="h-5 w-5 mx-auto mb-1" />
+              <span className="text-sm">Categories</span>
             </Link>
-            <Link to="/admin/audit-logs" className="p-3 border rounded-lg hover:bg-gray-50 text-center">
+            <Link to="/admin/settings" className="p-3 border rounded-lg hover:bg-gray-50 text-center">
               <Activity className="h-5 w-5 mx-auto mb-1" />
-              <span className="text-sm">Audit Logs</span>
+              <span className="text-sm">Settings</span>
             </Link>
           </div>
         </div>
@@ -134,16 +129,16 @@ export default function AdminDashboard() {
               <span className="font-medium">{stats.urlConfigs}</span>
             </div>
             <div className="flex justify-between py-2 border-b">
-              <span className="text-gray-500">Active Users Online</span>
-              <span className="font-medium">{stats.sessions}</span>
-            </div>
-            <div className="flex justify-between py-2 border-b">
               <span className="text-gray-500">User Types</span>
               <span className="font-medium">{stats.userTypes}</span>
             </div>
-            <div className="flex justify-between py-2">
+            <div className="flex justify-between py-2 border-b">
               <span className="text-gray-500">Project Types</span>
               <span className="font-medium">{stats.projectTypes}</span>
+            </div>
+            <div className="flex justify-between py-2">
+              <span className="text-gray-500">Total Users</span>
+              <span className="font-medium">{stats.users}</span>
             </div>
           </div>
         </div>
