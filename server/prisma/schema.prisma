@@ -152,7 +152,7 @@ model UrlConfiguration {
 model Session {
   id             String   @id @default(uuid()) @db.VarChar(36)
   userId         String   @map("user_id") @db.VarChar(36)
-  sessionToken   String   @unique @map("session_token") @db.VarChar(36)
+  sessionToken   String   @unique @map("session_token") @db.VarChar(64)
   ipAddress      String?  @map("ip_address") @db.VarChar(45)
   userAgent      String?  @map("user_agent") @db.VarChar(500)
   createdAt      DateTime @default(now()) @map("created_at")
