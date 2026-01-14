@@ -291,13 +291,14 @@ function rewriteHtml(body: string, parsedUrl: URL, opaqueId: string): string {
     return 'srcset=' + quote + rewritten;
   });
 
-  // Insert intercept script at the beginning of head
+  const baseTag = `<base href="/proxy/${opaqueId}/">`;
+
   if (body.match(/<head[^>]*>/i)) {
-    body = body.replace(/<head[^>]*>/i, `$&\n${interceptScript}`);
+    body = body.replace(/<head[^>]*>/i, `$&\n${baseTag}\n${interceptScript}`);
   } else if (body.match(/<html[^>]*>/i)) {
-    body = body.replace(/<html[^>]*>/i, `$&\n<head>${interceptScript}</head>`);
+    body = body.replace(/<html[^>]*>/i, `$&\n<head>${baseTag}\n${interceptScript}</head>`);
   } else {
-    body = interceptScript + body;
+    body = `${baseTag}\n${interceptScript}` + body;
   }
 
   // Remove X-Frame-Options meta tags
