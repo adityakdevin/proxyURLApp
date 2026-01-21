@@ -11,6 +11,9 @@ import adminRoutes from './routes/admin/index.js';
 import userRoutes from './routes/user.js';
 import proxyRoutes from './routes/proxy.js';
 
+// Services
+import { getHeadlessManager } from './services/headlessManager.js';
+
 // Middleware
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -76,12 +79,24 @@ app.use(errorHandler);
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully...');
+  try {
+    const headlessManager = getHeadlessManager();
+    await headlessManager.shutdown();
+  } catch (e) {
+    console.error('Error shutting down HeadlessManager:', e);
+  }
   await prisma.$disconnect();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully...');
+  try {
+    const headlessManager = getHeadlessManager();
+    await headlessManager.shutdown();
+  } catch (e) {
+    console.error('Error shutting down HeadlessManager:', e);
+  }
   await prisma.$disconnect();
   process.exit(0);
 });

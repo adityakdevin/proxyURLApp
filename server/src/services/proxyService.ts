@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, ProxyMode, AuditLevel } from '@prisma/client';
 
 export interface UrlAccessResult {
   authorized: boolean;
@@ -6,6 +6,10 @@ export interface UrlAccessResult {
     id: string;
     targetUrl: string;
     label: string;
+    proxyMode: ProxyMode;
+    headlessTimeout: number;
+    sessionTtl: number;
+    auditLevel: AuditLevel;
   };
   userTypeId?: string;
   projectTypeId?: string;
@@ -129,6 +133,10 @@ export class ProxyService {
         id: urlConfig.id,
         targetUrl: urlConfig.targetUrl,
         label: urlConfig.label,
+        proxyMode: urlConfig.proxyMode,
+        headlessTimeout: urlConfig.headlessTimeout,
+        sessionTtl: urlConfig.sessionTtl,
+        auditLevel: urlConfig.auditLevel,
       },
       userTypeId: assignment.userTypeId,
       projectTypeId: assignment.projectTypeId,

@@ -13,6 +13,18 @@ enum Status {
   INACTIVE
 }
 
+enum ProxyMode {
+  DIRECT      // Standard HTTP proxy (existing behavior)
+  HEADLESS    // Playwright rendering for WAF-protected sites
+  NEW_WINDOW  // Open in new tab with logged redirect
+}
+
+enum AuditLevel {
+  STANDARD    // Access only
+  NAVIGATION  // Include navigation path
+  FULL        // Include all interactions
+}
+
 model UserType {
   id          String   @id @default(uuid()) @db.VarChar(36)
   name        String   @unique @db.VarChar(100)
@@ -64,9 +76,10 @@ model User {
   createdBy           String?   @map("created_by") @db.VarChar(36)
   updatedBy           String?   @map("updated_by") @db.VarChar(36)
 
-  assignments UserAssignment[]
-  sessions    Session[]
-  auditLogs   AuditLog[]
+  assignments  UserAssignment[]
+  sessions     Session[]
+  auditLogs    AuditLog[]
+  proxyMetrics ProxyMetric[]
 
   @@map("users")
 }
@@ -140,11 +153,18 @@ model UrlConfiguration {
   createdBy     String?  @map("created_by") @db.VarChar(36)
   updatedBy     String?  @map("updated_by") @db.VarChar(36)
 
-  userType    UserType    @relation(fields: [userTypeId], references: [id])
-  projectType ProjectType @relation(fields: [projectTypeId], references: [id])
-  category    Category    @relation(fields: [categoryId], references: [id])
-  subCategory SubCategory @relation(fields: [subCategoryId], references: [id])
-  auditLogs   AuditLog[]
+  // Proxy mode configuration
+  proxyMode       ProxyMode  @default(DIRECT) @map("proxy_mode")
+  headlessTimeout Int        @default(60000) @map("headless_timeout") // ms, default 60s
+  sessionTtl      Int        @default(30000) @map("session_ttl")      // ms, default 30s idle
+  auditLevel      AuditLevel @default(STANDARD) @map("audit_level")
+
+  userType     UserType       @relation(fields: [userTypeId], references: [id])
+  projectType  ProjectType    @relation(fields: [projectTypeId], references: [id])
+  category     Category       @relation(fields: [categoryId], references: [id])
+  subCategory  SubCategory    @relation(fields: [subCategoryId], references: [id])
+  auditLogs    AuditLog[]
+  proxyMetrics ProxyMetric[]
 
   @@map("url_configurations")
 }
@@ -198,4 +218,46 @@ model Setting {
   value String @db.VarChar(1000)
 
   @@map("settings")
+}
+
+model ProxyMetric {
+  id          String    @id @default(uuid()) @db.VarChar(36)
+  urlConfigId String    @map("url_config_id") @db.VarChar(36)
+  userId      String    @map("user_id") @db.VarChar(36)
+  sessionId   String    @map("session_id") @db.VarChar(64) // ProxyURLApp session token
+  proxyMode   ProxyMode @map("proxy_mode")
+
+  // Timing metrics
+  startTime  DateTime  @map("start_time")
+  endTime    DateTime? @map("end_time")
+  durationMs Int?      @map("duration_ms")
+
+  // Performance metrics
+  ttfbMs    Int? @map("ttfb_ms")    // Time to first byte
+  domLoadMs Int? @map("dom_load_ms") // DOM content loaded
+
+  // Status
+  success      Boolean @default(true)
+  errorCode    String? @map("error_code") @db.VarChar(50)
+  errorMessage String? @map("error_message") @db.Text
+
+  // Request details
+  targetUrl        String @map("target_url") @db.VarChar(2000)
+  httpStatus       Int?   @map("http_status")
+  bytesTransferred Int?   @map("bytes_transferred")
+
+  // Headless-specific metrics
+  browserSpawnMs Int? @map("browser_spawn_ms") // Time to spawn browser
+  queueWaitMs    Int? @map("queue_wait_ms")    // Time spent in queue
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  urlConfig UrlConfiguration @relation(fields: [urlConfigId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([urlConfigId])
+  @@index([userId])
+  @@index([startTime])
+  @@index([proxyMode])
+  @@map("proxy_metrics")
 }

@@ -1,8 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, ProxyMode } from '@prisma/client';
 import { SessionService } from '../services/sessionService.js';
 import { ProxyService } from '../services/proxyService.js';
 import { AuditLogService } from '../services/auditLogService.js';
+import { getHeadlessManager } from '../services/headlessManager.js';
 import http from 'http';
 import https from 'https';
 
@@ -513,6 +514,22 @@ function getCookieHeader(domain: string): string | undefined {
   return cookies ? cookies.join('; ') : undefined;
 }
 
+// Store cookies from headless session for use by direct proxy sub-resource requests
+function storeHeadlessCookies(cookies: Array<{ name: string; value: string; domain: string; path: string }>): void {
+  for (const cookie of cookies) {
+    // Normalize domain (remove leading dot)
+    const domain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
+    const existing = cookieStore.get(domain) || [];
+    const cookieStr = `${cookie.name}=${cookie.value}`;
+
+    // Remove old cookie with same name
+    const filtered = existing.filter(c => !c.startsWith(cookie.name + '='));
+    filtered.push(cookieStr);
+    cookieStore.set(domain, filtered);
+  }
+  console.log(`[Proxy] Stored ${cookies.length} cookies from headless session`);
+}
+
 // Proxy request handler
 async function proxyRequest(
   targetUrl: string,
@@ -884,6 +901,9 @@ router.all('/:opaqueId', async (req: Request, res: Response, next: NextFunction)
       `);
     }
 
+    // Get proxy mode from URL configuration
+    const proxyMode = accessResult.urlConfig.proxyMode || ProxyMode.DIRECT;
+
     // Cache target URL for sub-resources
     const parsedTarget = new URL(accessResult.urlConfig.targetUrl);
     targetUrlCache.set(opaqueId, {
@@ -907,12 +927,201 @@ router.all('/:opaqueId', async (req: Request, res: Response, next: NextFunction)
       userAgent: req.headers['user-agent'],
     });
 
-    await proxyRequest(accessResult.urlConfig.targetUrl, req, res, opaqueId);
+    // Route based on proxy mode
+    switch (proxyMode) {
+      case ProxyMode.HEADLESS:
+        await handleHeadlessProxy(
+          accessResult.urlConfig.targetUrl,
+          req,
+          res,
+          opaqueId,
+          userId,
+          accessResult.urlConfig.headlessTimeout
+        );
+        break;
+
+      case ProxyMode.NEW_WINDOW:
+        // Return redirect response for client to open in new window
+        res.json({
+          mode: 'NEW_WINDOW',
+          redirectUrl: `/redirect/${opaqueId}`,
+          message: 'This URL is configured to open in a new window'
+        });
+        break;
+
+      case ProxyMode.DIRECT:
+      default:
+        await proxyRequest(accessResult.urlConfig.targetUrl, req, res, opaqueId);
+        break;
+    }
   } catch (error) {
     console.error('Proxy error:', error);
     if (!res.headersSent) {
       res.status(500).send('<html><body><h2>Error</h2><p>An unexpected error occurred.</p></body></html>');
     }
+  }
+});
+
+// Headless proxy handler
+async function handleHeadlessProxy(
+  targetUrl: string,
+  req: Request,
+  res: Response,
+  opaqueId: string,
+  userId: string,
+  headlessTimeout?: number
+): Promise<void> {
+  try {
+    const headlessManager = getHeadlessManager();
+
+    // Show loading state while browser spawns
+    console.log(`[Proxy] Starting headless session for ${opaqueId}`);
+
+    // Acquire headless session
+    const session = await headlessManager.acquireSession(
+      opaqueId,
+      targetUrl,
+      userId,
+      headlessTimeout
+    );
+
+    // Load the page
+    const result = await session.loadPage();
+
+    if (!result.success) {
+      // Release session on failure
+      await headlessManager.releaseSession(session.id);
+
+      res.status(502).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Unable to Load</title></head>
+        <body style="font-family: Arial; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #1a1a2e; color: white;">
+          <div style="text-align: center; padding: 40px;">
+            <h2>Unable to load content</h2>
+            <p>${result.error || 'The page could not be loaded through headless browser.'}</p>
+            <button onclick="window.location.reload()" style="margin-top: 20px; padding: 10px 24px; background: #4f46e5; color: white; border: none; border-radius: 6px; cursor: pointer;">
+              Retry
+            </button>
+          </div>
+        </body>
+        </html>
+      `);
+      return;
+    }
+
+    // Store cookies from headless session for use by sub-resource requests
+    if (result.cookies && result.cookies.length > 0) {
+      storeHeadlessCookies(result.cookies);
+    }
+
+    // Rewrite URLs in the HTML so sub-resources go through the proxy
+    const finalUrl = result.url || targetUrl;
+    const parsedUrl = new URL(finalUrl);
+    let rewrittenHtml = rewriteHtml(result.html || '', parsedUrl, opaqueId);
+
+    // Then wrap with headless indicator
+    const wrappedHtml = wrapHeadlessContent(rewrittenHtml, opaqueId, session.id);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('X-Proxy-Mode', 'HEADLESS');
+    res.setHeader('X-Headless-Session', session.id);
+    res.send(wrappedHtml);
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Proxy] Headless error:', errorMessage);
+
+    if (!res.headersSent) {
+      // Check if queue is full
+      const isQueueFull = errorMessage.includes('queue is full');
+
+      res.status(503).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Service Temporarily Unavailable</title></head>
+        <body style="font-family: Arial; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #1a1a2e; color: white;">
+          <div style="text-align: center; padding: 40px;">
+            <h2>${isQueueFull ? 'Server is busy' : 'Unable to load content'}</h2>
+            <p>${isQueueFull ? 'Too many requests. Please try again in a moment.' : errorMessage}</p>
+            <button onclick="window.location.reload()" style="margin-top: 20px; padding: 10px 24px; background: #4f46e5; color: white; border: none; border-radius: 6px; cursor: pointer;">
+              Retry
+            </button>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+  }
+}
+
+// Wrap headless content (no visual indicator, just pass through)
+function wrapHeadlessContent(html: string, _opaqueId: string, _sessionId: string): string {
+  // Return HTML as-is without any visual modifications
+  return html;
+}
+
+// Redirect endpoint for NEW_WINDOW mode (logs access then redirects)
+router.get('/redirect/:opaqueId', async (req: Request, res: Response) => {
+  try {
+    const userId = await validateSession(req, res);
+    if (!userId) return;
+
+    const prisma = req.app.get('prisma') as PrismaClient;
+    const proxyService = new ProxyService(prisma);
+    const auditLogService = new AuditLogService(prisma);
+    const { opaqueId } = req.params;
+
+    // Validate access
+    const accessResult = await proxyService.validateAccess(userId, opaqueId);
+
+    if (!accessResult.authorized || !accessResult.urlConfig) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Log the redirect access
+    auditLogService.logAccess({
+      userId,
+      userTypeId: accessResult.userTypeId!,
+      projectTypeId: accessResult.projectTypeId!,
+      urlConfigId: accessResult.urlConfig.id,
+      targetUrl: accessResult.urlConfig.targetUrl,
+      requestMethod: 'GET',
+      responseStatus: 302,
+      durationMs: 0,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+    });
+
+    // Redirect to actual target URL
+    res.redirect(302, accessResult.urlConfig.targetUrl);
+  } catch (error) {
+    console.error('Redirect error:', error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+});
+
+// Health check endpoint for headless manager
+router.get('/health/headless', async (req: Request, res: Response) => {
+  try {
+    const headlessManager = getHeadlessManager();
+    const metrics = headlessManager.getMetrics();
+
+    const status = metrics.queueLength >= metrics.queueMaxSize
+      ? 'degraded'
+      : metrics.activeSessions >= metrics.maxSessions
+        ? 'busy'
+        : 'healthy';
+
+    res.json({
+      status,
+      ...metrics
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'unhealthy',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 

@@ -31,6 +31,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/components/ui/use-toast';
 
+type ProxyMode = 'DIRECT' | 'HEADLESS' | 'NEW_WINDOW';
+
 interface UrlConfig {
   id: string;
   label: string;
@@ -38,11 +40,20 @@ interface UrlConfig {
   targetUrl: string;
   opaqueId: string;
   status: 'ACTIVE' | 'INACTIVE';
+  proxyMode: ProxyMode;
+  headlessTimeout: number;
+  sessionTtl: number;
   userType: { id: string; name: string };
   projectType: { id: string; name: string };
   category: { id: string; name: string };
   subCategory: { id: string; name: string };
 }
+
+const PROXY_MODE_LABELS: Record<ProxyMode, { label: string; description: string; color: string }> = {
+  DIRECT: { label: 'Direct', description: 'Standard HTTP proxy (default)', color: 'bg-gray-500' },
+  HEADLESS: { label: 'Headless', description: 'For WAF-protected sites (Akamai, Cloudflare)', color: 'bg-blue-500' },
+  NEW_WINDOW: { label: 'New Window', description: 'Opens in new tab (fallback)', color: 'bg-amber-500' },
+};
 
 interface SelectOption { id: string; name: string; }
 interface Category { id: string; name: string; userTypeId: string; projectTypeId: string; }
@@ -76,6 +87,9 @@ export default function UrlConfigs() {
     projectTypeId: '',
     categoryId: '',
     subCategoryId: '',
+    proxyMode: 'DIRECT' as ProxyMode,
+    headlessTimeout: 60000,
+    sessionTtl: 30000,
   });
 
   const fetchData = async (page = 1, limit = 10) => {
@@ -127,7 +141,7 @@ export default function UrlConfigs() {
 
   const handleCreate = () => {
     setSelectedItem(null);
-    setFormData({ label: '', description: '', targetUrl: '', userTypeId: '', projectTypeId: '', categoryId: '', subCategoryId: '' });
+    setFormData({ label: '', description: '', targetUrl: '', userTypeId: '', projectTypeId: '', categoryId: '', subCategoryId: '', proxyMode: 'DIRECT', headlessTimeout: 60000, sessionTtl: 30000 });
     setIsFormOpen(true);
   };
 
@@ -141,6 +155,9 @@ export default function UrlConfigs() {
       projectTypeId: item.projectType.id,
       categoryId: item.category.id,
       subCategoryId: item.subCategory.id,
+      proxyMode: item.proxyMode || 'DIRECT',
+      headlessTimeout: item.headlessTimeout || 60000,
+      sessionTtl: item.sessionTtl || 30000,
     });
     setIsFormOpen(true);
   };
@@ -221,6 +238,17 @@ export default function UrlConfigs() {
       ),
     },
     {
+      accessorKey: 'proxyMode',
+      header: 'Mode',
+      cell: ({ row }) => {
+        const mode = row.original.proxyMode || 'DIRECT';
+        const config = PROXY_MODE_LABELS[mode];
+        return (
+          <Badge className={`${config.color} text-white`}>{config.label}</Badge>
+        );
+      },
+    },
+    {
       accessorKey: 'status',
       header: 'Status',
       cell: ({ row }) => <Badge variant={row.original.status === 'ACTIVE' ? 'success' : 'secondary'}>{row.original.status}</Badge>,
@@ -291,6 +319,52 @@ export default function UrlConfigs() {
               <Label htmlFor="targetUrl">Target URL <span className="text-destructive">*</span></Label>
               <Input id="targetUrl" value={formData.targetUrl} onChange={(e) => setFormData({ ...formData, targetUrl: e.target.value })} placeholder="https://example.com" />
             </div>
+            <div className="space-y-2">
+              <Label>Proxy Mode</Label>
+              <Select value={formData.proxyMode} onValueChange={(v) => setFormData({ ...formData, proxyMode: v as ProxyMode })}>
+                <SelectTrigger><SelectValue placeholder="Select proxy mode" /></SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(PROXY_MODE_LABELS) as ProxyMode[]).map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${PROXY_MODE_LABELS[mode].color}`} />
+                        <span>{PROXY_MODE_LABELS[mode].label}</span>
+                        <span className="text-xs text-muted-foreground ml-1">- {PROXY_MODE_LABELS[mode].description}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Use <strong>Headless</strong> for sites with Akamai/Cloudflare bot protection. Use <strong>New Window</strong> as fallback.
+              </p>
+            </div>
+            {formData.proxyMode === 'HEADLESS' && (
+              <div className="grid grid-cols-2 gap-4 p-3 bg-muted rounded-md">
+                <div className="space-y-2">
+                  <Label htmlFor="headlessTimeout">Timeout (ms)</Label>
+                  <Input
+                    id="headlessTimeout"
+                    type="number"
+                    value={formData.headlessTimeout}
+                    onChange={(e) => setFormData({ ...formData, headlessTimeout: parseInt(e.target.value) || 60000 })}
+                    min={5000}
+                    max={300000}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sessionTtl">Idle Timeout (ms)</Label>
+                  <Input
+                    id="sessionTtl"
+                    type="number"
+                    value={formData.sessionTtl}
+                    onChange={(e) => setFormData({ ...formData, sessionTtl: parseInt(e.target.value) || 30000 })}
+                    min={5000}
+                    max={300000}
+                  />
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>User Type <span className="text-destructive">*</span></Label>

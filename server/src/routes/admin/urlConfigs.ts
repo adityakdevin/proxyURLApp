@@ -1,6 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, ProxyMode, AuditLevel } from '@prisma/client';
 import { body, param, query, validationResult } from 'express-validator';
+
+// Valid enum values for validation
+const PROXY_MODES = ['DIRECT', 'HEADLESS', 'NEW_WINDOW'];
+const AUDIT_LEVELS = ['STANDARD', 'NAVIGATION', 'FULL'];
 
 const router = Router();
 
@@ -25,10 +29,11 @@ router.get(
     query('projectTypeId').optional().isUUID(),
     query('categoryId').optional().isUUID(),
     query('subCategoryId').optional().isUUID(),
+    query('proxyMode').optional().isIn(PROXY_MODES),
     query('search').optional().isString(),
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('sortBy').optional().isIn(['label', 'createdAt', 'status']),
+    query('sortBy').optional().isIn(['label', 'createdAt', 'status', 'proxyMode']),
     query('sortOrder').optional().isIn(['asc', 'desc']),
   ],
   validate,
@@ -41,6 +46,7 @@ router.get(
         projectTypeId,
         categoryId,
         subCategoryId,
+        proxyMode,
         search,
         page = '1',
         limit = '10',
@@ -58,6 +64,7 @@ router.get(
       if (projectTypeId) where.projectTypeId = projectTypeId;
       if (categoryId) where.categoryId = categoryId;
       if (subCategoryId) where.subCategoryId = subCategoryId;
+      if (proxyMode) where.proxyMode = proxyMode;
       if (search) {
         where.OR = [
           { label: { contains: search as string, mode: 'insensitive' } },
@@ -109,6 +116,11 @@ router.post(
     body('subCategoryId').isUUID().withMessage('Valid Sub-Category is required'),
     body('description').optional().isString(),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
+    // New proxy mode fields
+    body('proxyMode').optional().isIn(PROXY_MODES).withMessage('Invalid proxy mode'),
+    body('headlessTimeout').optional().isInt({ min: 5000, max: 300000 }).withMessage('Headless timeout must be between 5000 and 300000 ms'),
+    body('sessionTtl').optional().isInt({ min: 5000, max: 300000 }).withMessage('Session TTL must be between 5000 and 300000 ms'),
+    body('auditLevel').optional().isIn(AUDIT_LEVELS).withMessage('Invalid audit level'),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
@@ -123,6 +135,11 @@ router.post(
         subCategoryId,
         description,
         status = 'ACTIVE',
+        // New proxy mode fields
+        proxyMode = 'DIRECT',
+        headlessTimeout = 60000,
+        sessionTtl = 30000,
+        auditLevel = 'STANDARD',
       } = req.body;
 
       // Validate cascading references
@@ -167,6 +184,10 @@ router.post(
           subCategoryId,
           description,
           status,
+          proxyMode: proxyMode as ProxyMode,
+          headlessTimeout,
+          sessionTtl,
+          auditLevel: auditLevel as AuditLevel,
           createdBy: req.session!.userId,
           updatedBy: req.session!.userId,
         },
@@ -232,6 +253,11 @@ router.put(
     body('projectTypeId').optional().isUUID(),
     body('categoryId').optional().isUUID(),
     body('subCategoryId').optional().isUUID(),
+    // New proxy mode fields
+    body('proxyMode').optional().isIn(PROXY_MODES).withMessage('Invalid proxy mode'),
+    body('headlessTimeout').optional().isInt({ min: 5000, max: 300000 }).withMessage('Headless timeout must be between 5000 and 300000 ms'),
+    body('sessionTtl').optional().isInt({ min: 5000, max: 300000 }).withMessage('Session TTL must be between 5000 and 300000 ms'),
+    body('auditLevel').optional().isIn(AUDIT_LEVELS).withMessage('Invalid audit level'),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
@@ -247,6 +273,11 @@ router.put(
         projectTypeId,
         categoryId,
         subCategoryId,
+        // New proxy mode fields
+        proxyMode,
+        headlessTimeout,
+        sessionTtl,
+        auditLevel,
       } = req.body;
 
       const existing = await prisma.urlConfiguration.findUnique({ where: { id } });
@@ -308,6 +339,11 @@ router.put(
           ...(projectTypeId && { projectTypeId }),
           ...(categoryId && { categoryId }),
           ...(subCategoryId && { subCategoryId }),
+          // New proxy mode fields
+          ...(proxyMode && { proxyMode: proxyMode as ProxyMode }),
+          ...(headlessTimeout !== undefined && { headlessTimeout }),
+          ...(sessionTtl !== undefined && { sessionTtl }),
+          ...(auditLevel && { auditLevel: auditLevel as AuditLevel }),
           updatedBy: req.session!.userId,
         },
         include: {
