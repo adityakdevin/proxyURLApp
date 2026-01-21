@@ -212,6 +212,73 @@ function generateInterceptScript(opaqueId: string, host: string, baseUrl: string
         return originalReplaceState.call(history, state, title, url);
     };
 
+    // Intercept window.location assignments
+    var originalAssign = window.location.assign;
+    window.location.assign = function(url) {
+        var newUrl = rewriteUrl(url);
+        console.log('[Proxy] location.assign:', url, '->', newUrl);
+        return originalAssign.call(window.location, newUrl);
+    };
+
+    var originalReplace = window.location.replace;
+    window.location.replace = function(url) {
+        var newUrl = rewriteUrl(url);
+        console.log('[Proxy] location.replace:', url, '->', newUrl);
+        return originalReplace.call(window.location, newUrl);
+    };
+
+    // Try to intercept window.location.href setter
+    // Note: This may not work in all browsers but helps in many cases
+    try {
+        var locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+        if (locationDescriptor && locationDescriptor.configurable !== false) {
+            // Create a proxy for location object
+            var originalLocation = window.location;
+            var locationProxy = new Proxy(originalLocation, {
+                set: function(target, prop, value) {
+                    if (prop === 'href') {
+                        var newUrl = rewriteUrl(value);
+                        console.log('[Proxy] location.href =', value, '->', newUrl);
+                        target.href = newUrl;
+                        return true;
+                    }
+                    target[prop] = value;
+                    return true;
+                },
+                get: function(target, prop) {
+                    var value = target[prop];
+                    if (typeof value === 'function') {
+                        return value.bind(target);
+                    }
+                    return value;
+                }
+            });
+            // This assignment may fail in strict mode or certain browsers
+            // window.location = locationProxy;
+        }
+    } catch(e) {
+        console.log('[Proxy] Could not override location object:', e);
+    }
+
+    // Override document.location as well
+    try {
+        var docLocationDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'location');
+        if (docLocationDescriptor && docLocationDescriptor.set) {
+            var originalDocLocationSet = docLocationDescriptor.set;
+            Object.defineProperty(Document.prototype, 'location', {
+                get: docLocationDescriptor.get,
+                set: function(value) {
+                    var newUrl = rewriteUrl(value);
+                    console.log('[Proxy] document.location =', value, '->', newUrl);
+                    originalDocLocationSet.call(this, newUrl);
+                },
+                configurable: true
+            });
+        }
+    } catch(e) {
+        console.log('[Proxy] Could not override document.location:', e);
+    }
+
     document.addEventListener('click', function(e) {
         var anchor = e.target.closest ? e.target.closest('a') : null;
         if (anchor && anchor.href) {
@@ -219,7 +286,20 @@ function generateInterceptScript(opaqueId: string, host: string, baseUrl: string
             if (href && href.charAt(0) === '/' && href.indexOf('/proxy/') !== 0) {
                 e.preventDefault();
                 var newHref = '/proxy/' + opaqueId + href;
-                window.location.href = newHref;
+                originalAssign.call(window.location, newHref);
+            }
+        }
+    }, true);
+
+    // Intercept form submissions to ensure action URLs are rewritten
+    document.addEventListener('submit', function(e) {
+        var form = e.target;
+        if (form && form.tagName === 'FORM') {
+            var action = form.getAttribute('action') || '';
+            if (action && action.indexOf('/proxy/') !== 0) {
+                var newAction = rewriteUrl(action);
+                console.log('[Proxy] form submit action:', action, '->', newAction);
+                form.setAttribute('action', newAction);
             }
         }
     }, true);
@@ -262,23 +342,48 @@ function generateInterceptScript(opaqueId: string, host: string, baseUrl: string
 function rewriteHtml(body: string, parsedUrl: URL, opaqueId: string): string {
   const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
 
+  // Get the directory path for resolving relative URLs
+  const currentPath = parsedUrl.pathname;
+  const currentDir = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
+
   // Generate and inject intercept script
   const interceptScript = generateInterceptScript(opaqueId, parsedUrl.host, baseUrl);
 
   // Rewrite absolute URLs pointing to the target host
-  body = body.replace(/(src|href|action)=(["'])((?:https?:)?\/\/[^"']*)/gi, (match, attr, quote, urlVal) => {
+  body = body.replace(/(src|href|action)=(["'])((?:https?:)?\/\/[^"']*)/gi, (_match, attr, quote, urlVal) => {
     if (urlVal.includes(parsedUrl.host)) {
       const pathMatch = urlVal.match(new RegExp(parsedUrl.host + '(.*)'));
       if (pathMatch) {
         return attr + '=' + quote + '/proxy/' + opaqueId + pathMatch[1];
       }
     }
-    return match;
+    return _match;
   });
 
   // Replace absolute paths with proxy paths
-  body = body.replace(/(src|href|action)=(["'])\/((?!\/|proxy\/)[^"']*)/gi, (match, attr, quote, pathVal) => {
+  body = body.replace(/(src|href|action)=(["'])\/((?!\/|proxy\/)[^"']*)/gi, (_match, attr, quote, pathVal) => {
     return attr + '=' + quote + '/proxy/' + opaqueId + '/' + pathVal;
+  });
+
+  // Rewrite relative paths with ../ to absolute proxy paths
+  body = body.replace(/(src|href|action)=(["'])(\.\.\/[^"']*)/gi, (_match, attr, quote, relPath) => {
+    // Resolve the relative path against current directory
+    let resolvedPath = currentDir;
+    let remainingPath = relPath;
+
+    while (remainingPath.startsWith('../')) {
+      remainingPath = remainingPath.substring(3);
+      resolvedPath = resolvedPath.substring(0, resolvedPath.lastIndexOf('/', resolvedPath.length - 2) + 1);
+    }
+    resolvedPath = resolvedPath + remainingPath;
+
+    return attr + '=' + quote + '/proxy/' + opaqueId + resolvedPath;
+  });
+
+  // Rewrite relative paths with ./ to absolute proxy paths
+  body = body.replace(/(src|href|action)=(["'])(\.\/[^"']*)/gi, (_match, attr, quote, relPath) => {
+    const resolvedPath = currentDir + relPath.substring(2);
+    return attr + '=' + quote + '/proxy/' + opaqueId + resolvedPath;
   });
 
   // Rewrite srcset attributes
@@ -291,7 +396,8 @@ function rewriteHtml(body: string, parsedUrl: URL, opaqueId: string): string {
     return 'srcset=' + quote + rewritten;
   });
 
-  const baseTag = `<base href="/proxy/${opaqueId}/">`;
+  // Use the current directory as base to correctly resolve relative paths
+  const baseTag = `<base href="/proxy/${opaqueId}${currentDir}">`;
 
   if (body.match(/<head[^>]*>/i)) {
     body = body.replace(/<head[^>]*>/i, `$&\n${baseTag}\n${interceptScript}`);
@@ -304,6 +410,42 @@ function rewriteHtml(body: string, parsedUrl: URL, opaqueId: string): string {
   // Remove X-Frame-Options meta tags
   body = body.replace(/<meta[^>]*x-frame-options[^>]*>/gi, '');
 
+  // Rewrite meta refresh tags
+  body = body.replace(/<meta\s+http-equiv=["']refresh["'][^>]*content=["'](\d+);?\s*url=([^"']+)["'][^>]*>/gi,
+    (_match, seconds, url) => {
+      const newUrl = url.startsWith('/') && !url.startsWith('/proxy/')
+        ? `/proxy/${opaqueId}${url}`
+        : url;
+      return `<meta http-equiv="refresh" content="${seconds};url=${newUrl}">`;
+    }
+  );
+
+  // Also handle meta refresh with content before http-equiv
+  body = body.replace(/<meta\s+content=["'](\d+);?\s*url=([^"']+)["'][^>]*http-equiv=["']refresh["'][^>]*>/gi,
+    (_match, seconds, url) => {
+      const newUrl = url.startsWith('/') && !url.startsWith('/proxy/')
+        ? `/proxy/${opaqueId}${url}`
+        : url;
+      return `<meta http-equiv="refresh" content="${seconds};url=${newUrl}">`;
+    }
+  );
+
+  // Rewrite inline JavaScript window.location assignments
+  // This handles common patterns like: window.location.href = '/path' or window.location = '/path'
+  body = body.replace(/window\.location(\.href)?\s*=\s*(['"])\/(?!proxy\/)/gi,
+    `window.location$1 = $2/proxy/${opaqueId}/`
+  );
+
+  // Rewrite document.location assignments
+  body = body.replace(/document\.location(\.href)?\s*=\s*(['"])\/(?!proxy\/)/gi,
+    `document.location$1 = $2/proxy/${opaqueId}/`
+  );
+
+  // Rewrite location.href = '/path' (without window prefix)
+  body = body.replace(/([^.])\blocation(\.href)?\s*=\s*(['"])\/(?!proxy\/)/gi,
+    `$1location$2 = $3/proxy/${opaqueId}/`
+  );
+
   // Remove frame-busting scripts
   body = body.replace(/if\s*\(\s*top\s*!==?\s*self\s*\)/gi, 'if(false)');
   body = body.replace(/if\s*\(\s*window\.top\s*!==?\s*window\.self\s*\)/gi, 'if(false)');
@@ -314,15 +456,39 @@ function rewriteHtml(body: string, parsedUrl: URL, opaqueId: string): string {
 }
 
 // Rewrite CSS content
-function rewriteCss(cssBody: string, opaqueId: string): string {
-  // Rewrite url() with absolute paths
-  cssBody = cssBody.replace(/url\s*\(\s*(['"]?)\/(?!\/|proxy\/)/gi, (match, quote) => {
+function rewriteCss(cssBody: string, opaqueId: string, cssFilePath: string): string {
+  // Get the directory of the CSS file for resolving relative paths
+  const cssDir = cssFilePath.substring(0, cssFilePath.lastIndexOf('/') + 1);
+
+  // Rewrite url() with absolute paths (starting with /)
+  cssBody = cssBody.replace(/url\s*\(\s*(['"]?)\/(?!\/|proxy\/)/gi, (_match, quote) => {
     return 'url(' + quote + '/proxy/' + opaqueId + '/';
   });
 
-  // Rewrite url() with relative paths (no leading slash)
-  cssBody = cssBody.replace(/url\s*\(\s*(['"]?)(?!\/|data:|https?:|#|'|")/gi, (match, quote) => {
-    return 'url(' + quote + '/proxy/' + opaqueId + '/';
+  // Rewrite url() with ../ relative paths
+  cssBody = cssBody.replace(/url\s*\(\s*(['"]?)(\.\.\/[^)'"]+)/gi, (_match, quote, relPath) => {
+    // Resolve the relative path against CSS directory
+    let resolvedPath = cssDir;
+    let remainingPath = relPath;
+
+    while (remainingPath.startsWith('../')) {
+      remainingPath = remainingPath.substring(3);
+      resolvedPath = resolvedPath.substring(0, resolvedPath.lastIndexOf('/', resolvedPath.length - 2) + 1);
+    }
+    resolvedPath = resolvedPath + remainingPath;
+
+    return 'url(' + quote + '/proxy/' + opaqueId + resolvedPath;
+  });
+
+  // Rewrite url() with ./ relative paths
+  cssBody = cssBody.replace(/url\s*\(\s*(['"]?)(\.\/[^)'"]+)/gi, (_match, quote, relPath) => {
+    const resolvedPath = cssDir + relPath.substring(2);
+    return 'url(' + quote + '/proxy/' + opaqueId + resolvedPath;
+  });
+
+  // Rewrite url() with simple relative paths (no leading slash, ./, or ../)
+  cssBody = cssBody.replace(/url\s*\(\s*(['"]?)(?!\/|data:|https?:|#|'|"|\.\.\/|\.\/|\))/gi, (_match, quote) => {
+    return 'url(' + quote + '/proxy/' + opaqueId + cssDir;
   });
 
   return cssBody;
@@ -373,20 +539,56 @@ async function proxyRequest(
   const protocol = parsedUrl.protocol === 'https:' ? https : http;
   const domain = parsedUrl.hostname;
 
+  // Determine resource type based on file extension for proper headers
+  const pathLower = parsedUrl.pathname.toLowerCase();
+  const isCSS = pathLower.endsWith('.css');
+  const isJS = pathLower.endsWith('.js');
+  const isImage = /\.(png|jpg|jpeg|gif|ico|svg|webp|bmp)$/i.test(pathLower);
+  const isFont = /\.(woff|woff2|ttf|eot|otf)$/i.test(pathLower);
+  const isDocument = !isCSS && !isJS && !isImage && !isFont;
+
+  // Set appropriate Accept and Sec-Fetch headers based on resource type
+  let acceptHeader = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
+  let secFetchDest = 'document';
+  let secFetchMode = 'navigate';
+
+  if (isCSS) {
+    acceptHeader = 'text/css,*/*;q=0.1';
+    secFetchDest = 'style';
+    secFetchMode = 'no-cors';
+  } else if (isJS) {
+    acceptHeader = '*/*';
+    secFetchDest = 'script';
+    secFetchMode = 'no-cors';
+  } else if (isImage) {
+    acceptHeader = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
+    secFetchDest = 'image';
+    secFetchMode = 'no-cors';
+  } else if (isFont) {
+    acceptHeader = '*/*';
+    secFetchDest = 'font';
+    secFetchMode = 'cors';
+  }
+
   const options: http.RequestOptions = {
     hostname: parsedUrl.hostname,
     port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
     path: parsedUrl.pathname + parsedUrl.search,
     method: req.method || 'GET',
     headers: {
-      'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Accept': req.headers.accept || 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': acceptHeader,
+      'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
       'Accept-Encoding': 'identity',
       'Connection': 'keep-alive',
       'Cache-Control': 'no-cache',
+      'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"Windows"',
+      'Sec-Fetch-Dest': secFetchDest,
+      'Sec-Fetch-Mode': secFetchMode,
+      'Sec-Fetch-Site': 'same-origin',
       'Referer': `${parsedUrl.protocol}//${parsedUrl.host}/`,
-      'Origin': `${parsedUrl.protocol}//${parsedUrl.host}`,
     },
     timeout: 60000,
   };
@@ -408,6 +610,13 @@ async function proxyRequest(
     if (setCookieHeaders) {
       parseCookies(setCookieHeaders, domain);
     }
+
+    // Strip security headers that prevent iframe embedding
+    delete proxyRes.headers['x-frame-options'];
+    delete proxyRes.headers['content-security-policy'];
+    delete proxyRes.headers['content-security-policy-report-only'];
+    delete proxyRes.headers['x-content-security-policy'];
+    delete proxyRes.headers['x-webkit-csp'];
 
     // Handle redirects
     if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
@@ -460,7 +669,7 @@ async function proxyRequest(
 
       proxyRes.on('end', () => {
         if (res.headersSent) return;
-        cssBody = rewriteCss(cssBody, opaqueId);
+        cssBody = rewriteCss(cssBody, opaqueId, parsedUrl.pathname);
         res.setHeader('Content-Type', 'text/css; charset=utf-8');
         res.setHeader('Content-Length', Buffer.byteLength(cssBody));
         res.setHeader('Access-Control-Allow-Origin', '*');

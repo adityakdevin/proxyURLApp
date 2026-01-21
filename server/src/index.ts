@@ -20,12 +20,20 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 const isHttps = process.env.CLIENT_URL?.startsWith('https://') ?? false;
-app.use(helmet({
-  contentSecurityPolicy: false, // Disabled for proxied content
-  crossOriginOpenerPolicy: isHttps ? { policy: 'same-origin' } : false,
-  crossOriginResourcePolicy: isHttps ? { policy: 'same-origin' } : false,
-  originAgentCluster: isHttps,
-}));
+
+// Apply helmet to non-proxy routes only (proxy needs to allow iframes)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/proxy')) {
+    return next();
+  }
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginOpenerPolicy: isHttps ? { policy: 'same-origin' } : false,
+    crossOriginResourcePolicy: isHttps ? { policy: 'same-origin' } : false,
+    originAgentCluster: isHttps,
+  })(req, res, next);
+});
+
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
   credentials: true,
