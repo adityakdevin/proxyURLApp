@@ -1102,7 +1102,7 @@ router.get('/redirect/:opaqueId', async (req: Request, res: Response) => {
 });
 
 // Health check endpoint for headless manager
-router.get('/health/headless', async (req: Request, res: Response) => {
+router.get('/health/headless', async (_req: Request, res: Response) => {
   try {
     const headlessManager = getHeadlessManager();
     const metrics = headlessManager.getMetrics();
