@@ -12,6 +12,8 @@
     "dev:client": "npm run dev --workspace=client",
     "build": "npm run build --workspace=client && npm run build --workspace=server",
     "start": "npm run start --workspace=server",
+    "restart": "npm run restart --workspace=server",
+    "stop": "npm run stop --workspace=server",
     "db:migrate": "npm run db:migrate --workspace=server",
     "db:migrate:deploy": "npm run db:migrate:deploy --workspace=server",
     "db:generate": "npm run db:generate --workspace=server",
