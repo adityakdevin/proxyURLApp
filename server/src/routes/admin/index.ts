@@ -10,6 +10,7 @@ import sessionsRoutes from './sessions.js';
 import auditLogsRoutes from './auditLogs.js';
 import settingsRoutes from './settings.js';
 import profileRoutes from './profile.js';
+import statusMastersRoutes from './statusMasters.js';
 
 const router = Router();
 
@@ -28,5 +29,6 @@ router.use('/sessions', sessionsRoutes);
 router.use('/audit-logs', auditLogsRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/profile', profileRoutes);
+router.use('/status-masters', statusMastersRoutes);
 
 export default router;
