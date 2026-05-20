@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type Role = 'USER' | 'TEAM_LEAD' | 'ADMIN';
+
 export interface User {
   id: string;
   username: string;
   fullName: string;
-  isAdmin: boolean;
+  role: Role;
   forcePasswordChange: boolean;
   userTypeId?: string;
   projectTypeId?: string;

@@ -13,7 +13,7 @@ interface Session {
   userId: string;
   username: string;
   fullName: string;
-  isAdmin: boolean;
+  role: 'USER' | 'TEAM_LEAD' | 'ADMIN';
   ipAddress: string | null;
   userAgent: string | null;
   loginTime: string;
@@ -92,8 +92,8 @@ export default function Sessions() {
       header: 'Role',
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
-          <Badge variant={row.original.isAdmin ? 'default' : 'secondary'}>
-            {row.original.isAdmin ? 'Admin' : 'User'}
+          <Badge variant={row.original.role === 'ADMIN' ? 'default' : row.original.role === 'TEAM_LEAD' ? 'secondary' : 'outline'}>
+            {row.original.role === 'ADMIN' ? 'Admin' : row.original.role === 'TEAM_LEAD' ? 'Team Lead' : 'User'}
           </Badge>
           {row.original.isImpersonation && (
             <Badge variant="warning">

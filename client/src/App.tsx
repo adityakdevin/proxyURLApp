@@ -23,7 +23,13 @@ import UserDashboard from '@/pages/user/Dashboard';
 import SubCategoryUrls from '@/pages/user/SubCategoryUrls';
 import ProxyView from '@/pages/user/ProxyView';
 
-function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
+function ProtectedRoute({
+  children,
+  requiredRole,
+}: {
+  children: React.ReactNode;
+  requiredRole?: 'TEAM_LEAD' | 'ADMIN';
+}) {
   const { user, isAuthenticated } = useAuthStore();
 
   if (!isAuthenticated) {
@@ -34,7 +40,10 @@ function ProtectedRoute({ children, adminOnly = false }: { children: React.React
     return <Navigate to="/change-password" replace />;
   }
 
-  if (adminOnly && !user?.isAdmin) {
+  if (requiredRole === 'ADMIN' && user?.role !== 'ADMIN') {
+    return <Navigate to="/dashboard" replace />;
+  }
+  if (requiredRole === 'TEAM_LEAD' && user?.role !== 'TEAM_LEAD' && user?.role !== 'ADMIN') {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -53,7 +62,7 @@ function App() {
         <Route
           path="/admin"
           element={
-            <ProtectedRoute adminOnly>
+            <ProtectedRoute requiredRole="ADMIN">
               <AdminLayout />
             </ProtectedRoute>
           }

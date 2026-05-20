@@ -33,11 +33,13 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAuthStore } from '@/stores/authStore';
 import { useNavigate } from 'react-router-dom';
 
+type Role = 'USER' | 'TEAM_LEAD' | 'ADMIN';
+
 interface User {
   id: string;
   username: string;
   fullName: string;
-  isAdmin: boolean;
+  role: Role;
   status: 'ACTIVE' | 'INACTIVE';
   forcePasswordChange: boolean;
   createdAt: string;
@@ -70,11 +72,18 @@ export default function Users() {
   const [selectedItem, setSelectedItem] = useState<User | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    username: string;
+    fullName: string;
+    password: string;
+    role: Role;
+    userTypeId: string;
+    projectTypeId: string;
+  }>({
     username: '',
     fullName: '',
     password: '',
-    isAdmin: false,
+    role: 'USER',
     userTypeId: '',
     projectTypeId: '',
   });
@@ -112,7 +121,7 @@ export default function Users() {
 
   const handleCreate = () => {
     setSelectedItem(null);
-    setFormData({ username: '', fullName: '', password: '', isAdmin: false, userTypeId: '', projectTypeId: '' });
+    setFormData({ username: '', fullName: '', password: '', role: 'USER', userTypeId: '', projectTypeId: '' });
     setIsFormOpen(true);
   };
 
@@ -122,7 +131,7 @@ export default function Users() {
       username: item.username,
       fullName: item.fullName,
       password: '',
-      isAdmin: item.isAdmin,
+      role: item.role,
       userTypeId: item.assignment?.userType.id || '',
       projectTypeId: item.assignment?.projectType.id || '',
     });
@@ -144,10 +153,10 @@ export default function Users() {
       const payload: Record<string, unknown> = {
         username: formData.username,
         fullName: formData.fullName,
-        isAdmin: formData.isAdmin,
+        role: formData.role,
       };
       if (formData.password) payload.password = formData.password;
-      if (!formData.isAdmin && formData.userTypeId && formData.projectTypeId) {
+      if (formData.role !== 'ADMIN' && formData.userTypeId && formData.projectTypeId) {
         payload.userTypeId = formData.userTypeId;
         payload.projectTypeId = formData.projectTypeId;
       }
@@ -209,7 +218,7 @@ export default function Users() {
           userId: string;
           username: string;
           fullName: string;
-          isAdmin: boolean;
+          role: Role;
           forcePasswordChange: boolean;
           userTypeId?: string;
           projectTypeId?: string;
@@ -221,7 +230,7 @@ export default function Users() {
         id: response.user.userId,
         username: response.user.username,
         fullName: response.user.fullName,
-        isAdmin: response.user.isAdmin,
+        role: response.user.role,
         forcePasswordChange: response.user.forcePasswordChange,
         userTypeId: response.user.userTypeId,
         projectTypeId: response.user.projectTypeId,
@@ -243,17 +252,18 @@ export default function Users() {
     {
       id: 'role',
       header: 'Role',
-      cell: ({ row }) => (
-        <Badge variant={row.original.isAdmin ? 'default' : 'secondary'}>
-          {row.original.isAdmin ? 'Admin' : 'User'}
-        </Badge>
-      ),
+      cell: ({ row }) => {
+        const r = row.original.role;
+        const variant = r === 'ADMIN' ? 'default' : r === 'TEAM_LEAD' ? 'secondary' : 'outline';
+        const label = r === 'ADMIN' ? 'Admin' : r === 'TEAM_LEAD' ? 'Team Lead' : 'User';
+        return <Badge variant={variant}>{label}</Badge>;
+      },
     },
     {
       id: 'assignment',
       header: 'Assignment',
       cell: ({ row }) => {
-        if (row.original.isAdmin) return '-';
+        if (row.original.role === 'ADMIN') return '-';
         const a = row.original.assignment;
         if (!a) return <span className="text-muted-foreground">Not assigned</span>;
         return <span className="text-sm">{a.userType.name} / {a.projectType.name}</span>;
@@ -278,7 +288,7 @@ export default function Users() {
             <DropdownMenuItem onClick={() => { setSelectedItem(row.original); setIsStatusOpen(true); }}>
               {row.original.status === 'ACTIVE' ? <><PowerOff className="mr-2 h-4 w-4" />Deactivate</> : <><Power className="mr-2 h-4 w-4" />Activate</>}
             </DropdownMenuItem>
-            {!row.original.isAdmin && row.original.status === 'ACTIVE' && (
+            {row.original.role !== 'ADMIN' && row.original.status === 'ACTIVE' && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => { setSelectedItem(row.original); setIsImpersonateOpen(true); }}>
@@ -322,11 +332,18 @@ export default function Users() {
               <Label htmlFor="password">{selectedItem ? 'New Password (leave blank to keep)' : 'Password'} {!selectedItem && <span className="text-destructive">*</span>}</Label>
               <Input id="password" type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} placeholder="Enter password" />
             </div>
-            <div className="flex items-center space-x-2">
-              <input type="checkbox" id="isAdmin" checked={formData.isAdmin} onChange={(e) => setFormData({ ...formData, isAdmin: e.target.checked })} className="rounded border-gray-300" />
-              <Label htmlFor="isAdmin">Admin User</Label>
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Select value={formData.role} onValueChange={(v) => setFormData({ ...formData, role: v as Role })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="USER">User</SelectItem>
+                  <SelectItem value="TEAM_LEAD">Team Lead</SelectItem>
+                  <SelectItem value="ADMIN">Admin</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            {!formData.isAdmin && (
+            {formData.role !== 'ADMIN' && (
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>User Type</Label>
