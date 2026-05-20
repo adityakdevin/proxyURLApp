@@ -121,7 +121,7 @@ export class AuthService {
         userId: user.id,
         username: user.username,
         fullName: user.fullName,
-        isAdmin: user.isAdmin,
+        role: user.role,
         forcePasswordChange: user.forcePasswordChange,
         userTypeId: assignment?.userTypeId,
         projectTypeId: assignment?.projectTypeId,

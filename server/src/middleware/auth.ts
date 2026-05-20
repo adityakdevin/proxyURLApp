@@ -70,7 +70,7 @@ export const adminMiddleware = (
     });
   }
 
-  if (!req.session.isAdmin) {
+  if (req.session.role !== 'ADMIN') {
     return res.status(403).json({
       error: 'Admin access required',
       code: 'ADMIN_REQUIRED',

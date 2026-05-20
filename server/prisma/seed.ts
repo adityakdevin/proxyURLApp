@@ -21,7 +21,7 @@ async function main() {
 
   // Check if admin already exists
   const existingAdmin = await prisma.user.findFirst({
-    where: { isAdmin: true },
+    where: { role: 'ADMIN' },
   });
 
   if (existingAdmin) {
@@ -38,7 +38,7 @@ async function main() {
       username: adminUsername,
       passwordHash,
       fullName: adminFullName,
-      isAdmin: true,
+      role: 'ADMIN',
       status: 'ACTIVE',
       forcePasswordChange: true, // Force password change on first login
     },

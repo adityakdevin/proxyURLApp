@@ -158,7 +158,7 @@ router.post('/exit-impersonation', authMiddleware, async (req: Request, res: Res
       where: { id: impersonatedBy },
     });
 
-    if (!adminUser || !adminUser.isAdmin || adminUser.status !== 'ACTIVE') {
+    if (!adminUser || adminUser.role !== 'ADMIN' || adminUser.status !== 'ACTIVE') {
       clearSessionCookie(res);
       return res.status(401).json({
         error: 'Admin session no longer valid',
@@ -188,7 +188,7 @@ router.post('/exit-impersonation', authMiddleware, async (req: Request, res: Res
         userId: adminUser.id,
         username: adminUser.username,
         fullName: adminUser.fullName,
-        isAdmin: adminUser.isAdmin,
+        role: adminUser.role,
         forcePasswordChange: adminUser.forcePasswordChange,
       },
     });

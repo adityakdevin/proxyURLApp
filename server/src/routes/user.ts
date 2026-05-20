@@ -317,7 +317,7 @@ router.get('/profile', async (req: Request, res: Response, next: NextFunction) =
         id: true,
         username: true,
         fullName: true,
-        isAdmin: true,
+        role: true,
         createdAt: true,
         assignments: {
           include: {
@@ -342,7 +342,7 @@ router.get('/profile', async (req: Request, res: Response, next: NextFunction) =
         id: user.id,
         username: user.username,
         fullName: user.fullName,
-        isAdmin: user.isAdmin,
+        role: user.role,
         createdAt: user.createdAt,
         assignment: assignment
           ? {
