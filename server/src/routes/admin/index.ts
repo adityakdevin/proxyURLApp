@@ -13,6 +13,7 @@ import profileRoutes from './profile.js';
 import statusMastersRoutes from './statusMasters.js';
 import documentTypeMastersRoutes from './documentTypeMasters.js';
 import claimIdRulesRoutes from './claimIdRules.js';
+import claimsRoutes from './claims.js';
 
 const router = Router();
 
@@ -34,5 +35,6 @@ router.use('/profile', profileRoutes);
 router.use('/status-masters', statusMastersRoutes);
 router.use('/document-type-masters', documentTypeMastersRoutes);
 router.use('/claim-id-rules', claimIdRulesRoutes);
+router.use('/claims', claimsRoutes);
 
 export default router;

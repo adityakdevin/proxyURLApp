@@ -357,4 +357,103 @@ router.get('/profile', async (req: Request, res: Response, next: NextFunction) =
   }
 });
 
+// GET /api/user/sub-categories - SubCategories visible to caller (used by Claim Dashboard filters + forms)
+router.get('/sub-categories', async (req, res, next) => {
+  try {
+    const prisma = req.app.get('prisma') as PrismaClient;
+    const userId = req.session!.userId;
+    const role = req.session!.role;
+
+    if (role === 'ADMIN') {
+      const all = await prisma.subCategory.findMany({
+        where: { status: 'ACTIVE' },
+        include: {
+          category: { select: { id: true, name: true, userTypeId: true, projectTypeId: true } },
+        },
+        orderBy: { name: 'asc' },
+      });
+      return res.json({ data: all });
+    }
+
+    const assignment = await prisma.userAssignment.findUnique({ where: { userId } });
+    if (!assignment) return res.json({ data: [] });
+
+    const list = await prisma.subCategory.findMany({
+      where: {
+        status: 'ACTIVE',
+        category: {
+          userTypeId: assignment.userTypeId,
+          projectTypeId: assignment.projectTypeId,
+          status: 'ACTIVE',
+        },
+      },
+      include: { category: { select: { id: true, name: true } } },
+      orderBy: { name: 'asc' },
+    });
+    res.json({ data: list });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/user/status-masters?subCategoryId=...
+router.get('/status-masters', async (req, res, next) => {
+  try {
+    const prisma = req.app.get('prisma') as PrismaClient;
+    const subCategoryId = req.query.subCategoryId as string | undefined;
+    if (!subCategoryId) {
+      return res
+        .status(400)
+        .json({ error: 'subCategoryId required', code: 'VALIDATION_ERROR' });
+    }
+    const list = await prisma.statusMaster.findMany({
+      where: { subCategoryId, status: 'ACTIVE' },
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+    });
+    res.json({ data: list });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/user/users-in-scope - TL/ADMIN only
+router.get('/users-in-scope', async (req, res, next) => {
+  try {
+    const prisma = req.app.get('prisma') as PrismaClient;
+    const role = req.session!.role;
+    if (role !== 'TEAM_LEAD' && role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+    }
+    if (role === 'ADMIN') {
+      const all = await prisma.user.findMany({
+        where: { status: 'ACTIVE', role: { not: 'ADMIN' } },
+        select: { id: true, fullName: true, username: true },
+        orderBy: { fullName: 'asc' },
+      });
+      return res.json({ data: all });
+    }
+    const assignment = await prisma.userAssignment.findUnique({
+      where: { userId: req.session!.userId },
+    });
+    if (!assignment) return res.json({ data: [] });
+    const list = await prisma.user.findMany({
+      where: {
+        status: 'ACTIVE',
+        role: { not: 'ADMIN' },
+        assignments: {
+          some: {
+            userTypeId: assignment.userTypeId,
+            projectTypeId: assignment.projectTypeId,
+          },
+        },
+      },
+      select: { id: true, fullName: true, username: true },
+      orderBy: { fullName: 'asc' },
+    });
+    res.json({ data: list });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
