@@ -25,6 +25,38 @@ enum AuditLevel {
   FULL        // Include all interactions
 }
 
+enum Role {
+  USER
+  TEAM_LEAD
+  ADMIN
+}
+
+enum DocumentTypeCategory {
+  GOVT
+  CUSTOM
+}
+
+enum GovtDocumentCode {
+  AADHAR
+  PAN
+  DL
+  PASSPORT
+  VOTER_ID
+  RATION_CARD
+}
+
+enum ScanTarget {
+  FOLDER
+  FILE
+}
+
+enum ValidationStatus {
+  PENDING
+  IN_PROGRESS
+  PASSED
+  FAILED
+}
+
 model UserType {
   id          String   @id @default(uuid()) @db.VarChar(36)
   name        String   @unique @db.VarChar(100)
@@ -66,7 +98,7 @@ model User {
   username            String    @unique @db.VarChar(100)
   passwordHash        String    @map("password_hash") @db.VarChar(255)
   fullName            String    @map("full_name") @db.VarChar(200)
-  isAdmin             Boolean   @default(false) @map("is_admin")
+  role                Role      @default(USER)
   status              Status    @default(ACTIVE)
   forcePasswordChange Boolean   @default(true) @map("force_password_change")
   failedAttempts      Int       @default(0) @map("failed_attempts")
@@ -76,10 +108,12 @@ model User {
   createdBy           String?   @map("created_by") @db.VarChar(36)
   updatedBy           String?   @map("updated_by") @db.VarChar(36)
 
-  assignments  UserAssignment[]
-  sessions     Session[]
-  auditLogs    AuditLog[]
-  proxyMetrics ProxyMetric[]
+  assignments      UserAssignment[]
+  sessions         Session[]
+  auditLogs        AuditLog[]
+  proxyMetrics     ProxyMetric[]
+  assignedClaims   Claim[]          @relation("ClaimAssignee")
+  authoredRemarks  ClaimRemark[]    @relation("ClaimRemarkAuthor")
 
   @@map("users")
 }
@@ -130,8 +164,12 @@ model SubCategory {
   createdBy   String?  @map("created_by") @db.VarChar(36)
   updatedBy   String?  @map("updated_by") @db.VarChar(36)
 
-  category          Category           @relation(fields: [categoryId], references: [id])
-  urlConfigurations UrlConfiguration[]
+  category            Category             @relation(fields: [categoryId], references: [id])
+  urlConfigurations   UrlConfiguration[]
+  statusMasters       StatusMaster[]
+  documentTypeMasters DocumentTypeMaster[]
+  claimIdRule         ClaimIdRule?
+  claims              Claim[]
 
   @@unique([name, categoryId])
   @@map("sub_categories")
@@ -260,4 +298,118 @@ model ProxyMetric {
   @@index([startTime])
   @@index([proxyMode])
   @@map("proxy_metrics")
+}
+
+model StatusMaster {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  subCategoryId String   @map("sub_category_id") @db.VarChar(36)
+  name          String   @db.VarChar(100)
+  displayOrder  Int      @default(0) @map("display_order")
+  isDefault     Boolean  @default(false) @map("is_default")
+  isTerminal    Boolean  @default(false) @map("is_terminal")
+  status        Status   @default(ACTIVE)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdBy     String?  @map("created_by") @db.VarChar(36)
+  updatedBy     String?  @map("updated_by") @db.VarChar(36)
+
+  subCategory         SubCategory   @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
+  claims              Claim[]       @relation("ClaimWorkflowStatus")
+  remarksStatusBefore ClaimRemark[] @relation("ClaimRemarkStatusBefore")
+  remarksStatusAfter  ClaimRemark[] @relation("ClaimRemarkStatusAfter")
+
+  @@unique([name, subCategoryId])
+  @@index([subCategoryId])
+  @@map("status_masters")
+}
+
+model DocumentTypeMaster {
+  id            String               @id @default(uuid()) @db.VarChar(36)
+  subCategoryId String               @map("sub_category_id") @db.VarChar(36)
+  name          String               @db.VarChar(100)
+  category      DocumentTypeCategory
+  govtCode      GovtDocumentCode?    @map("govt_code")
+  displayOrder  Int                  @default(0) @map("display_order")
+  status        Status               @default(ACTIVE)
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  createdBy     String?              @map("created_by") @db.VarChar(36)
+  updatedBy     String?              @map("updated_by") @db.VarChar(36)
+
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
+
+  @@unique([name, subCategoryId])
+  @@unique([govtCode, subCategoryId])
+  @@index([subCategoryId])
+  @@map("document_type_masters")
+}
+
+model ClaimIdRule {
+  id            String     @id @default(uuid()) @db.VarChar(36)
+  subCategoryId String     @unique @map("sub_category_id") @db.VarChar(36)
+  startPosition Int        @map("start_position")
+  length        Int
+  scanTarget    ScanTarget @map("scan_target")
+  scanLocation  String     @map("scan_location") @db.VarChar(500)
+  status        Status     @default(ACTIVE)
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  createdBy     String?    @map("created_by") @db.VarChar(36)
+  updatedBy     String?    @map("updated_by") @db.VarChar(36)
+
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
+
+  @@map("claim_id_rules")
+}
+
+model Claim {
+  id                   String           @id @default(uuid()) @db.VarChar(36)
+  claimId              String           @map("claim_id") @db.VarChar(100)
+  subCategoryId        String           @map("sub_category_id") @db.VarChar(36)
+  workflowStatusId     String           @map("workflow_status_id") @db.VarChar(36)
+  assignedToUserId     String?          @map("assigned_to_user_id") @db.VarChar(36)
+  folderPath           String?          @map("folder_path") @db.VarChar(500)
+
+  spellCheckStatus     ValidationStatus @default(PENDING) @map("spell_check_status")
+  qrStatus             ValidationStatus @default(PENDING) @map("qr_status")
+  metaExtractionStatus ValidationStatus @default(PENDING) @map("meta_extraction_status")
+  intraClaimStatus     ValidationStatus @default(PENDING) @map("intra_claim_status")
+  fullScanStatus       ValidationStatus @default(PENDING) @map("full_scan_status")
+
+  status               Status           @default(ACTIVE)
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+  createdBy            String?          @map("created_by") @db.VarChar(36)
+  updatedBy            String?          @map("updated_by") @db.VarChar(36)
+
+  subCategory    SubCategory   @relation(fields: [subCategoryId], references: [id])
+  workflowStatus StatusMaster  @relation("ClaimWorkflowStatus", fields: [workflowStatusId], references: [id])
+  assignedTo     User?         @relation("ClaimAssignee", fields: [assignedToUserId], references: [id])
+  remarks        ClaimRemark[]
+
+  @@unique([claimId, subCategoryId])
+  @@index([subCategoryId])
+  @@index([workflowStatusId])
+  @@index([assignedToUserId])
+  @@index([createdBy])
+  @@map("claims")
+}
+
+model ClaimRemark {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  claimId        String   @map("claim_id") @db.VarChar(36)
+  userId         String   @map("user_id") @db.VarChar(36)
+  remarkText     String   @map("remark_text") @db.Text
+  statusBeforeId String?  @map("status_before_id") @db.VarChar(36)
+  statusAfterId  String?  @map("status_after_id") @db.VarChar(36)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  claim        Claim         @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  user         User          @relation("ClaimRemarkAuthor", fields: [userId], references: [id])
+  statusBefore StatusMaster? @relation("ClaimRemarkStatusBefore", fields: [statusBeforeId], references: [id])
+  statusAfter  StatusMaster? @relation("ClaimRemarkStatusAfter", fields: [statusAfterId], references: [id])
+
+  @@index([claimId])
+  @@index([createdAt])
+  @@map("claim_remarks")
 }
