@@ -18,6 +18,7 @@ import {
   Loader2,
   UserCheck,
   X,
+  ClipboardList,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -202,6 +203,26 @@ export default function UserLayout() {
                 Dashboard
               </Link>
 
+              <div className="pt-4 mt-4 border-t">
+                <span className="px-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  Claims
+                </span>
+                <div className="mt-2">
+                  <Link
+                    to="/claims"
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
+                      location.pathname.startsWith('/claims')
+                        ? 'bg-gray-100 text-gray-900 font-medium'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                    )}
+                  >
+                    <ClipboardList className="h-4 w-4" />
+                    Claim Dashboard
+                  </Link>
+                </div>
+              </div>
+
               {isLoading && (
                 <div className="flex items-center gap-2 px-3 py-4 text-gray-400 text-sm">
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -225,7 +246,7 @@ export default function UserLayout() {
               {!isLoading && menuData && menuData.menu.length > 0 && (
                 <div className="pt-4 border-t mt-4">
                   <span className="px-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                    Available URLs
+                    My URLs
                   </span>
                   <div className="mt-2 space-y-1">
                     {menuData.menu.map((category) => (

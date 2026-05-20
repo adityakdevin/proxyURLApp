@@ -10,6 +10,10 @@ import {
   LogOut,
   LayoutDashboard,
   Briefcase,
+  ListChecks,
+  FileText,
+  Crosshair,
+  ClipboardList,
 } from 'lucide-react';
 
 const navItems = [
@@ -20,6 +24,13 @@ const navItems = [
   { path: '/admin/categories', label: 'Categories', icon: FolderTree },
   { path: '/admin/sub-categories', label: 'Sub-Categories', icon: Folder },
   { path: '/admin/url-configs', label: 'URL Configs', icon: Link2 },
+];
+
+const claimsNavItems = [
+  { path: '/admin/status-masters', label: 'Status Masters', icon: ListChecks },
+  { path: '/admin/doc-type-masters', label: 'Doc Type Masters', icon: FileText },
+  { path: '/admin/claim-id-rules', label: 'Claim ID Rules', icon: Crosshair },
+  { path: '/admin/claims', label: 'Claims (All)', icon: ClipboardList },
 ];
 
 export default function AdminLayout() {
@@ -77,6 +88,27 @@ export default function AdminLayout() {
                   to={item.path}
                   className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
                     isActive(item.path, item.exact)
+                      ? 'bg-gray-100 text-gray-900 font-medium'
+                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {item.label}
+                </Link>
+              );
+            })}
+
+            <div className="mt-6 mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Claims Config
+            </div>
+            {claimsNavItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                    isActive(item.path)
                       ? 'bg-gray-100 text-gray-900 font-medium'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`}
