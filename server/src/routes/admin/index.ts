@@ -12,6 +12,7 @@ import settingsRoutes from './settings.js';
 import profileRoutes from './profile.js';
 import statusMastersRoutes from './statusMasters.js';
 import documentTypeMastersRoutes from './documentTypeMasters.js';
+import claimIdRulesRoutes from './claimIdRules.js';
 
 const router = Router();
 
@@ -32,5 +33,6 @@ router.use('/settings', settingsRoutes);
 router.use('/profile', profileRoutes);
 router.use('/status-masters', statusMastersRoutes);
 router.use('/document-type-masters', documentTypeMastersRoutes);
+router.use('/claim-id-rules', claimIdRulesRoutes);
 
 export default router;
