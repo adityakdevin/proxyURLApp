@@ -11,6 +11,7 @@ import auditLogsRoutes from './auditLogs.js';
 import settingsRoutes from './settings.js';
 import profileRoutes from './profile.js';
 import statusMastersRoutes from './statusMasters.js';
+import documentTypeMastersRoutes from './documentTypeMasters.js';
 
 const router = Router();
 
@@ -30,5 +31,6 @@ router.use('/audit-logs', auditLogsRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/profile', profileRoutes);
 router.use('/status-masters', statusMastersRoutes);
+router.use('/document-type-masters', documentTypeMastersRoutes);
 
 export default router;
