@@ -12,8 +12,6 @@ import {
   Briefcase,
   ListChecks,
   FileText,
-  Crosshair,
-  ClipboardList,
 } from 'lucide-react';
 
 const navItems = [
