@@ -37,19 +37,22 @@ export function SubCategoryPicker({ value, onChange, disabled }: Props) {
     Promise.all([
       api.get<{ data: Option[] }>('/admin/user-types?limit=100&status=ACTIVE'),
       api.get<{ data: Option[] }>('/admin/project-types?limit=100&status=ACTIVE'),
-    ]).then(([ut, pt]) => {
-      setUserTypes(ut.data);
-      setProjectTypes(pt.data);
-    });
+    ])
+      .then(([ut, pt]) => {
+        setUserTypes(ut.data);
+        setProjectTypes(pt.data);
+      })
+      .catch((e) => console.error('SubCategoryPicker: load user/project types failed', e));
   }, []);
 
   useEffect(() => {
     if (value.userTypeId && value.projectTypeId) {
       api
         .get<{ data: Option[] }>(
-          `/admin/categories?userTypeId=${value.userTypeId}&projectTypeId=${value.projectTypeId}&limit=200&status=ACTIVE`
+          `/admin/categories?userTypeId=${value.userTypeId}&projectTypeId=${value.projectTypeId}&limit=100&status=ACTIVE`
         )
-        .then((r) => setCategories(r.data));
+        .then((r) => setCategories(r.data))
+        .catch((e) => console.error('SubCategoryPicker: load categories failed', e));
     } else {
       setCategories([]);
     }
@@ -59,9 +62,10 @@ export function SubCategoryPicker({ value, onChange, disabled }: Props) {
     if (value.categoryId) {
       api
         .get<{ data: Option[] }>(
-          `/admin/sub-categories?categoryId=${value.categoryId}&limit=200&status=ACTIVE`
+          `/admin/sub-categories?categoryId=${value.categoryId}&limit=100&status=ACTIVE`
         )
-        .then((r) => setSubCategories(r.data));
+        .then((r) => setSubCategories(r.data))
+        .catch((e) => console.error('SubCategoryPicker: load sub-categories failed', e));
     } else {
       setSubCategories([]);
     }
