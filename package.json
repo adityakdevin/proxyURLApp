@@ -16,13 +16,14 @@
     "stop": "npm run stop --workspace=server",
     "db:migrate": "npm run db:migrate --workspace=server",
     "db:migrate:deploy": "npm run db:migrate:deploy --workspace=server",
+    "db:push": "npm run db:push --workspace=server",
     "db:generate": "npm run db:generate --workspace=server",
     "db:seed": "npm run db:seed --workspace=server",
     "db:studio": "npm run db:studio --workspace=server",
     "db:backup": "npm run db:backup --workspace=server",
     "test": "npm run test --workspace=server",
     "lint": "npm run lint --workspaces",
-    "deploy": "npm run db:generate && npm run db:migrate:deploy && npm run build"
+    "deploy": "npm run db:generate && npm run db:push && npm run build"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
