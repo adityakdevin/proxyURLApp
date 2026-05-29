@@ -34,7 +34,7 @@ export default function Login() {
 
       if (data.user.forcePasswordChange) {
         navigate('/change-password');
-      } else if (data.user.isAdmin) {
+      } else if (data.user.role === 'ADMIN') {
         navigate('/admin');
       } else {
         navigate('/dashboard');

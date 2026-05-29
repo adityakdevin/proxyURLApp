@@ -12,7 +12,7 @@ interface Profile {
   id: string;
   username: string;
   fullName: string;
-  isAdmin: boolean;
+  role: 'USER' | 'TEAM_LEAD' | 'ADMIN';
   createdAt: string;
 }
 

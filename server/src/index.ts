@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin/index.js';
 import userRoutes from './routes/user.js';
+import claimsRoutes from './routes/claims.js';
 import proxyRoutes from './routes/proxy.js';
 
 // Services
@@ -61,6 +62,7 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/claims', claimsRoutes);
 if (process.env.NODE_ENV === 'production') {
   const clientPath = path.resolve(process.cwd(), '../client/dist');
   app.use(express.static(clientPath));

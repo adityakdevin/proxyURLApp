@@ -28,7 +28,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         id: true,
         username: true,
         fullName: true,
-        isAdmin: true,
+        role: true,
         createdAt: true,
       },
     });
@@ -110,7 +110,7 @@ router.put(
           id: true,
           username: true,
           fullName: true,
-          isAdmin: true,
+          role: true,
         },
       });
 

@@ -51,7 +51,7 @@ router.get(
       const skip = (pageNum - 1) * limitNum;
 
       const where: Record<string, unknown> = {
-        isAdmin: false, // Only end users, not admins
+        role: { not: 'ADMIN' }, // Only non-admin users in this list
       };
       if (status) where.status = status;
       if (search) {
@@ -113,12 +113,13 @@ router.post(
     body('userTypeId').isUUID().withMessage('Valid User Type is required'),
     body('projectTypeId').isUUID().withMessage('Valid Project Type is required'),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
+    body('role').optional().isIn(['USER', 'TEAM_LEAD', 'ADMIN']),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const prisma = req.app.get('prisma') as PrismaClient;
-      const { username, password, fullName, userTypeId, projectTypeId, status = 'ACTIVE' } = req.body;
+      const { username, password, fullName, userTypeId, projectTypeId, status = 'ACTIVE', role = 'USER' } = req.body;
 
       // Validate password policy
       const passwordValidation = validatePasswordPolicy(password);
@@ -161,13 +162,14 @@ router.post(
       // Hash password
       const passwordHash = await hashPassword(password);
 
-      // Create user with assignment
+      // Create user with assignment. Admin role still goes via this route but does
+      // not get a UserAssignment (we skip the assignment for ADMIN).
       const user = await prisma.user.create({
         data: {
           username,
           passwordHash,
           fullName,
-          isAdmin: false,
+          role,
           status,
           forcePasswordChange: true,
           createdBy: req.session!.userId,
@@ -245,13 +247,14 @@ router.put(
     body('userTypeId').optional().isUUID(),
     body('projectTypeId').optional().isUUID(),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
+    body('role').optional().isIn(['USER', 'TEAM_LEAD', 'ADMIN']),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const prisma = req.app.get('prisma') as PrismaClient;
       const { id } = req.params;
-      const { username, password, fullName, userTypeId, projectTypeId, status } = req.body;
+      const { username, password, fullName, userTypeId, projectTypeId, status, role } = req.body;
 
       const existing = await prisma.user.findUnique({
         where: { id },
@@ -265,8 +268,8 @@ router.put(
         });
       }
 
-      // Cannot edit admin users through this endpoint
-      if (existing.isAdmin) {
+      // Cannot edit admin users through this endpoint (admin self-service is via /admin/profile)
+      if (existing.role === 'ADMIN') {
         return res.status(403).json({
           error: 'Cannot edit admin users',
           code: 'FORBIDDEN',
@@ -338,6 +341,7 @@ router.put(
           ...(passwordHash && { passwordHash, forcePasswordChange: true }),
           ...(fullName && { fullName }),
           ...(status && { status }),
+          ...(role && { role }),
           updatedBy: req.session!.userId,
         },
         include: {
@@ -392,7 +396,7 @@ router.delete(
       }
 
       // Cannot delete admin users through this endpoint
-      if (existing.isAdmin) {
+      if (existing.role === 'ADMIN') {
         return res.status(403).json({
           error: 'Cannot delete admin users',
           code: 'FORBIDDEN',
@@ -431,7 +435,7 @@ router.post(
         });
       }
 
-      if (user.isAdmin) {
+      if (user.role === 'ADMIN') {
         return res.status(403).json({
           error: 'Cannot impersonate admin users',
           code: 'FORBIDDEN',
@@ -469,7 +473,7 @@ router.post(
           userId: user.id,
           username: user.username,
           fullName: user.fullName,
-          isAdmin: false,
+          role: user.role,
           forcePasswordChange: user.forcePasswordChange,
           userTypeId: assignment?.userTypeId,
           projectTypeId: assignment?.projectTypeId,

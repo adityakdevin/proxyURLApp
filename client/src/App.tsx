@@ -23,7 +23,21 @@ import UserDashboard from '@/pages/user/Dashboard';
 import SubCategoryUrls from '@/pages/user/SubCategoryUrls';
 import ProxyView from '@/pages/user/ProxyView';
 
-function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
+// Claims pages (admin + user share Update page)
+import StatusMasters from '@/pages/admin/StatusMasters';
+import DocumentTypeMasters from '@/pages/admin/DocumentTypeMasters';
+import ClaimIdRules from '@/pages/admin/ClaimIdRules';
+import AdminClaims from '@/pages/admin/AdminClaims';
+import ClaimDashboard from '@/pages/claims/ClaimDashboard';
+import ClaimUpdate from '@/pages/claims/ClaimUpdate';
+
+function ProtectedRoute({
+  children,
+  requiredRole,
+}: {
+  children: React.ReactNode;
+  requiredRole?: 'TEAM_LEAD' | 'ADMIN';
+}) {
   const { user, isAuthenticated } = useAuthStore();
 
   if (!isAuthenticated) {
@@ -34,7 +48,10 @@ function ProtectedRoute({ children, adminOnly = false }: { children: React.React
     return <Navigate to="/change-password" replace />;
   }
 
-  if (adminOnly && !user?.isAdmin) {
+  if (requiredRole === 'ADMIN' && user?.role !== 'ADMIN') {
+    return <Navigate to="/dashboard" replace />;
+  }
+  if (requiredRole === 'TEAM_LEAD' && user?.role !== 'TEAM_LEAD' && user?.role !== 'ADMIN') {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -53,7 +70,7 @@ function App() {
         <Route
           path="/admin"
           element={
-            <ProtectedRoute adminOnly>
+            <ProtectedRoute requiredRole="ADMIN">
               <AdminLayout />
             </ProtectedRoute>
           }
@@ -66,6 +83,11 @@ function App() {
           <Route path="sub-categories" element={<SubCategories />} />
           <Route path="url-configs" element={<UrlConfigs />} />
           <Route path="profile" element={<Profile />} />
+          <Route path="status-masters" element={<StatusMasters />} />
+          <Route path="doc-type-masters" element={<DocumentTypeMasters />} />
+          <Route path="claim-id-rules" element={<ClaimIdRules />} />
+          <Route path="claims" element={<AdminClaims />} />
+          <Route path="claims/:id" element={<ClaimUpdate />} />
         </Route>
 
         {/* User routes */}
@@ -80,6 +102,8 @@ function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<UserDashboard />} />
           <Route path="subcategory/:subCategoryId" element={<SubCategoryUrls />} />
+          <Route path="claims" element={<ClaimDashboard />} />
+          <Route path="claims/:id" element={<ClaimUpdate />} />
         </Route>
 
         {/* Proxy view (full page, no layout) */}

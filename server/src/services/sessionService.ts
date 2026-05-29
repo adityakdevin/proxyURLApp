@@ -1,9 +1,8 @@
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient, Prisma, Role } from '@prisma/client';
 import crypto from 'crypto';
 
 // Get Session type from Prisma
 type Session = Prisma.SessionGetPayload<{}>;
-type User = Prisma.UserGetPayload<{}>;
 
 const SESSION_MAX_AGE_MS = parseInt(process.env.SESSION_MAX_AGE_MS || '1800000', 10); // 30 minutes
 
@@ -11,7 +10,7 @@ export interface SessionData {
   userId: string;
   username: string;
   fullName: string;
-  isAdmin: boolean;
+  role: Role;
   forcePasswordChange: boolean;
   userTypeId?: string;
   projectTypeId?: string;
@@ -113,7 +112,7 @@ export class SessionService {
       userId: session.user.id,
       username: session.user.username,
       fullName: session.user.fullName,
-      isAdmin: session.user.isAdmin,
+      role: session.user.role,
       forcePasswordChange: session.user.forcePasswordChange,
       userTypeId: assignment?.userTypeId,
       projectTypeId: assignment?.projectTypeId,
@@ -178,7 +177,7 @@ export class SessionService {
             id: true,
             username: true,
             fullName: true,
-            isAdmin: true,
+            role: true,
           },
         },
       },
