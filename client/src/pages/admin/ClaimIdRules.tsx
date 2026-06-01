@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
+import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, ScanLine } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
@@ -36,6 +36,17 @@ interface Rule {
   scanTarget: 'FOLDER' | 'FILE';
   scanLocation: string;
   status: 'ACTIVE' | 'INACTIVE';
+}
+
+interface ScanJobView {
+  id: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  totalEntries: number;
+  createdCount: number;
+  skippedCount: number;
+  errorCount: number;
+  message: string | null;
+  errors: { entry: string; reason: string }[] | null;
 }
 
 function validateLocation(v: string): string | null {
@@ -123,16 +134,74 @@ export default function ClaimIdRules() {
       toast({ title: 'Deleted' });
       setIsDeleteOpen(false);
       fetchData(pagination.page, pagination.limit);
+    } catch (e) {
+      toast({
+        title: 'Error',
+        variant: 'destructive',
+        description: e instanceof Error ? e.message : 'Delete failed',
+      });
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleToggle = async (r: Rule) => {
-    await api.patch(`/admin/claim-id-rules/${r.id}/status`, {
-      status: r.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
-    });
-    fetchData(pagination.page, pagination.limit);
+    try {
+      await api.patch(`/admin/claim-id-rules/${r.id}/status`, {
+        status: r.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
+      });
+      fetchData(pagination.page, pagination.limit);
+    } catch (e) {
+      toast({
+        title: 'Error',
+        variant: 'destructive',
+        description: e instanceof Error ? e.message : 'Failed to update status',
+      });
+    }
+  };
+
+  const [scanJob, setScanJob] = useState<ScanJobView | null>(null);
+
+  useEffect(() => {
+    if (!scanJob || scanJob.status === 'COMPLETED' || scanJob.status === 'FAILED') return;
+    const t = setInterval(async () => {
+      try {
+        const r = await api.get<{ data: ScanJobView }>(`/admin/scans/${scanJob.id}`);
+        setScanJob(r.data);
+        if (r.data.status === 'COMPLETED') {
+          toast({
+            title: 'Scan complete',
+            description: `Created ${r.data.createdCount}, skipped ${r.data.skippedCount}, ${r.data.errorCount} error(s).`,
+          });
+          fetchData(pagination.page, pagination.limit);
+        } else if (r.data.status === 'FAILED') {
+          toast({
+            title: 'Scan failed',
+            variant: 'destructive',
+            description: r.data.message ?? 'Unknown error',
+          });
+        }
+      } catch {
+        // transient poll error; keep polling
+      }
+    }, 1500);
+    return () => clearInterval(t);
+  }, [scanJob, pagination.page, pagination.limit]);
+
+  const handleScan = async (rule: Rule) => {
+    try {
+      const r = await api.post<{ data: { jobId: string } }>('/admin/scans', {
+        claimIdRuleId: rule.id,
+      });
+      const job = await api.get<{ data: ScanJobView }>(`/admin/scans/${r.data.jobId}`);
+      setScanJob(job.data);
+    } catch (e) {
+      toast({
+        title: 'Could not start scan',
+        variant: 'destructive',
+        description: e instanceof Error ? e.message : 'Failed',
+      });
+    }
   };
 
   const columns: ColumnDef<Rule>[] = [
@@ -173,6 +242,13 @@ export default function ClaimIdRules() {
             >
               <Pencil className="mr-2 h-4 w-4" />
               Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={row.original.status !== 'ACTIVE'}
+              onClick={() => handleScan(row.original)}
+            >
+              <ScanLine className="mr-2 h-4 w-4" />
+              Scan now
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleToggle(row.original)}>
               {row.original.status === 'ACTIVE' ? (
@@ -229,6 +305,34 @@ export default function ClaimIdRules() {
       <div className="mb-4 p-4 bg-white border rounded-md">
         <SubCategoryPicker value={picker} onChange={setPicker} />
       </div>
+
+      {scanJob && (
+        <div className="mb-4 p-4 bg-white border rounded-md">
+          <div className="flex items-center justify-between">
+            <p className="font-medium">
+              Scan{' '}
+              {scanJob.status === 'RUNNING' || scanJob.status === 'QUEUED'
+                ? 'in progress'
+                : scanJob.status.toLowerCase()}
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setScanJob(null)}
+            >
+              Dismiss
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">
+            {scanJob.createdCount + scanJob.skippedCount + scanJob.errorCount} /{' '}
+            {scanJob.totalEntries} processed · created {scanJob.createdCount} · skipped{' '}
+            {scanJob.skippedCount} · errors {scanJob.errorCount}
+          </p>
+          {scanJob.status === 'FAILED' && scanJob.message && (
+            <p className="text-sm text-destructive mt-1">{scanJob.message}</p>
+          )}
+        </div>
+      )}
 
       <DataTable
         columns={columns}

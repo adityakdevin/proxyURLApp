@@ -406,6 +406,26 @@ router.get('/status-masters', async (req, res, next) => {
         .status(400)
         .json({ error: 'subCategoryId required', code: 'VALIDATION_ERROR' });
     }
+    // Non-admins may only read statuses for a SubCategory in their own scope.
+    if (req.session!.role !== 'ADMIN') {
+      const assignment = await prisma.userAssignment.findUnique({
+        where: { userId: req.session!.userId },
+      });
+      if (!assignment) {
+        return res.status(403).json({ error: 'No assignment found', code: 'NO_ASSIGNMENT' });
+      }
+      const sub = await prisma.subCategory.findUnique({
+        where: { id: subCategoryId },
+        include: { category: { select: { userTypeId: true, projectTypeId: true } } },
+      });
+      if (
+        !sub ||
+        sub.category.userTypeId !== assignment.userTypeId ||
+        sub.category.projectTypeId !== assignment.projectTypeId
+      ) {
+        return res.status(403).json({ error: 'Access denied', code: 'ACCESS_DENIED' });
+      }
+    }
     const list = await prisma.statusMaster.findMany({
       where: { subCategoryId, status: 'ACTIVE' },
       orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],

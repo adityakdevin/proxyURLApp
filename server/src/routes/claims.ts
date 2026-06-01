@@ -1,6 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { body, param, query, validationResult } from 'express-validator';
+import { body, param, query } from 'express-validator';
 import { authMiddleware, passwordChangedMiddleware } from '../middleware/auth.js';
 import {
   scopedMiddleware,
@@ -8,39 +7,27 @@ import {
   ScopedRequest,
 } from '../middleware/roleGuard.js';
 import { ClaimService, ClaimServiceError } from '../services/claimService.js';
+import claimDocumentsRoutes from './claimDocuments.js';
+import claimValidationRoutes from './claimValidation.js';
+import { ClaimRuleService } from '../services/claimRuleService.js';
+import { buildClaimsWorkbook } from '../services/claimReportService.js';
+import { validate, prismaOf, makeErrorHandler } from '../lib/routeHelpers.js';
 
 const router = Router();
 router.use(authMiddleware);
 router.use(passwordChangedMiddleware);
 router.use(scopedMiddleware);
 
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg,
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
-const getService = (req: Request) => new ClaimService(req.app.get('prisma') as PrismaClient);
+const getService = (req: Request) => new ClaimService(prismaOf(req));
 
-const handleErr = (err: unknown, res: Response, next: NextFunction) => {
-  if (err instanceof ClaimServiceError) {
-    const status =
-      err.code === 'NOT_FOUND'
-        ? 404
-        : err.code === 'DUPLICATE_CLAIM_ID'
-        ? 409
-        : err.code === 'REASSIGN_FORBIDDEN'
-        ? 403
-        : 400;
-    return res.status(status).json({ error: err.message, code: err.code });
-  }
-  next(err);
-};
+const handleErr = makeErrorHandler(ClaimServiceError, {
+  NOT_FOUND: 404,
+  SUBCATEGORY_NOT_FOUND: 404,
+  DUPLICATE_CLAIM_ID: 409,
+  TERMINAL_STATUS: 409,
+  REASSIGN_FORBIDDEN: 403,
+  OUT_OF_SCOPE: 403,
+});
 
 router.get(
   '/',
@@ -59,7 +46,12 @@ router.get(
       const r = await getService(req).list({
         subCategoryId: req.query.subCategoryId as string | undefined,
         workflowStatusId: req.query.workflowStatusId as string | undefined,
-        assignedToUserId: req.query.assignedToUserId as string | undefined,
+        // A regular USER may not filter by an arbitrary assignee; they use the
+        // "assigned to me" toggle (spec §6.2). Only TL/ADMIN get the user filter.
+        assignedToUserId:
+          req.session!.role === 'USER'
+            ? undefined
+            : (req.query.assignedToUserId as string | undefined),
         assignedToMe: req.query.assignedToMe as unknown as boolean | undefined,
         search: req.query.search as string | undefined,
         scope: req.scope!,
@@ -76,6 +68,45 @@ router.get(
           totalPages: Math.ceil(r.total / r.limit),
         },
       });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.get(
+  '/export',
+  [
+    query('subCategoryId').optional().isUUID(),
+    query('workflowStatusId').optional().isUUID(),
+    query('assignedToUserId').optional().isUUID(),
+    query('assignedToMe').optional().isBoolean().toBoolean(),
+    query('search').optional().isString(),
+  ],
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      const rows = await getService(req).exportRows({
+        subCategoryId: req.query.subCategoryId as string | undefined,
+        workflowStatusId: req.query.workflowStatusId as string | undefined,
+        assignedToUserId:
+          req.session!.role === 'USER'
+            ? undefined
+            : (req.query.assignedToUserId as string | undefined),
+        assignedToMe: req.query.assignedToMe as unknown as boolean | undefined,
+        search: req.query.search as string | undefined,
+        scope: req.scope!,
+        callerId: req.session!.userId,
+      });
+      const wb = buildClaimsWorkbook(rows);
+      const buf = await wb.xlsx.writeBuffer();
+      const date = new Date().toISOString().slice(0, 10);
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="claims-${date}.xlsx"`);
+      res.send(Buffer.from(buf));
     } catch (err) {
       next(err);
     }
@@ -112,9 +143,9 @@ router.post(
     body('remarkText').optional().isString(),
   ],
   validate,
-  async (req: Request, res: Response, next: NextFunction) => {
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
-      const created = await getService(req).create(req.body, req.session!.userId);
+      const created = await getService(req).create(req.body, req.session!.userId, req.scope);
       res.status(201).json({ data: created });
     } catch (err) {
       handleErr(err, res, next);
@@ -194,5 +225,27 @@ router.get(
     }
   }
 );
+
+router.get(
+  '/:id/rules',
+  [param('id').isUUID()],
+  validate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await new ClaimRuleService(prismaOf(req)).evaluateForClaim(
+        req.params.id,
+        req.session!.userId,
+        req.session!.role
+      );
+      if (!result) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.use('/:id/documents', claimDocumentsRoutes);
+router.use('/:id', claimValidationRoutes);
 
 export default router;

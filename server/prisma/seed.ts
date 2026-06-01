@@ -45,14 +45,17 @@ async function main() {
     create: { key: 'audit_retention_days', value: '90' },
   });
 
-  // Phase 1 Claims sample data — attach to first ACTIVE SubCategory if no default status yet
+  // Phase 1 Claims sample data — attach to first ACTIVE SubCategory. Each entity
+  // group is guarded independently so the seed is fully idempotent: re-running it
+  // (or running it over a partially-populated DB) never throws a unique-constraint
+  // error and never duplicates rows.
   const sampleSub = await prisma.subCategory.findFirst({ where: { status: 'ACTIVE' } });
   if (sampleSub) {
-    const existingDefault = await prisma.statusMaster.findFirst({
+    let pending = await prisma.statusMaster.findFirst({
       where: { subCategoryId: sampleSub.id, isDefault: true },
     });
-    if (!existingDefault) {
-      const pending = await prisma.statusMaster.create({
+    if (!pending) {
+      pending = await prisma.statusMaster.create({
         data: {
           subCategoryId: sampleSub.id,
           name: 'Pending',
@@ -83,40 +86,48 @@ async function main() {
           updatedBy: admin.id,
         },
       });
+    }
 
-      await prisma.documentTypeMaster.create({
-        data: {
-          subCategoryId: sampleSub.id,
-          name: 'Aadhar Card',
-          category: 'GOVT',
-          govtCode: 'AADHAR',
-          displayOrder: 1,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        },
+    const docTypeExists = await prisma.documentTypeMaster.findFirst({
+      where: { subCategoryId: sampleSub.id },
+    });
+    if (!docTypeExists) {
+      await prisma.documentTypeMaster.createMany({
+        data: [
+          {
+            subCategoryId: sampleSub.id,
+            name: 'Aadhar Card',
+            category: 'GOVT',
+            govtCode: 'AADHAR',
+            displayOrder: 1,
+            createdBy: admin.id,
+            updatedBy: admin.id,
+          },
+          {
+            subCategoryId: sampleSub.id,
+            name: 'PAN Card',
+            category: 'GOVT',
+            govtCode: 'PAN',
+            displayOrder: 2,
+            createdBy: admin.id,
+            updatedBy: admin.id,
+          },
+          {
+            subCategoryId: sampleSub.id,
+            name: 'Bill',
+            category: 'CUSTOM',
+            displayOrder: 3,
+            createdBy: admin.id,
+            updatedBy: admin.id,
+          },
+        ],
       });
-      await prisma.documentTypeMaster.create({
-        data: {
-          subCategoryId: sampleSub.id,
-          name: 'PAN Card',
-          category: 'GOVT',
-          govtCode: 'PAN',
-          displayOrder: 2,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        },
-      });
-      await prisma.documentTypeMaster.create({
-        data: {
-          subCategoryId: sampleSub.id,
-          name: 'Bill',
-          category: 'CUSTOM',
-          displayOrder: 3,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        },
-      });
+    }
 
+    const ruleExists = await prisma.claimIdRule.findUnique({
+      where: { subCategoryId: sampleSub.id },
+    });
+    if (!ruleExists) {
       await prisma.claimIdRule.create({
         data: {
           subCategoryId: sampleSub.id,
@@ -128,29 +139,25 @@ async function main() {
           updatedBy: admin.id,
         },
       });
-
-      await prisma.claim.create({
-        data: {
-          claimId: 'CLM00001',
-          subCategoryId: sampleSub.id,
-          workflowStatusId: pending.id,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        },
-      });
-      await prisma.claim.create({
-        data: {
-          claimId: 'CLM00002',
-          subCategoryId: sampleSub.id,
-          workflowStatusId: pending.id,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        },
-      });
-      console.log(`Phase 1 claims sample data seeded under SubCategory "${sampleSub.name}".`);
-    } else {
-      console.log('Claims sample data already present. Skipping.');
     }
+
+    for (const claimId of ['CLM00001', 'CLM00002']) {
+      const exists = await prisma.claim.findUnique({
+        where: { claimId_subCategoryId: { claimId, subCategoryId: sampleSub.id } },
+      });
+      if (!exists) {
+        await prisma.claim.create({
+          data: {
+            claimId,
+            subCategoryId: sampleSub.id,
+            workflowStatusId: pending.id,
+            createdBy: admin.id,
+            updatedBy: admin.id,
+          },
+        });
+      }
+    }
+    console.log(`Phase 1 claims sample data ensured under SubCategory "${sampleSub.name}".`);
   } else {
     console.log('No active SubCategory found. Skipping Phase 1 claims sample data.');
   }

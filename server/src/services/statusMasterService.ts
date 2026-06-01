@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma, Status, StatusMaster } from '@prisma/client';
+import { subCategoryExists } from '../lib/subCategoryGuard.js';
 
 export interface CreateStatusMasterInput {
   subCategoryId: string;
@@ -34,32 +35,61 @@ export class StatusMasterService {
   constructor(private prisma: PrismaClient) {}
 
   async create(input: CreateStatusMasterInput, actorId: string): Promise<StatusMaster> {
-    return this.prisma.$transaction(async (tx) => {
-      if (input.isDefault) {
-        await tx.statusMaster.updateMany({
-          where: { subCategoryId: input.subCategoryId, isDefault: true },
-          data: { isDefault: false },
+    if (!(await subCategoryExists(this.prisma, input.subCategoryId))) {
+      throw new StatusMasterServiceError('SUBCATEGORY_NOT_FOUND', 'SubCategory not found');
+    }
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        if (input.isDefault) {
+          await tx.statusMaster.updateMany({
+            where: { subCategoryId: input.subCategoryId, isDefault: true },
+            data: { isDefault: false },
+          });
+        }
+        return tx.statusMaster.create({
+          data: {
+            subCategoryId: input.subCategoryId,
+            name: input.name,
+            displayOrder: input.displayOrder ?? 0,
+            isDefault: input.isDefault ?? false,
+            isTerminal: input.isTerminal ?? false,
+            status: input.status ?? Status.ACTIVE,
+            createdBy: actorId,
+            updatedBy: actorId,
+          },
         });
-      }
-      return tx.statusMaster.create({
-        data: {
-          subCategoryId: input.subCategoryId,
-          name: input.name,
-          displayOrder: input.displayOrder ?? 0,
-          isDefault: input.isDefault ?? false,
-          isTerminal: input.isTerminal ?? false,
-          status: input.status ?? Status.ACTIVE,
-          createdBy: actorId,
-          updatedBy: actorId,
-        },
       });
-    });
+    } catch (err) {
+      // Translate the unique(name, subCategoryId) violation here (was handled
+      // inline in the route, inconsistently with sibling services).
+      if ((err as { code?: string }).code === 'P2002') {
+        throw new StatusMasterServiceError(
+          'DUPLICATE_STATUS_NAME',
+          'Status name must be unique per SubCategory'
+        );
+      }
+      throw err;
+    }
   }
 
   async update(id: string, input: UpdateStatusMasterInput, actorId: string): Promise<StatusMaster> {
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.statusMaster.findUnique({ where: { id } });
       if (!existing) throw new StatusMasterServiceError('NOT_FOUND', 'StatusMaster not found');
+      // The default status can't be deactivated or un-defaulted — claim creation
+      // and scan enqueue both require an ACTIVE default to exist.
+      if (existing.isDefault && input.status === 'INACTIVE') {
+        throw new StatusMasterServiceError(
+          'STATUS_IS_DEFAULT',
+          'Cannot deactivate the default status; set another status as default first'
+        );
+      }
+      if (existing.isDefault && input.isDefault === false) {
+        throw new StatusMasterServiceError(
+          'STATUS_IS_DEFAULT',
+          'Cannot unset the default status; promote another status to default instead'
+        );
+      }
       if (input.isDefault) {
         await tx.statusMaster.updateMany({
           where: { subCategoryId: existing.subCategoryId, isDefault: true, id: { not: id } },
@@ -74,20 +104,47 @@ export class StatusMasterService {
   }
 
   async delete(id: string): Promise<void> {
-    const inUse = await this.prisma.claim.count({ where: { workflowStatusId: id } });
-    if (inUse > 0) {
-      throw new StatusMasterServiceError(
-        'STATUS_IN_USE',
-        'Cannot delete a StatusMaster referenced by claims'
-      );
-    }
-    await this.prisma.statusMaster.delete({ where: { id } });
+    // Count claim + remark references atomically so a status can't be deleted
+    // out from under a claim's current status OR its audit timeline.
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.statusMaster.findUnique({ where: { id } });
+      if (!existing) throw new StatusMasterServiceError('NOT_FOUND', 'StatusMaster not found');
+      if (existing.isDefault) {
+        throw new StatusMasterServiceError(
+          'STATUS_IS_DEFAULT',
+          'Cannot delete the default status; promote another status to default first'
+        );
+      }
+      const [claimRefs, remarkRefs] = await Promise.all([
+        tx.claim.count({ where: { workflowStatusId: id } }),
+        tx.claimRemark.count({
+          where: { OR: [{ statusBeforeId: id }, { statusAfterId: id }] },
+        }),
+      ]);
+      if (claimRefs + remarkRefs > 0) {
+        throw new StatusMasterServiceError(
+          'STATUS_IN_USE',
+          'Cannot delete a StatusMaster referenced by claims or remark history'
+        );
+      }
+      await tx.statusMaster.delete({ where: { id } });
+    });
   }
 
   async setStatus(id: string, status: Status, actorId: string): Promise<StatusMaster> {
-    return this.prisma.statusMaster.update({
-      where: { id },
-      data: { status, updatedBy: actorId },
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.statusMaster.findUnique({ where: { id } });
+      if (!existing) throw new StatusMasterServiceError('NOT_FOUND', 'StatusMaster not found');
+      if (existing.isDefault && status === 'INACTIVE') {
+        throw new StatusMasterServiceError(
+          'STATUS_IS_DEFAULT',
+          'Cannot deactivate the default status; set another status as default first'
+        );
+      }
+      return tx.statusMaster.update({
+        where: { id },
+        data: { status, updatedBy: actorId },
+      });
     });
   }
 

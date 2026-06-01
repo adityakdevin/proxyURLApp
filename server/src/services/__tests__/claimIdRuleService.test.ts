@@ -29,6 +29,9 @@ describe('validateScanLocation', () => {
   it('rejects unix path /tmp/x', () => {
     expect(() => validateScanLocation('/tmp/x')).toThrow();
   });
+  it('rejects a path containing a .. segment', () => {
+    expect(() => validateScanLocation('D:\\Claims\\..\\Secret')).toThrow(ClaimIdRuleServiceError);
+  });
 });
 
 describe('ClaimIdRuleService', () => {
@@ -46,7 +49,10 @@ describe('ClaimIdRuleService', () => {
     actorId = admin!.id;
   });
   beforeEach(async () => { await truncateClaimsTables(prisma); });
-  afterAll(async () => { await disconnectTestPrisma(); });
+  afterAll(async () => {
+    await truncateClaimsTables(prisma);
+    await disconnectTestPrisma();
+  });
 
   it('creates a rule', async () => {
     const r = await service.create(
@@ -115,5 +121,38 @@ describe('ClaimIdRuleService', () => {
         actorId
       )
     ).rejects.toMatchObject({ code: 'INVALID_SCAN_LOCATION' });
+  });
+
+  it('rejects create for a non-existent SubCategory', async () => {
+    await expect(
+      service.create(
+        {
+          subCategoryId: '00000000-0000-0000-0000-000000000000',
+          startPosition: 1,
+          length: 8,
+          scanTarget: 'FOLDER',
+          scanLocation: 'D:\\X',
+        },
+        actorId
+      )
+    ).rejects.toMatchObject({ code: 'SUBCATEGORY_NOT_FOUND' });
+  });
+
+  it('refuses to delete a rule that still has a live scan job', async () => {
+    const rule = await service.create(
+      { subCategoryId, startPosition: 1, length: 8, scanTarget: 'FOLDER', scanLocation: 'D:\\Claims' },
+      actorId
+    );
+    await prisma.scanJob.create({
+      data: {
+        claimIdRuleId: rule.id,
+        subCategoryId,
+        status: 'RUNNING',
+        scanLocation: 'D:\\Claims',
+        scanTarget: 'FOLDER',
+      },
+    });
+    await expect(service.delete(rule.id)).rejects.toMatchObject({ code: 'SCAN_IN_PROGRESS' });
+    // The truncate in beforeEach cascade-deletes the scan job via the rule.
   });
 });

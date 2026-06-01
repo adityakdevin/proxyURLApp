@@ -56,7 +56,8 @@ router.post(
 
       res.json({
         message: 'Login successful',
-        user: result.user,
+        // Expose `id` (the client User shape) alongside the session's `userId`.
+        user: { ...result.user!, id: result.user!.userId },
       });
     } catch (error) {
       next(error);
@@ -128,7 +129,7 @@ router.post(
 // GET /api/auth/me - Get current user
 router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   res.json({
-    user: req.session,
+    user: { ...req.session!, id: req.session!.userId },
   });
 });
 
@@ -185,6 +186,7 @@ router.post('/exit-impersonation', authMiddleware, async (req: Request, res: Res
     res.json({
       message: 'Impersonation ended',
       user: {
+        id: adminUser.id,
         userId: adminUser.id,
         username: adminUser.username,
         fullName: adminUser.fullName,

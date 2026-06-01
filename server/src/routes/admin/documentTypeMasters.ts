@@ -1,27 +1,22 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { body, param, query, validationResult } from 'express-validator';
+import { body, param, query } from 'express-validator';
 import {
   DocumentTypeService,
   DocumentTypeServiceError,
 } from '../../services/documentTypeService.js';
+import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
 
 const router = Router();
 
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
-const getService = (req: Request) =>
-  new DocumentTypeService(req.app.get('prisma') as PrismaClient);
+const getService = (req: Request) => new DocumentTypeService(prismaOf(req));
 const GOVT_CODES = ['AADHAR', 'PAN', 'DL', 'PASSPORT', 'VOTER_ID', 'RATION_CARD'];
+
+const handleErr = makeErrorHandler(DocumentTypeServiceError, {
+  DUPLICATE_GOVT_CODE: 409,
+  DUPLICATE_NAME: 409,
+  NOT_FOUND: 404,
+  SUBCATEGORY_NOT_FOUND: 404,
+});
 
 router.get(
   '/',
@@ -65,6 +60,7 @@ router.post(
     body('category').isIn(['GOVT', 'CUSTOM']),
     body('govtCode').optional({ nullable: true }).isIn(GOVT_CODES),
     body('displayOrder').optional().isInt({ min: 0 }),
+    body('isRequired').optional().isBoolean().toBoolean(),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
@@ -72,14 +68,7 @@ router.post(
       const created = await getService(req).create(req.body, req.session!.userId);
       res.status(201).json({ data: created });
     } catch (err) {
-      if (err instanceof DocumentTypeServiceError) {
-        return res
-          .status(
-            err.code === 'DUPLICATE_GOVT_CODE' || err.code === 'DUPLICATE_NAME' ? 409 : 400
-          )
-          .json({ error: err.message, code: err.code });
-      }
-      next(err);
+      handleErr(err, res, next);
     }
   }
 );
@@ -89,9 +78,13 @@ router.get(
   [param('id').isUUID()],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
-    const d = await getService(req).getById(req.params.id);
-    if (!d) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
-    res.json({ data: d });
+    try {
+      const d = await getService(req).getById(req.params.id);
+      if (!d) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+      res.json({ data: d });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
   }
 );
 
@@ -101,6 +94,7 @@ router.put(
     param('id').isUUID(),
     body('name').optional().isString().trim().notEmpty(),
     body('displayOrder').optional().isInt({ min: 0 }),
+    body('isRequired').optional().isBoolean().toBoolean(),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
   ],
   validate,
@@ -109,7 +103,7 @@ router.put(
       const updated = await getService(req).update(req.params.id, req.body, req.session!.userId);
       res.json({ data: updated });
     } catch (err) {
-      next(err);
+      handleErr(err, res, next);
     }
   }
 );
@@ -119,12 +113,16 @@ router.patch(
   [param('id').isUUID(), body('status').isIn(['ACTIVE', 'INACTIVE'])],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
-    const updated = await getService(req).setStatus(
-      req.params.id,
-      req.body.status,
-      req.session!.userId
-    );
-    res.json({ data: updated });
+    try {
+      const updated = await getService(req).setStatus(
+        req.params.id,
+        req.body.status,
+        req.session!.userId
+      );
+      res.json({ data: updated });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
   }
 );
 
@@ -133,8 +131,12 @@ router.delete(
   [param('id').isUUID()],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
-    await getService(req).delete(req.params.id);
-    res.json({ message: 'Deleted' });
+    try {
+      await getService(req).delete(req.params.id);
+      res.json({ message: 'Deleted' });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
   }
 );
 

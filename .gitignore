@@ -42,3 +42,8 @@ server/prisma/*.db-journal
 client/.vite/
 docs
 start.bat
+
+# Claims module runtime artifacts (must never be committed)
+*.traineddata
+server/uploads/
+uploads/

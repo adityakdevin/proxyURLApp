@@ -56,6 +56,21 @@ interface UserOpt {
   fullName: string;
 }
 
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+// Mirror of the server folderPath rule (drive letter, not C:).
+const FOLDER_PATH_RE = /^[A-Za-z]:\\.+/;
+
 export default function ClaimDashboard() {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -70,9 +85,11 @@ export default function ClaimDashboard() {
   const [filters, setFilters] = useState<{
     subCategoryId?: string;
     workflowStatusId?: string;
+    assignedToUserId?: string;
     assignedToMe: boolean;
     search: string;
   }>({ assignedToMe: false, search: '' });
+  const noAssignment = role !== 'ADMIN' && !user?.userTypeId;
   const [filterStatuses, setFilterStatuses] = useState<Status[]>([]);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -109,6 +126,7 @@ export default function ClaimDashboard() {
       if (filters.subCategoryId) params.set('subCategoryId', filters.subCategoryId);
       if (filters.workflowStatusId) params.set('workflowStatusId', filters.workflowStatusId);
       if (filters.assignedToMe) params.set('assignedToMe', 'true');
+      if (filters.assignedToUserId) params.set('assignedToUserId', filters.assignedToUserId);
       if (filters.search) params.set('search', filters.search);
       const r = await api.get<PaginatedResponse<ClaimRow>>(`/claims?${params}`);
       setData(r.data);
@@ -139,6 +157,14 @@ export default function ClaimDashboard() {
       return toast({ title: 'Pick a SubCategory', variant: 'destructive' });
     if (!addForm.claimId.trim())
       return toast({ title: 'Claim ID required', variant: 'destructive' });
+    const fp = addForm.folderPath.trim();
+    if (fp && (!FOLDER_PATH_RE.test(fp) || /^[Cc]:\\/.test(fp))) {
+      return toast({
+        title: 'Invalid folder path',
+        variant: 'destructive',
+        description: 'Use an absolute drive-letter path (e.g. D:\\Claims\\Daily). C:\\ is not allowed.',
+      });
+    }
     setIsSubmitting(true);
     try {
       const payload: Record<string, unknown> = {
@@ -162,6 +188,16 @@ export default function ClaimDashboard() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleExport = () => {
+    const params = new URLSearchParams();
+    if (filters.subCategoryId) params.set('subCategoryId', filters.subCategoryId);
+    if (filters.workflowStatusId) params.set('workflowStatusId', filters.workflowStatusId);
+    if (filters.assignedToMe) params.set('assignedToMe', 'true');
+    if (filters.assignedToUserId) params.set('assignedToUserId', filters.assignedToUserId);
+    if (filters.search) params.set('search', filters.search);
+    window.open(`/api/claims/export?${params.toString()}`, '_blank');
   };
 
   const canOpen = (row: ClaimRow): boolean => {
@@ -232,6 +268,29 @@ export default function ClaimDashboard() {
       header: 'Full Scan',
       cell: ({ row }) => <Badge variant="outline">{row.original.fullScanStatus}</Badge>,
     },
+    {
+      id: 'created',
+      header: 'Created',
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{relativeTime(row.original.createdAt)}</span>
+      ),
+    },
+    {
+      id: 'actions',
+      header: 'Actions',
+      cell: ({ row }) =>
+        canOpen(row.original) ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(`/claims/${row.original.id}`)}
+          >
+            Open
+          </Button>
+        ) : (
+          <span className="text-muted-foreground text-xs">—</span>
+        ),
+    },
   ];
 
   return (
@@ -246,6 +305,18 @@ export default function ClaimDashboard() {
         )}
       </div>
 
+      {noAssignment && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-md text-amber-800">
+          <p className="font-medium">Limited Access</p>
+          <p className="text-sm">
+            You don't have an active User Type / Project Type assignment, so there are no
+            claims to show. Please contact an administrator.
+          </p>
+        </div>
+      )}
+
+      {!noAssignment && (
+      <>
       <div className="mb-4 p-4 bg-white border rounded-md grid grid-cols-4 gap-3">
         <div className="space-y-1">
           <Label>Sub-Category</Label>
@@ -292,7 +363,7 @@ export default function ClaimDashboard() {
             </SelectContent>
           </Select>
         </div>
-        {role === 'USER' && (
+        {role === 'USER' ? (
           <div className="space-y-1">
             <Label>&nbsp;</Label>
             <div className="flex items-center gap-2 pt-2">
@@ -305,6 +376,27 @@ export default function ClaimDashboard() {
               <Label htmlFor="amt">Assigned to me only</Label>
             </div>
           </div>
+        ) : (
+          <div className="space-y-1">
+            <Label>Assigned To</Label>
+            <Select
+              value={filters.assignedToUserId ?? ''}
+              onValueChange={(v) =>
+                setFilters({ ...filters, assignedToUserId: v || undefined })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                {addUsers.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.fullName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
         <div className="space-y-1">
           <Label>Search</Label>
@@ -315,7 +407,10 @@ export default function ClaimDashboard() {
             placeholder="Claim ID contains..."
           />
         </div>
-        <div className="col-span-4 flex justify-end">
+        <div className="col-span-4 flex justify-end gap-2">
+          <Button variant="outline" onClick={handleExport}>
+            Export
+          </Button>
           <Button onClick={() => fetchData(1, pagination.limit)}>Apply filters</Button>
         </div>
       </div>
@@ -328,6 +423,8 @@ export default function ClaimDashboard() {
         onPageSizeChange={(l) => fetchData(1, l)}
         isLoading={isLoading}
       />
+      </>
+      )}
 
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogContent className="max-w-lg">

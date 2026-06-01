@@ -57,6 +57,13 @@ enum ValidationStatus {
   FAILED
 }
 
+enum ScanJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model UserType {
   id          String   @id @default(uuid()) @db.VarChar(36)
   name        String   @unique @db.VarChar(100)
@@ -170,6 +177,8 @@ model SubCategory {
   documentTypeMasters DocumentTypeMaster[]
   claimIdRule         ClaimIdRule?
   claims              Claim[]
+  scanJobs            ScanJob[]
+  claimRules          ClaimRule[]
 
   @@unique([name, categoryId])
   @@map("sub_categories")
@@ -330,6 +339,8 @@ model DocumentTypeMaster {
   category      DocumentTypeCategory
   govtCode      GovtDocumentCode?    @map("govt_code")
   displayOrder  Int                  @default(0) @map("display_order")
+  // Must a claim carry this type to pass FULL validation? (default preserves old behaviour)
+  isRequired    Boolean              @default(true) @map("is_required")
   status        Status               @default(ACTIVE)
   createdAt     DateTime             @default(now()) @map("created_at")
   updatedAt     DateTime             @updatedAt @map("updated_at")
@@ -337,6 +348,7 @@ model DocumentTypeMaster {
   updatedBy     String?              @map("updated_by") @db.VarChar(36)
 
   subCategory SubCategory @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
+  documents   Document[]
 
   @@unique([name, subCategoryId])
   @@unique([govtCode, subCategoryId])
@@ -358,6 +370,7 @@ model ClaimIdRule {
   updatedBy     String?    @map("updated_by") @db.VarChar(36)
 
   subCategory SubCategory @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
+  scanJobs    ScanJob[]
 
   @@map("claim_id_rules")
 }
@@ -386,6 +399,9 @@ model Claim {
   workflowStatus StatusMaster  @relation("ClaimWorkflowStatus", fields: [workflowStatusId], references: [id])
   assignedTo     User?         @relation("ClaimAssignee", fields: [assignedToUserId], references: [id])
   remarks        ClaimRemark[]
+  documents      Document[]
+  validationRuns    ValidationRun[]
+  validationResults ValidationResult[]
 
   @@unique([claimId, subCategoryId])
   @@index([subCategoryId])
@@ -412,4 +428,153 @@ model ClaimRemark {
   @@index([claimId])
   @@index([createdAt])
   @@map("claim_remarks")
+}
+
+model ScanJob {
+  id            String        @id @default(uuid()) @db.VarChar(36)
+  claimIdRuleId String        @map("claim_id_rule_id") @db.VarChar(36)
+  subCategoryId String        @map("sub_category_id") @db.VarChar(36)
+  status        ScanJobStatus @default(QUEUED)
+
+  scanLocation  String        @map("scan_location") @db.VarChar(500)
+  scanTarget    ScanTarget    @map("scan_target")
+
+  totalEntries  Int           @default(0) @map("total_entries")
+  createdCount  Int           @default(0) @map("created_count")
+  skippedCount  Int           @default(0) @map("skipped_count")
+  errorCount    Int           @default(0) @map("error_count")
+  docsCreated   Int           @default(0) @map("docs_created")
+  docsSkipped   Int           @default(0) @map("docs_skipped")
+  errors        Json?
+  message       String?       @db.VarChar(500)
+
+  startedAt     DateTime?     @map("started_at")
+  finishedAt    DateTime?     @map("finished_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  triggeredBy   String?       @map("triggered_by") @db.VarChar(36)
+
+  claimIdRule   ClaimIdRule   @relation(fields: [claimIdRuleId], references: [id], onDelete: Cascade)
+  subCategory   SubCategory   @relation(fields: [subCategoryId], references: [id])
+
+  @@index([subCategoryId])
+  @@index([claimIdRuleId])
+  @@index([status])
+  @@map("scan_jobs")
+}
+
+enum DocumentSource {
+  SCANNED
+  UPLOADED
+}
+
+enum ValidationRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ValidationTrigger {
+  AUTO
+  MANUAL
+}
+
+enum RuleField {
+  DOCUMENT_COUNT
+  REMARK_COUNT
+  ASSIGNED
+  HAS_DOCUMENT_TYPE
+  WORKFLOW_STATUS
+  SPELL_STATUS
+  QR_STATUS
+  META_STATUS
+  INTRA_STATUS
+  FULL_STATUS
+}
+
+enum RuleOperator {
+  EQ
+  NEQ
+  GTE
+  LTE
+  GT
+  LT
+}
+
+model Document {
+  id             String         @id @default(uuid()) @db.VarChar(36)
+  claimId        String         @map("claim_id") @db.VarChar(36)
+  documentTypeId String?        @map("document_type_id") @db.VarChar(36)
+  source         DocumentSource
+  fileName       String         @map("file_name") @db.VarChar(500)
+  storagePath    String         @map("storage_path") @db.VarChar(500)
+  sizeBytes      Int?           @map("size_bytes")
+  mimeType       String?        @map("mime_type") @db.VarChar(150)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  createdBy      String?        @map("created_by") @db.VarChar(36)
+
+  claim        Claim               @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  documentType DocumentTypeMaster? @relation(fields: [documentTypeId], references: [id])
+
+  @@unique([claimId, storagePath])
+  @@index([claimId])
+  @@index([documentTypeId])
+  @@map("documents")
+}
+
+model ValidationRun {
+  id          String              @id @default(uuid()) @db.VarChar(36)
+  claimId     String              @map("claim_id") @db.VarChar(36)
+  status      ValidationRunStatus @default(QUEUED)
+  trigger     ValidationTrigger
+  startedAt   DateTime?           @map("started_at")
+  finishedAt  DateTime?           @map("finished_at")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  triggeredBy String?             @map("triggered_by") @db.VarChar(36)
+  message     String?             @db.VarChar(500)
+
+  claim   Claim              @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  results ValidationResult[]
+
+  @@index([claimId])
+  @@index([status])
+  @@map("validation_runs")
+}
+
+model ValidationResult {
+  id           String           @id @default(uuid()) @db.VarChar(36)
+  runId        String           @map("run_id") @db.VarChar(36)
+  claimId      String           @map("claim_id") @db.VarChar(36)
+  validatorKey String           @map("validator_key") @db.VarChar(20)
+  status       ValidationStatus
+  summary      String?          @db.VarChar(500)
+  details      Json?
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  run   ValidationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  claim Claim         @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@index([claimId])
+  @@index([runId])
+  @@map("validation_results")
+}
+
+model ClaimRule {
+  id            String       @id @default(uuid()) @db.VarChar(36)
+  subCategoryId String       @map("sub_category_id") @db.VarChar(36)
+  name          String       @db.VarChar(150)
+  field         RuleField
+  operator      RuleOperator
+  value         String       @db.VarChar(150)
+  status        Status       @default(ACTIVE)
+  displayOrder  Int          @default(0) @map("display_order")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  createdBy     String?      @map("created_by") @db.VarChar(36)
+  updatedBy     String?      @map("updated_by") @db.VarChar(36)
+
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
+
+  @@index([subCategoryId])
+  @@map("claim_rules")
 }
