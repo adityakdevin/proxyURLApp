@@ -129,6 +129,16 @@ export default function AdminClaims() {
             className="w-64"
           />
           <Button onClick={() => fetchData(1, pagination.limit)}>Search</Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const params = new URLSearchParams();
+              if (search) params.set('search', search);
+              window.open(`/api/claims/export?${params.toString()}`, '_blank');
+            }}
+          >
+            Export
+          </Button>
         </div>
       </div>
       <DataTable

@@ -53,6 +53,7 @@ interface DocType {
   category: Category;
   govtCode: GovtCode | null;
   displayOrder: number;
+  isRequired: boolean;
   status: 'ACTIVE' | 'INACTIVE';
   createdAt: string;
 }
@@ -72,7 +73,27 @@ export default function DocumentTypeMasters() {
     category: Category;
     govtCode: GovtCode | '';
     displayOrder: number;
-  }>({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0 });
+    isRequired: boolean;
+  }>({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0, isRequired: true });
+  // All ACTIVE GOVT docs for the selected SubCategory (not just the current page),
+  // so the "code already used" filter is accurate regardless of pagination.
+  const [allGovtDocs, setAllGovtDocs] = useState<DocType[]>([]);
+
+  const fetchAllGovtDocs = async (subCategoryId?: string) => {
+    const sc = subCategoryId ?? picker.subCategoryId;
+    if (!sc) {
+      setAllGovtDocs([]);
+      return;
+    }
+    try {
+      const r = await api.get<PaginatedResponse<DocType>>(
+        `/admin/document-type-masters?subCategoryId=${sc}&category=GOVT&status=ACTIVE&limit=100`
+      );
+      setAllGovtDocs(r.data);
+    } catch {
+      setAllGovtDocs([]);
+    }
+  };
 
   const fetchData = async (page = 1, limit = 10) => {
     setIsLoading(true);
@@ -96,16 +117,17 @@ export default function DocumentTypeMasters() {
 
   useEffect(() => {
     fetchData();
+    fetchAllGovtDocs();
   }, [picker.subCategoryId]);
 
   const usedCodes = useMemo(
     () =>
       new Set(
-        data
-          .filter((d) => d.status === 'ACTIVE' && d.govtCode && d.id !== selected?.id)
+        allGovtDocs
+          .filter((d) => d.govtCode && d.id !== selected?.id)
           .map((d) => d.govtCode as GovtCode)
       ),
-    [data, selected]
+    [allGovtDocs, selected]
   );
 
   const availableCodes = (Object.keys(GOVT_LABELS) as GovtCode[]).filter(
@@ -124,6 +146,7 @@ export default function DocumentTypeMasters() {
         await api.put(`/admin/document-type-masters/${selected.id}`, {
           name: formData.name,
           displayOrder: formData.displayOrder,
+          isRequired: formData.isRequired,
         });
       } else {
         const payload: Record<string, unknown> = {
@@ -131,6 +154,7 @@ export default function DocumentTypeMasters() {
           name: formData.name,
           category: formData.category,
           displayOrder: formData.displayOrder,
+          isRequired: formData.isRequired,
         };
         if (formData.category === 'GOVT') payload.govtCode = formData.govtCode;
         await api.post('/admin/document-type-masters', payload);
@@ -138,6 +162,7 @@ export default function DocumentTypeMasters() {
       toast({ title: 'Saved' });
       setIsFormOpen(false);
       fetchData(pagination.page, pagination.limit);
+      fetchAllGovtDocs();
     } catch (e) {
       toast({
         title: 'Error',
@@ -169,10 +194,19 @@ export default function DocumentTypeMasters() {
   };
 
   const handleToggle = async (d: DocType) => {
-    await api.patch(`/admin/document-type-masters/${d.id}/status`, {
-      status: d.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
-    });
-    fetchData(pagination.page, pagination.limit);
+    try {
+      await api.patch(`/admin/document-type-masters/${d.id}/status`, {
+        status: d.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
+      });
+      fetchData(pagination.page, pagination.limit);
+      fetchAllGovtDocs();
+    } catch (e) {
+      toast({
+        title: 'Error',
+        variant: 'destructive',
+        description: e instanceof Error ? e.message : 'Failed to update status',
+      });
+    }
   };
 
   const columns: ColumnDef<DocType>[] = [
@@ -192,6 +226,15 @@ export default function DocumentTypeMasters() {
       cell: ({ row }) => row.original.govtCode ?? '-',
     },
     { accessorKey: 'displayOrder', header: 'Order' },
+    {
+      id: 'required',
+      header: 'Required',
+      cell: ({ row }) => (
+        <Badge variant={row.original.isRequired ? 'default' : 'outline'}>
+          {row.original.isRequired ? 'Required' : 'Optional'}
+        </Badge>
+      ),
+    },
     {
       accessorKey: 'status',
       header: 'Status',
@@ -219,6 +262,7 @@ export default function DocumentTypeMasters() {
                   category: row.original.category,
                   govtCode: (row.original.govtCode ?? '') as GovtCode | '',
                   displayOrder: row.original.displayOrder,
+                  isRequired: row.original.isRequired,
                 });
                 setIsFormOpen(true);
               }}
@@ -263,7 +307,7 @@ export default function DocumentTypeMasters() {
         <Button
           onClick={() => {
             setSelected(null);
-            setFormData({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0 });
+            setFormData({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0, isRequired: true });
             setIsFormOpen(true);
           }}
           disabled={!picker.subCategoryId}
@@ -365,6 +409,15 @@ export default function DocumentTypeMasters() {
                   setFormData({ ...formData, displayOrder: Number(e.target.value) })
                 }
               />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                id="isRequired"
+                type="checkbox"
+                checked={formData.isRequired}
+                onChange={(e) => setFormData({ ...formData, isRequired: e.target.checked })}
+              />
+              <Label htmlFor="isRequired">Required for Full-scan validation</Label>
             </div>
           </div>
           <DialogFooter>

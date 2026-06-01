@@ -28,6 +28,7 @@ describe('StatusMasterService', () => {
   });
 
   afterAll(async () => {
+    await truncateClaimsTables(prisma);
     await disconnectTestPrisma();
   });
 
@@ -57,7 +58,8 @@ describe('StatusMasterService', () => {
   });
 
   it('refuses to delete a StatusMaster referenced by a Claim', async () => {
-    const s = await service.create({ subCategoryId, name: 'Pending', isDefault: true }, actorId);
+    // Non-default so the in-use guard (not the default guard) is what fires.
+    const s = await service.create({ subCategoryId, name: 'InUse', isDefault: false }, actorId);
     await prisma.claim.create({
       data: {
         claimId: 'C-1',
@@ -70,11 +72,65 @@ describe('StatusMasterService', () => {
     await expect(service.delete(s.id)).rejects.toMatchObject({ code: 'STATUS_IN_USE' });
   });
 
+  it('refuses to delete a StatusMaster referenced only by a ClaimRemark (audit history)', async () => {
+    // Both non-default so the audit-reference guard is what fires (not the default guard).
+    const pending = await service.create(
+      { subCategoryId, name: 'Pending', isDefault: false },
+      actorId
+    );
+    const approved = await service.create({ subCategoryId, name: 'Approved' }, actorId);
+    // Claim now sits at "Approved"; "Pending" is only referenced by the remark's history.
+    const claim = await prisma.claim.create({
+      data: {
+        claimId: 'C-HIST',
+        subCategoryId,
+        workflowStatusId: approved.id,
+        createdBy: actorId,
+        updatedBy: actorId,
+      },
+    });
+    await prisma.claimRemark.create({
+      data: {
+        claimId: claim.id,
+        userId: actorId,
+        remarkText: 'moved to approved',
+        statusBeforeId: pending.id,
+        statusAfterId: approved.id,
+      },
+    });
+    await expect(service.delete(pending.id)).rejects.toMatchObject({ code: 'STATUS_IN_USE' });
+  });
+
   it('list orders by displayOrder then name', async () => {
     await service.create({ subCategoryId, name: 'Zebra', displayOrder: 1 }, actorId);
     await service.create({ subCategoryId, name: 'Alpha', displayOrder: 1 }, actorId);
     await service.create({ subCategoryId, name: 'Middle', displayOrder: 0 }, actorId);
     const list = await service.list({ subCategoryId });
     expect(list.data.map((s) => s.name)).toEqual(['Middle', 'Alpha', 'Zebra']);
+  });
+
+  describe('default-status protection', () => {
+    it('refuses to deactivate the default status via setStatus', async () => {
+      const def = await service.create({ subCategoryId, name: 'Pending', isDefault: true }, actorId);
+      await expect(service.setStatus(def.id, 'INACTIVE', actorId)).rejects.toMatchObject({
+        code: 'STATUS_IS_DEFAULT',
+      });
+    });
+    it('refuses to deactivate the default status via update', async () => {
+      const def = await service.create({ subCategoryId, name: 'Pending', isDefault: true }, actorId);
+      await expect(
+        service.update(def.id, { status: 'INACTIVE' }, actorId)
+      ).rejects.toMatchObject({ code: 'STATUS_IS_DEFAULT' });
+    });
+    it('refuses to delete the default status', async () => {
+      const def = await service.create({ subCategoryId, name: 'Pending', isDefault: true }, actorId);
+      await expect(service.delete(def.id)).rejects.toMatchObject({ code: 'STATUS_IS_DEFAULT' });
+    });
+  });
+
+  it('rejects create for a non-existent SubCategory with SUBCATEGORY_NOT_FOUND', async () => {
+    await expect(
+      service.create({ subCategoryId: '00000000-0000-0000-0000-000000000000', name: 'X' }, actorId)
+    ).rejects.toMatchObject({ code: 'SUBCATEGORY_NOT_FOUND' });
   });
 });

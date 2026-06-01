@@ -1,27 +1,22 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { body, param, query, validationResult } from 'express-validator';
 import {
   StatusMasterService,
   StatusMasterServiceError,
 } from '../../services/statusMasterService.js';
+import { body, param, query } from 'express-validator';
+import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
 
 const router = Router();
 
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
+const getService = (req: Request) => new StatusMasterService(prismaOf(req));
 
-const getService = (req: Request) =>
-  new StatusMasterService(req.app.get('prisma') as PrismaClient);
+const handleErr = makeErrorHandler(StatusMasterServiceError, {
+  NOT_FOUND: 404,
+  SUBCATEGORY_NOT_FOUND: 404,
+  STATUS_IN_USE: 409,
+  STATUS_IS_DEFAULT: 409,
+  DUPLICATE_STATUS_NAME: 409,
+});
 
 router.get(
   '/',
@@ -70,13 +65,7 @@ router.post(
       const created = await getService(req).create(req.body, req.session!.userId);
       res.status(201).json({ data: created });
     } catch (err) {
-      if ((err as { code?: string }).code === 'P2002') {
-        return res.status(409).json({
-          error: 'Status name must be unique per SubCategory',
-          code: 'DUPLICATE_STATUS_NAME',
-        });
-      }
-      next(err);
+      handleErr(err, res, next);
     }
   }
 );
@@ -112,12 +101,7 @@ router.put(
       const updated = await getService(req).update(req.params.id, req.body, req.session!.userId);
       res.json({ data: updated });
     } catch (err) {
-      if (err instanceof StatusMasterServiceError) {
-        return res
-          .status(err.code === 'NOT_FOUND' ? 404 : 400)
-          .json({ error: err.message, code: err.code });
-      }
-      next(err);
+      handleErr(err, res, next);
     }
   }
 );
@@ -135,7 +119,7 @@ router.patch(
       );
       res.json({ data: updated });
     } catch (err) {
-      next(err);
+      handleErr(err, res, next);
     }
   }
 );
@@ -149,12 +133,7 @@ router.delete(
       await getService(req).delete(req.params.id);
       res.json({ message: 'Deleted' });
     } catch (err) {
-      if (err instanceof StatusMasterServiceError) {
-        return res
-          .status(err.code === 'STATUS_IN_USE' ? 409 : 400)
-          .json({ error: err.message, code: err.code });
-      }
-      next(err);
+      handleErr(err, res, next);
     }
   }
 );

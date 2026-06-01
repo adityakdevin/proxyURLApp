@@ -1,34 +1,20 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { body, param, query, validationResult } from 'express-validator';
+import { body, param, query } from 'express-validator';
 import {
   ClaimIdRuleService,
   ClaimIdRuleServiceError,
 } from '../../services/claimIdRuleService.js';
+import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
 
 const router = Router();
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg,
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
-const getService = (req: Request) =>
-  new ClaimIdRuleService(req.app.get('prisma') as PrismaClient);
+const getService = (req: Request) => new ClaimIdRuleService(prismaOf(req));
 
-const handleErr = (err: unknown, res: Response, next: NextFunction) => {
-  if (err instanceof ClaimIdRuleServiceError) {
-    const status =
-      err.code === 'NOT_FOUND' ? 404 : err.code === 'RULE_EXISTS' ? 409 : 400;
-    return res.status(status).json({ error: err.message, code: err.code });
-  }
-  next(err);
-};
+const handleErr = makeErrorHandler(ClaimIdRuleServiceError, {
+  NOT_FOUND: 404,
+  SUBCATEGORY_NOT_FOUND: 404,
+  RULE_EXISTS: 409,
+  SCAN_IN_PROGRESS: 409,
+});
 
 router.get(
   '/',
@@ -87,9 +73,13 @@ router.get(
   [param('id').isUUID()],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
-    const r = await getService(req).getById(req.params.id);
-    if (!r) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
-    res.json({ data: r });
+    try {
+      const r = await getService(req).getById(req.params.id);
+      if (!r) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+      res.json({ data: r });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
   }
 );
 
@@ -119,12 +109,16 @@ router.patch(
   [param('id').isUUID(), body('status').isIn(['ACTIVE', 'INACTIVE'])],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
-    const updated = await getService(req).setStatus(
-      req.params.id,
-      req.body.status,
-      req.session!.userId
-    );
-    res.json({ data: updated });
+    try {
+      const updated = await getService(req).setStatus(
+        req.params.id,
+        req.body.status,
+        req.session!.userId
+      );
+      res.json({ data: updated });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
   }
 );
 
@@ -133,8 +127,12 @@ router.delete(
   [param('id').isUUID()],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
-    await getService(req).delete(req.params.id);
-    res.json({ message: 'Deleted' });
+    try {
+      await getService(req).delete(req.params.id);
+      res.json({ message: 'Deleted' });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
   }
 );
 

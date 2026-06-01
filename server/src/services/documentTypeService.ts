@@ -6,6 +6,7 @@ import {
   DocumentTypeCategory,
   GovtDocumentCode,
 } from '@prisma/client';
+import { subCategoryExists } from '../lib/subCategoryGuard.js';
 
 export interface CreateDocumentTypeInput {
   subCategoryId: string;
@@ -13,12 +14,14 @@ export interface CreateDocumentTypeInput {
   category: DocumentTypeCategory;
   govtCode?: GovtDocumentCode | null;
   displayOrder?: number;
+  isRequired?: boolean;
   status?: Status;
 }
 
 export interface UpdateDocumentTypeInput {
   name?: string;
   displayOrder?: number;
+  isRequired?: boolean;
   status?: Status;
 }
 
@@ -52,6 +55,9 @@ export class DocumentTypeService {
         'govtCode must be empty when category is CUSTOM'
       );
     }
+    if (!(await subCategoryExists(this.prisma, input.subCategoryId))) {
+      throw new DocumentTypeServiceError('SUBCATEGORY_NOT_FOUND', 'SubCategory not found');
+    }
     if (input.category === 'GOVT') {
       const existing = await this.prisma.documentTypeMaster.findUnique({
         where: {
@@ -76,6 +82,7 @@ export class DocumentTypeService {
           category: input.category,
           govtCode: input.category === 'GOVT' ? input.govtCode! : null,
           displayOrder: input.displayOrder ?? 0,
+          isRequired: input.isRequired ?? true,
           status: input.status ?? Status.ACTIVE,
           createdBy: actorId,
           updatedBy: actorId,
@@ -83,6 +90,13 @@ export class DocumentTypeService {
       });
     } catch (err) {
       if ((err as { code?: string }).code === 'P2002') {
+        const target = String((err as { meta?: { target?: unknown } }).meta?.target ?? '');
+        if (target.includes('govt_code')) {
+          throw new DocumentTypeServiceError(
+            'DUPLICATE_GOVT_CODE',
+            'This Govt document type already exists in this SubCategory'
+          );
+        }
         throw new DocumentTypeServiceError(
           'DUPLICATE_NAME',
           'Document type name must be unique per SubCategory'
@@ -97,10 +111,20 @@ export class DocumentTypeService {
     input: UpdateDocumentTypeInput,
     actorId: string
   ): Promise<DocumentTypeMaster> {
-    return this.prisma.documentTypeMaster.update({
-      where: { id },
-      data: { ...input, updatedBy: actorId },
-    });
+    try {
+      return await this.prisma.documentTypeMaster.update({
+        where: { id },
+        data: { ...input, updatedBy: actorId },
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') {
+        throw new DocumentTypeServiceError(
+          'DUPLICATE_NAME',
+          'Document type name must be unique per SubCategory'
+        );
+      }
+      throw err;
+    }
   }
 
   async delete(id: string): Promise<void> {

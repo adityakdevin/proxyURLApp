@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { Prisma } from '@prisma/client';
 
 export interface AppError extends Error {
   statusCode?: number;
@@ -12,6 +13,24 @@ export const errorHandler = (
   _next: NextFunction
 ) => {
   console.error('Error:', err);
+
+  // Map common Prisma errors to sensible HTTP statuses so routes that simply
+  // forward errors don't leak 500s for duplicate keys / missing records.
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === 'P2002') {
+      return res
+        .status(409)
+        .json({ error: 'A record with these values already exists', code: 'DUPLICATE' });
+    }
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: 'Record not found', code: 'NOT_FOUND' });
+    }
+    if (err.code === 'P2003') {
+      return res
+        .status(409)
+        .json({ error: 'Operation violates a reference constraint', code: 'FK_CONSTRAINT' });
+    }
+  }
 
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal Server Error';

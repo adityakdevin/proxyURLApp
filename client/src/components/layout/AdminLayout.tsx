@@ -12,6 +12,9 @@ import {
   Briefcase,
   ListChecks,
   FileText,
+  Crosshair,
+  ClipboardList,
+  ShieldCheck,
 } from 'lucide-react';
 
 const navItems = [
@@ -27,6 +30,9 @@ const navItems = [
 const claimsNavItems = [
   { path: '/admin/status-masters', label: 'Status Masters', icon: ListChecks },
   { path: '/admin/doc-type-masters', label: 'Doc Type Masters', icon: FileText },
+  { path: '/admin/claim-id-rules', label: 'Claim ID Rules', icon: Crosshair },
+  { path: '/admin/claim-rules', label: 'Claim Rules', icon: ShieldCheck },
+  { path: '/admin/claims', label: 'Claims (All)', icon: ClipboardList },
 ];
 
 export default function AdminLayout() {

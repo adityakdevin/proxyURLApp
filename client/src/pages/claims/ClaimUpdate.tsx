@@ -54,6 +54,57 @@ interface ClaimDetail {
   createdAt: string;
 }
 
+interface DocItem {
+  id: string;
+  fileName: string;
+  source: 'SCANNED' | 'UPLOADED';
+  sizeBytes: number | null;
+  createdAt: string;
+  documentType: { id: string; name: string } | null;
+}
+
+function humanSize(bytes: number | null): string {
+  if (bytes === null || bytes === undefined) return '-';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface ValResult {
+  validatorKey: 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL';
+  status: 'PENDING' | 'IN_PROGRESS' | 'PASSED' | 'FAILED';
+  summary: string | null;
+}
+interface ValRun {
+  id: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  trigger: 'AUTO' | 'MANUAL';
+  finishedAt: string | null;
+}
+interface RuleEval {
+  id: string;
+  name: string;
+  field: string;
+  operator: string;
+  value: string;
+  passed: boolean;
+  actual: string;
+}
+const OP_SYMBOL: Record<string, string> = { EQ: '=', NEQ: '≠', GTE: '≥', LTE: '≤', GT: '>', LT: '<' };
+function statusVariant(s: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (s === 'PASSED') return 'default';
+  if (s === 'FAILED') return 'destructive';
+  if (s === 'IN_PROGRESS') return 'secondary';
+  return 'outline';
+}
+const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof ClaimDetail }[] = [
+  { key: 'SPELL', label: 'Spell', column: 'spellCheckStatus' },
+  { key: 'QR', label: 'QR', column: 'qrStatus' },
+  { key: 'META', label: 'Meta', column: 'metaExtractionStatus' },
+  { key: 'INTRA', label: 'Intra-Claim', column: 'intraClaimStatus' },
+  { key: 'FULL', label: 'Full Scan', column: 'fullScanStatus' },
+];
+
 export default function ClaimUpdate() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
@@ -102,6 +153,16 @@ export default function ClaimUpdate() {
     }
   };
 
+  // Lightweight poll refresh: claim only (no status/assignee refetch, no spinner).
+  const refreshClaim = async () => {
+    try {
+      const r = await api.get<{ data: ClaimDetail }>(`/claims/${id}`);
+      setClaim(r.data);
+    } catch {
+      /* keep last good state during polling */
+    }
+  };
+
   useEffect(() => {
     fetchClaim();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,6 +185,7 @@ export default function ClaimUpdate() {
       setNewStatusId('');
       setNewAssigneeId('');
       fetchClaim();
+      fetchRemarks(1);
     } catch (e) {
       toast({
         title: 'Error',
@@ -134,6 +196,172 @@ export default function ClaimUpdate() {
       setIsSaving(false);
     }
   };
+
+  const [docs, setDocs] = useState<DocItem[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const fetchDocs = async () => {
+    try {
+      const r = await api.get<{ data: DocItem[] }>(`/claims/${id}/documents`);
+      setDocs(r.data);
+    } catch {
+      /* surfaced on the page as an empty list */
+    }
+  };
+
+  useEffect(() => {
+    if (claim) fetchDocs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim?.id]);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+    try {
+      const form = new FormData();
+      Array.from(files).forEach((f) => form.append('files', f));
+      await api.postForm(`/claims/${id}/documents`, form);
+      toast({ title: 'Uploaded' });
+      fetchDocs();
+    } catch (err) {
+      toast({
+        title: 'Upload failed',
+        variant: 'destructive',
+        description: err instanceof Error ? err.message : '',
+      });
+    } finally {
+      setIsUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSync = async () => {
+    try {
+      const r = await api.post<{ data: { created: number; skipped: number } }>(
+        `/claims/${id}/documents/sync`,
+        {}
+      );
+      toast({
+        title: 'Sync complete',
+        description: `Added ${r.data.created}, skipped ${r.data.skipped}`,
+      });
+      fetchDocs();
+    } catch (err) {
+      toast({
+        title: 'Sync failed',
+        variant: 'destructive',
+        description: err instanceof Error ? err.message : '',
+      });
+    }
+  };
+
+  const handleDeleteDoc = async (docId: string) => {
+    try {
+      await api.delete(`/claims/${id}/documents/${docId}`);
+      fetchDocs();
+    } catch (err) {
+      toast({
+        title: 'Delete failed',
+        variant: 'destructive',
+        description: err instanceof Error ? err.message : '',
+      });
+    }
+  };
+
+  const [valRun, setValRun] = useState<ValRun | null>(null);
+  const [valResults, setValResults] = useState<ValResult[]>([]);
+  const [isValidating, setIsValidating] = useState(false);
+
+  const fetchValidation = async () => {
+    try {
+      const r = await api.get<{ data: { run: ValRun | null; results: ValResult[] } }>(
+        `/claims/${id}/validation`
+      );
+      setValRun(r.data.run);
+      setValResults(r.data.results);
+    } catch {
+      /* none yet */
+    }
+  };
+
+  useEffect(() => {
+    if (claim) fetchValidation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim?.id]);
+
+  useEffect(() => {
+    if (!valRun || valRun.status === 'COMPLETED' || valRun.status === 'FAILED') return;
+    const t = setInterval(() => {
+      fetchValidation();
+      refreshClaim();
+    }, 1500);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valRun?.status]);
+
+  const handleValidate = async () => {
+    setIsValidating(true);
+    try {
+      await api.post(`/claims/${id}/validate`, {});
+      toast({ title: 'Validation started' });
+      await fetchValidation();
+    } catch (err) {
+      toast({
+        title: 'Could not start validation',
+        variant: 'destructive',
+        description: err instanceof Error ? err.message : '',
+      });
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const resultFor = (key: ValResult['validatorKey']) => valResults.find((r) => r.validatorKey === key);
+
+  const [rules, setRules] = useState<RuleEval[]>([]);
+  const [rulesPassed, setRulesPassed] = useState({ passed: 0, total: 0 });
+
+  const fetchRules = async () => {
+    try {
+      const r = await api.get<{ data: { rules: RuleEval[]; passedCount: number; total: number } }>(
+        `/claims/${id}/rules`
+      );
+      setRules(r.data.rules);
+      setRulesPassed({ passed: r.data.passedCount, total: r.data.total });
+    } catch {
+      /* none */
+    }
+  };
+
+  useEffect(() => {
+    if (claim) fetchRules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim?.id, valRun?.status]);
+
+  // Paginated timeline so claims with >20 remarks don't lose history.
+  const REMARKS_LIMIT = 20;
+  const [timeline, setTimeline] = useState<Remark[]>([]);
+  const [remarksTotal, setRemarksTotal] = useState(0);
+  const [remarksPage, setRemarksPage] = useState(1);
+
+  const fetchRemarks = async (page: number) => {
+    try {
+      const r = await api.get<{ data: Remark[]; pagination: { total: number } }>(
+        `/claims/${id}/remarks?page=${page}&limit=${REMARKS_LIMIT}`
+      );
+      setTimeline((prev) => (page === 1 ? r.data : [...prev, ...r.data]));
+      setRemarksTotal(r.pagination.total);
+      setRemarksPage(page);
+    } catch {
+      /* keep current timeline on a transient error */
+    }
+  };
+
+  useEffect(() => {
+    if (claim) fetchRemarks(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim?.id]);
 
   if (isLoading || !claim) return <div className="p-6">Loading...</div>;
 
@@ -170,13 +398,42 @@ export default function ClaimUpdate() {
             {claim.assignedTo?.fullName ?? 'Unassigned'}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 mt-4">
-          <Badge variant="outline">Spell: {claim.spellCheckStatus}</Badge>
-          <Badge variant="outline">QR: {claim.qrStatus}</Badge>
-          <Badge variant="outline">Meta: {claim.metaExtractionStatus}</Badge>
-          <Badge variant="outline">Intra-Claim: {claim.intraClaimStatus}</Badge>
-          <Badge variant="outline">Full Scan: {claim.fullScanStatus}</Badge>
+        <div className="flex items-center justify-between mt-4">
+          <div className="flex flex-wrap gap-2">
+            {VALIDATORS.map((v) => {
+              const colVal = String(claim[v.column]);
+              const res = resultFor(v.key);
+              return (
+                <Badge key={v.key} variant={statusVariant(colVal)} title={res?.summary ?? ''}>
+                  {v.label}: {colVal}
+                </Badge>
+              );
+            })}
+          </div>
+          {canEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleValidate}
+              disabled={isValidating || valRun?.status === 'RUNNING' || valRun?.status === 'QUEUED'}
+            >
+              {valRun?.status === 'RUNNING' || valRun?.status === 'QUEUED' ? 'Validating…' : 'Validate'}
+            </Button>
+          )}
         </div>
+        {valResults.length > 0 && (
+          <div className="mt-3 space-y-1 text-sm text-gray-600">
+            {VALIDATORS.map((v) => {
+              const res = resultFor(v.key);
+              if (!res) return null;
+              return (
+                <div key={v.key}>
+                  <span className="font-medium">{v.label}:</span> {res.summary}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="bg-white border rounded-md p-6 mb-6">
@@ -244,19 +501,113 @@ export default function ClaimUpdate() {
       </div>
 
       <div className="bg-white border rounded-md p-6 mb-6">
-        <h2 className="text-lg font-semibold mb-4">Documents</h2>
-        <p className="text-sm text-gray-500">
-          Documents will appear here once the scanner is enabled (Phase 2).
-        </p>
+        <h2 className="text-lg font-semibold mb-4">
+          Claim Rules{' '}
+          {rules.length > 0 && (
+            <span className="text-sm font-normal text-gray-500">
+              ({rulesPassed.passed} of {rulesPassed.total} passed)
+            </span>
+          )}
+        </h2>
+        {rules.length === 0 ? (
+          <p className="text-sm text-gray-400">No rules configured for this sub-category.</p>
+        ) : (
+          <div className="space-y-2">
+            {rules.map((r) => (
+              <div key={r.id} className="flex items-center justify-between text-sm border rounded px-3 py-2">
+                <span>
+                  <span className="font-medium">{r.name}</span>{' '}
+                  <span className="text-gray-500">
+                    ({r.field} {OP_SYMBOL[r.operator] ?? r.operator} {r.value})
+                  </span>
+                </span>
+                <span className={r.passed ? 'text-green-600' : 'text-destructive'}>
+                  {r.passed ? '✓' : '✗'} {r.actual}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white border rounded-md p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">Documents</h2>
+          {canEdit && (
+            <div className="flex items-center gap-2">
+              {claim.folderPath && (
+                <Button variant="outline" size="sm" onClick={handleSync}>
+                  Sync from folder
+                </Button>
+              )}
+              <label className="inline-flex items-center px-3 py-1.5 text-sm border rounded-md cursor-pointer hover:bg-gray-50">
+                {isUploading ? 'Uploading...' : 'Upload'}
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={handleUpload}
+                  disabled={isUploading}
+                />
+              </label>
+            </div>
+          )}
+        </div>
+        {docs.length === 0 ? (
+          <p className="text-sm text-gray-400">No documents yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {docs.map((d) => (
+              <div
+                key={d.id}
+                className="flex items-center justify-between text-sm border rounded px-3 py-2"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <a
+                    href={`/api/claims/${id}/documents/${d.id}/content`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary underline-offset-2 hover:underline truncate"
+                  >
+                    {d.fileName}
+                  </a>
+                  <Badge variant={d.documentType ? 'default' : 'outline'}>
+                    {d.documentType?.name ?? 'Unclassified'}
+                  </Badge>
+                  <Badge variant="secondary">
+                    {d.source === 'SCANNED' ? 'Scanned' : 'Uploaded'}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-3 text-gray-500 shrink-0">
+                  <span>{humanSize(d.sizeBytes)}</span>
+                  <span>{new Date(d.createdAt).toLocaleDateString()}</span>
+                  {canEdit && (
+                    <button
+                      className="text-destructive hover:underline"
+                      onClick={() => handleDeleteDoc(d.id)}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="bg-white border rounded-md p-6">
-        <h2 className="text-lg font-semibold mb-4">Remarks Timeline</h2>
+        <h2 className="text-lg font-semibold mb-4">
+          Remarks Timeline{' '}
+          {remarksTotal > 0 && (
+            <span className="text-sm font-normal text-gray-500">({remarksTotal})</span>
+          )}
+        </h2>
         <div className="space-y-3">
-          {claim.remarks.length === 0 && (
+          {timeline.length === 0 && (
             <p className="text-sm text-gray-400">No remarks yet.</p>
           )}
-          {claim.remarks.map((r) => (
+          {timeline.map((r) => (
             <div key={r.id} className="border-l-2 border-gray-200 pl-4 py-1">
               <div className="flex items-center gap-2 text-sm">
                 <span className="font-medium">{r.user.fullName}</span>
@@ -273,6 +624,13 @@ export default function ClaimUpdate() {
             </div>
           ))}
         </div>
+        {timeline.length < remarksTotal && (
+          <div className="flex justify-center mt-4">
+            <Button variant="outline" size="sm" onClick={() => fetchRemarks(remarksPage + 1)}>
+              Load {remarksTotal - timeline.length} older
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

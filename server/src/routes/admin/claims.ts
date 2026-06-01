@@ -1,21 +1,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { param, query, validationResult } from 'express-validator';
-import { ClaimService } from '../../services/claimService.js';
+import { param, query } from 'express-validator';
+import { ClaimService, ClaimServiceError } from '../../services/claimService.js';
+import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
 
 const router = Router();
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg,
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
-const getService = (req: Request) => new ClaimService(req.app.get('prisma') as PrismaClient);
+const getService = (req: Request) => new ClaimService(prismaOf(req));
+const handleErr = makeErrorHandler(ClaimServiceError, { NOT_FOUND: 404 });
 
 router.get(
   '/',
@@ -24,6 +14,7 @@ router.get(
     query('workflowStatusId').optional().isUUID(),
     query('assignedToUserId').optional().isUUID(),
     query('search').optional().isString(),
+    query('status').optional().isIn(['ACTIVE', 'INACTIVE']),
     query('page').optional().isInt({ min: 1 }).toInt(),
     query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
   ],
@@ -35,6 +26,7 @@ router.get(
         workflowStatusId: req.query.workflowStatusId as string | undefined,
         assignedToUserId: req.query.assignedToUserId as string | undefined,
         search: req.query.search as string | undefined,
+        status: req.query.status as 'ACTIVE' | 'INACTIVE' | undefined,
         scope: 'ALL',
         callerId: req.session!.userId,
         page: req.query.page as unknown as number | undefined,
@@ -60,9 +52,13 @@ router.get(
   [param('id').isUUID()],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
-    const c = await getService(req).getById(req.params.id, req.session!.userId, 'ADMIN');
-    if (!c) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
-    res.json({ data: c });
+    try {
+      const c = await getService(req).getById(req.params.id, req.session!.userId, 'ADMIN');
+      if (!c) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+      res.json({ data: c });
+    } catch (err) {
+      next(err);
+    }
   }
 );
 
@@ -71,8 +67,27 @@ router.delete(
   [param('id').isUUID()],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
-    await getService(req).softDelete(req.params.id, req.session!.userId);
-    res.json({ message: 'Soft-deleted' });
+    try {
+      await getService(req).softDelete(req.params.id, req.session!.userId);
+      res.json({ message: 'Soft-deleted' });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
+  }
+);
+
+// Recover a soft-deleted claim (the only way back from INACTIVE).
+router.post(
+  '/:id/restore',
+  [param('id').isUUID()],
+  validate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const restored = await getService(req).restore(req.params.id, req.session!.userId);
+      res.json({ data: restored });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
   }
 );
 

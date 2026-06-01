@@ -22,7 +22,10 @@ describe('DocumentTypeService', () => {
   });
 
   beforeEach(async () => { await truncateClaimsTables(prisma); });
-  afterAll(async () => { await disconnectTestPrisma(); });
+  afterAll(async () => {
+    await truncateClaimsTables(prisma);
+    await disconnectTestPrisma();
+  });
 
   it('creates a GOVT doc type with code', async () => {
     const d = await service.create(

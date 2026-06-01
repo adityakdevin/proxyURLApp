@@ -51,6 +51,16 @@ export const api = {
     return handleResponse<T>(response);
   },
 
+  async postForm<T>(endpoint: string, form: FormData): Promise<T> {
+    // No Content-Type header — the browser sets the multipart boundary.
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      method: 'POST',
+      body: form,
+      credentials: 'include',
+    });
+    return handleResponse<T>(response);
+  },
+
   async put<T>(endpoint: string, body: unknown): Promise<T> {
     const response = await fetch(`${API_BASE}${endpoint}`, {
       method: 'PUT',

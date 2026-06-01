@@ -27,7 +27,10 @@ describe('ClaimService', () => {
     userId = u ? u.id : adminId;
   });
   beforeEach(async () => { await truncateClaimsTables(prisma); });
-  afterAll(async () => { await disconnectTestPrisma(); });
+  afterAll(async () => {
+    await truncateClaimsTables(prisma);
+    await disconnectTestPrisma();
+  });
 
   async function seedDefaultStatus(name = 'Pending') {
     return statusService.create({ subCategoryId, name, isDefault: true }, adminId);
@@ -84,12 +87,80 @@ describe('ClaimService', () => {
 
   it('rejects assignee reassignment by USER', async () => {
     await seedDefaultStatus();
-    const c = await service.create(
-      { subCategoryId, claimId: 'C-1', assignedToUserId: userId },
-      adminId
-    );
+    const c = await service.create({ subCategoryId, claimId: 'C-1' }, adminId);
     await expect(
       service.appendRemark(c.id, { remarkText: 'r', newAssigneeId: null }, userId, 'USER')
     ).rejects.toMatchObject({ code: 'REASSIGN_FORBIDDEN' });
+  });
+
+  describe('soft-delete / restore', () => {
+    it('blocks editing a soft-deleted claim and refuses appendRemark, then restore re-enables it', async () => {
+      await seedDefaultStatus();
+      const c = await service.create({ subCategoryId, claimId: 'C-DEL' }, adminId);
+      expect(await service.canEditClaim(c.id, adminId, 'ADMIN')).toBe(true);
+
+      await service.softDelete(c.id, adminId);
+      // Not editable by anyone (incl. admin) while INACTIVE.
+      expect(await service.canEditClaim(c.id, adminId, 'ADMIN')).toBe(false);
+      // appendRemark on an inactive claim is refused as if not found.
+      await expect(
+        service.appendRemark(c.id, { remarkText: 'x' }, adminId, 'ADMIN')
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      // Admin can still READ it (for audit / restore).
+      expect(await service.getById(c.id, adminId, 'ADMIN')).not.toBeNull();
+
+      await service.restore(c.id, adminId);
+      expect(await service.canEditClaim(c.id, adminId, 'ADMIN')).toBe(true);
+    });
+
+    it('admin list honours an explicit INACTIVE status filter (default hides it)', async () => {
+      await seedDefaultStatus();
+      const c = await service.create({ subCategoryId, claimId: 'C-HIDE' }, adminId);
+      await service.softDelete(c.id, adminId);
+      const active = await service.list({ scope: 'ALL', callerId: adminId });
+      expect(active.data.find((x) => x.id === c.id)).toBeUndefined();
+      const inactive = await service.list({ scope: 'ALL', callerId: adminId, status: 'INACTIVE' });
+      expect(inactive.data.find((x) => x.id === c.id)).toBeDefined();
+    });
+  });
+
+  describe('terminal status enforcement', () => {
+    it('blocks a non-admin from moving a claim out of a terminal status; admin may override', async () => {
+      const def = await seedDefaultStatus();
+      const closed = await statusService.create(
+        { subCategoryId, name: 'Closed', isTerminal: true },
+        adminId
+      );
+      const c = await service.create({ subCategoryId, claimId: 'C-TERM' }, adminId);
+      // Move INTO terminal (allowed — current status is the non-terminal default).
+      await service.appendRemark(c.id, { remarkText: 'close', newStatusId: closed.id }, adminId, 'TEAM_LEAD');
+
+      // Move OUT of terminal as TEAM_LEAD → blocked.
+      await expect(
+        service.appendRemark(c.id, { remarkText: 'reopen', newStatusId: def.id }, adminId, 'TEAM_LEAD')
+      ).rejects.toMatchObject({ code: 'TERMINAL_STATUS' });
+
+      // Admin override is allowed.
+      const reopened = await service.appendRemark(
+        c.id,
+        { remarkText: 'reopen', newStatusId: def.id },
+        adminId,
+        'ADMIN'
+      );
+      expect(reopened.workflowStatusId).toBe(def.id);
+    });
+  });
+
+  it('concurrent create of the same claimId: exactly one wins, the other gets DUPLICATE_CLAIM_ID', async () => {
+    await seedDefaultStatus();
+    const results = await Promise.allSettled([
+      service.create({ subCategoryId, claimId: 'C-RACE' }, adminId),
+      service.create({ subCategoryId, claimId: 'C-RACE' }, adminId),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toMatchObject({ code: 'DUPLICATE_CLAIM_ID' });
   });
 });
