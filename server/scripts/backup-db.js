@@ -22,6 +22,10 @@ if (!match) {
 
 const [, user, password, host, port, database] = match;
 
+// mysqldump may not be on PATH (common on Windows). Allow an explicit path via
+// MYSQLDUMP_PATH, e.g. "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqldump.exe".
+const MYSQLDUMP = process.env.MYSQLDUMP_PATH || 'mysqldump';
+
 // Create backups directory with date-wise subfolder
 const now = new Date();
 const dateFolder = now.toISOString().slice(0, 10); // YYYY-MM-DD
@@ -57,7 +61,7 @@ try {
     database
   ];
 
-  const dataOutput = execFileSync('mysqldump', dataArgs, {
+  const dataOutput = execFileSync(MYSQLDUMP, dataArgs, {
     maxBuffer: 1024 * 1024 * 100
   });
 
@@ -69,7 +73,7 @@ try {
     ...structureOnlyTables
   ];
 
-  const structureOutput = execFileSync('mysqldump', structureArgs, {
+  const structureOutput = execFileSync(MYSQLDUMP, structureArgs, {
     maxBuffer: 1024 * 1024 * 10
   });
 
