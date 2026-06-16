@@ -1,4 +1,10 @@
 import { PrismaClient, Prisma, Status, Claim, Role } from '@prisma/client';
+import {
+  ObservationExportRow,
+  ObservationRowError,
+  ParsedObservationRow,
+  deriveForgeryStatus,
+} from './observationSheet.js';
 
 export class ClaimServiceError extends Error {
   constructor(public code: string, message: string) {
@@ -34,6 +40,12 @@ export interface AppendRemarkInput {
   remarkText: string;
   newStatusId?: string;
   newAssigneeId?: string | null;
+}
+
+export interface ObservationImportResult {
+  created: number;
+  updated: number;
+  errors: ObservationRowError[];
 }
 
 export interface ListClaimsFilters {
@@ -158,6 +170,132 @@ export class ClaimService {
         });
       }
       return claim;
+    });
+  }
+
+  /**
+   * Bulk create-or-update claims from a parsed "Forged Documents Observations"
+   * sheet (decision #1), all addressed to one Sub-Category. The Sub-Category and
+   * its default status are resolved once up front (not per row); each row is then
+   * upserted by the (claimId, subCategoryId) unique key, and any per-row failure
+   * is collected rather than aborting the batch.
+   */
+  async importObservations(
+    rows: ParsedObservationRow[],
+    subCategoryId: string,
+    actorId: string,
+    scope?: { userTypeId: string; projectTypeId: string } | 'ALL'
+  ): Promise<ObservationImportResult> {
+    const subCategory = await this.prisma.subCategory.findUnique({
+      where: { id: subCategoryId },
+      include: { category: { select: { userTypeId: true, projectTypeId: true } } },
+    });
+    if (!subCategory) {
+      throw new ClaimServiceError('SUBCATEGORY_NOT_FOUND', 'SubCategory not found');
+    }
+    if (scope && scope !== 'ALL') {
+      if (
+        scope.userTypeId !== subCategory.category.userTypeId ||
+        scope.projectTypeId !== subCategory.category.projectTypeId
+      ) {
+        throw new ClaimServiceError('OUT_OF_SCOPE', 'SubCategory is outside your scope');
+      }
+    }
+    // Needed only when a row creates a new claim; resolved once (may be absent).
+    const def = await this.prisma.statusMaster.findFirst({
+      where: { subCategoryId, isDefault: true, status: 'ACTIVE' },
+    });
+
+    const errors: ObservationRowError[] = [];
+    let created = 0;
+    let updated = 0;
+    for (const row of rows) {
+      try {
+        const action = await this.upsertObservationRow(row, subCategoryId, def?.id ?? null, actorId);
+        if (action === 'created') created++;
+        else updated++;
+      } catch (err) {
+        const message =
+          err instanceof ClaimServiceError ? err.message : 'Unexpected error saving row';
+        errors.push({ rowNumber: row.rowNumber, message });
+      }
+    }
+    return { created, updated, errors };
+  }
+
+  /**
+   * Upsert a single observation row. Business fields are always (re)written; the
+   * workflow status is left untouched on update. On create the claim is seeded
+   * with the (pre-resolved) default status and the verbatim remarks are mirrored
+   * into a ClaimRemark for the audit trail.
+   */
+  private async upsertObservationRow(
+    row: ParsedObservationRow,
+    subCategoryId: string,
+    defaultStatusId: string | null,
+    actorId: string
+  ): Promise<'created' | 'updated'> {
+    const remarks = row.remarks?.trim() || null;
+    const business = {
+      dealerName: row.dealerName,
+      dealerCode: row.dealerCode,
+      invoiceDate: row.invoiceDate,
+      vinNo: row.vinNo,
+      customerName: row.customerName,
+      schemeType: row.schemeType,
+      observationRemarks: remarks,
+    };
+
+    const existing = await this.prisma.claim.findUnique({
+      where: { claimId_subCategoryId: { claimId: row.claimId, subCategoryId } },
+    });
+    if (existing) {
+      await this.prisma.claim.update({
+        where: { id: existing.id },
+        data: { ...business, updatedBy: actorId },
+      });
+      return 'updated';
+    }
+    if (!defaultStatusId) {
+      throw new ClaimServiceError('NO_DEFAULT_STATUS', 'SubCategory has no active default status');
+    }
+
+    return this.prisma.$transaction(async (tx): Promise<'created' | 'updated'> => {
+      try {
+        const claim = await tx.claim.create({
+          data: {
+            claimId: row.claimId,
+            subCategoryId,
+            workflowStatusId: defaultStatusId,
+            ...business,
+            createdBy: actorId,
+            updatedBy: actorId,
+          },
+        });
+        if (remarks) {
+          await tx.claimRemark.create({
+            data: {
+              claimId: claim.id,
+              userId: actorId,
+              remarkText: remarks,
+              statusBeforeId: null,
+              statusAfterId: defaultStatusId,
+            },
+          });
+        }
+        return 'created';
+      } catch (err) {
+        // Lost a create race: fall back to an update so the import stays idempotent
+        // (mirrors the plain update path above — no remark is added on update).
+        if ((err as { code?: string }).code === 'P2002') {
+          await tx.claim.update({
+            where: { claimId_subCategoryId: { claimId: row.claimId, subCategoryId } },
+            data: { ...business, updatedBy: actorId },
+          });
+          return 'updated';
+        }
+        throw err;
+      }
     });
   }
 
@@ -413,6 +551,66 @@ export class ClaimService {
       full: c.fullScanStatus,
       documents: c._count.documents,
       created: c.createdAt.toISOString().slice(0, 10),
+    }));
+  }
+
+  /**
+   * Rows for the "Forged Documents Observations" export (decisions #2/#3/#6):
+   * the original 10-column layout, with S.No regenerated, the uploaded remarks
+   * verbatim, and Status derived from the latest validation results.
+   */
+  async observationExportRows(filters: ListClaimsFilters): Promise<ObservationExportRow[]> {
+    // Restrict to claims that actually carry observation data, so scan-discovered
+    // claims (which never went through an upload) don't pad the export with blanks.
+    const where: Prisma.ClaimWhereInput = {
+      ...this.buildWhere(filters),
+      OR: [
+        { observationRemarks: { not: null } },
+        { dealerName: { not: null } },
+        { dealerCode: { not: null } },
+        { invoiceDate: { not: null } },
+        { vinNo: { not: null } },
+        { customerName: { not: null } },
+        { schemeType: { not: null } },
+      ],
+    };
+    const claims = await this.prisma.claim.findMany({
+      where,
+      select: {
+        claimId: true,
+        dealerName: true,
+        dealerCode: true,
+        invoiceDate: true,
+        vinNo: true,
+        customerName: true,
+        schemeType: true,
+        observationRemarks: true,
+        spellCheckStatus: true,
+        qrStatus: true,
+        metaExtractionStatus: true,
+        intraClaimStatus: true,
+        fullScanStatus: true,
+      },
+      // Ascending mirrors the source sheet's S.No ordering (oldest = row 1).
+      orderBy: { createdAt: 'asc' },
+      take: EXPORT_MAX,
+    });
+    if (claims.length === EXPORT_MAX) {
+      console.warn(
+        `Observation export hit the ${EXPORT_MAX}-row cap; some matching claims were omitted.`
+      );
+    }
+    return claims.map((c, i) => ({
+      sNo: i + 1,
+      claimId: c.claimId,
+      dealerName: c.dealerName ?? '',
+      dealerCode: c.dealerCode ?? '',
+      invoiceDate: c.invoiceDate ? c.invoiceDate.toISOString().slice(0, 10) : '',
+      vinNo: c.vinNo ?? '',
+      customerName: c.customerName ?? '',
+      schemeType: c.schemeType ?? '',
+      status: deriveForgeryStatus(c),
+      remarks: c.observationRemarks ?? '',
     }));
   }
 

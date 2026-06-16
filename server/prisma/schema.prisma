@@ -14,15 +14,15 @@ enum Status {
 }
 
 enum ProxyMode {
-  DIRECT      // Standard HTTP proxy (existing behavior)
-  HEADLESS    // Playwright rendering for WAF-protected sites
-  NEW_WINDOW  // Open in new tab with logged redirect
+  DIRECT // Standard HTTP proxy (existing behavior)
+  HEADLESS // Playwright rendering for WAF-protected sites
+  NEW_WINDOW // Open in new tab with logged redirect
 }
 
 enum AuditLevel {
-  STANDARD    // Access only
-  NAVIGATION  // Include navigation path
-  FULL        // Include all interactions
+  STANDARD // Access only
+  NAVIGATION // Include navigation path
+  FULL // Include all interactions
 }
 
 enum Role {
@@ -115,12 +115,12 @@ model User {
   createdBy           String?   @map("created_by") @db.VarChar(36)
   updatedBy           String?   @map("updated_by") @db.VarChar(36)
 
-  assignments      UserAssignment[]
-  sessions         Session[]
-  auditLogs        AuditLog[]
-  proxyMetrics     ProxyMetric[]
-  assignedClaims   Claim[]          @relation("ClaimAssignee")
-  authoredRemarks  ClaimRemark[]    @relation("ClaimRemarkAuthor")
+  assignments     UserAssignment[]
+  sessions        Session[]
+  auditLogs       AuditLog[]
+  proxyMetrics    ProxyMetric[]
+  assignedClaims  Claim[]          @relation("ClaimAssignee")
+  authoredRemarks ClaimRemark[]    @relation("ClaimRemarkAuthor")
 
   @@map("users")
 }
@@ -203,13 +203,13 @@ model UrlConfiguration {
   // Proxy mode configuration
   proxyMode       ProxyMode  @default(DIRECT) @map("proxy_mode")
   headlessTimeout Int        @default(60000) @map("headless_timeout") // ms, default 60s
-  sessionTtl      Int        @default(30000) @map("session_ttl")      // ms, default 30s idle
+  sessionTtl      Int        @default(30000) @map("session_ttl") // ms, default 30s idle
   auditLevel      AuditLevel @default(STANDARD) @map("audit_level")
 
-  userType     UserType       @relation(fields: [userTypeId], references: [id])
-  projectType  ProjectType    @relation(fields: [projectTypeId], references: [id])
-  category     Category       @relation(fields: [categoryId], references: [id])
-  subCategory  SubCategory    @relation(fields: [subCategoryId], references: [id])
+  userType     UserType      @relation(fields: [userTypeId], references: [id])
+  projectType  ProjectType   @relation(fields: [projectTypeId], references: [id])
+  category     Category      @relation(fields: [categoryId], references: [id])
+  subCategory  SubCategory   @relation(fields: [subCategoryId], references: [id])
   auditLogs    AuditLog[]
   proxyMetrics ProxyMetric[]
 
@@ -280,7 +280,7 @@ model ProxyMetric {
   durationMs Int?      @map("duration_ms")
 
   // Performance metrics
-  ttfbMs    Int? @map("ttfb_ms")    // Time to first byte
+  ttfbMs    Int? @map("ttfb_ms") // Time to first byte
   domLoadMs Int? @map("dom_load_ms") // DOM content loaded
 
   // Status
@@ -295,7 +295,7 @@ model ProxyMetric {
 
   // Headless-specific metrics
   browserSpawnMs Int? @map("browser_spawn_ms") // Time to spawn browser
-  queueWaitMs    Int? @map("queue_wait_ms")    // Time spent in queue
+  queueWaitMs    Int? @map("queue_wait_ms") // Time spent in queue
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -376,12 +376,22 @@ model ClaimIdRule {
 }
 
 model Claim {
-  id                   String           @id @default(uuid()) @db.VarChar(36)
-  claimId              String           @map("claim_id") @db.VarChar(100)
-  subCategoryId        String           @map("sub_category_id") @db.VarChar(36)
-  workflowStatusId     String           @map("workflow_status_id") @db.VarChar(36)
-  assignedToUserId     String?          @map("assigned_to_user_id") @db.VarChar(36)
-  folderPath           String?          @map("folder_path") @db.VarChar(500)
+  id               String  @id @default(uuid()) @db.VarChar(36)
+  claimId          String  @map("claim_id") @db.VarChar(100)
+  subCategoryId    String  @map("sub_category_id") @db.VarChar(36)
+  workflowStatusId String  @map("workflow_status_id") @db.VarChar(36)
+  assignedToUserId String? @map("assigned_to_user_id") @db.VarChar(36)
+  folderPath       String? @map("folder_path") @db.VarChar(500)
+
+  // Business metadata captured from the "Forged Documents Observations" upload sheet.
+  // All optional so existing/scan-discovered claims remain valid.
+  dealerName         String?   @map("dealer_name") @db.VarChar(255)
+  dealerCode         String?   @map("dealer_code") @db.VarChar(50)
+  invoiceDate        DateTime? @map("invoice_date")
+  vinNo              String?   @map("vin_no") @db.VarChar(100)
+  customerName       String?   @map("customer_name") @db.VarChar(255)
+  schemeType         String?   @map("scheme_type") @db.VarChar(100)
+  observationRemarks String?   @map("observation_remarks") @db.Text
 
   spellCheckStatus     ValidationStatus @default(PENDING) @map("spell_check_status")
   qrStatus             ValidationStatus @default(PENDING) @map("qr_status")
@@ -389,17 +399,17 @@ model Claim {
   intraClaimStatus     ValidationStatus @default(PENDING) @map("intra_claim_status")
   fullScanStatus       ValidationStatus @default(PENDING) @map("full_scan_status")
 
-  status               Status           @default(ACTIVE)
-  createdAt            DateTime         @default(now()) @map("created_at")
-  updatedAt            DateTime         @updatedAt @map("updated_at")
-  createdBy            String?          @map("created_by") @db.VarChar(36)
-  updatedBy            String?          @map("updated_by") @db.VarChar(36)
+  status    Status   @default(ACTIVE)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?  @map("created_by") @db.VarChar(36)
+  updatedBy String?  @map("updated_by") @db.VarChar(36)
 
-  subCategory    SubCategory   @relation(fields: [subCategoryId], references: [id])
-  workflowStatus StatusMaster  @relation("ClaimWorkflowStatus", fields: [workflowStatusId], references: [id])
-  assignedTo     User?         @relation("ClaimAssignee", fields: [assignedToUserId], references: [id])
-  remarks        ClaimRemark[]
-  documents      Document[]
+  subCategory       SubCategory        @relation(fields: [subCategoryId], references: [id])
+  workflowStatus    StatusMaster       @relation("ClaimWorkflowStatus", fields: [workflowStatusId], references: [id])
+  assignedTo        User?              @relation("ClaimAssignee", fields: [assignedToUserId], references: [id])
+  remarks           ClaimRemark[]
+  documents         Document[]
   validationRuns    ValidationRun[]
   validationResults ValidationResult[]
 
@@ -436,25 +446,25 @@ model ScanJob {
   subCategoryId String        @map("sub_category_id") @db.VarChar(36)
   status        ScanJobStatus @default(QUEUED)
 
-  scanLocation  String        @map("scan_location") @db.VarChar(500)
-  scanTarget    ScanTarget    @map("scan_target")
+  scanLocation String     @map("scan_location") @db.VarChar(500)
+  scanTarget   ScanTarget @map("scan_target")
 
-  totalEntries  Int           @default(0) @map("total_entries")
-  createdCount  Int           @default(0) @map("created_count")
-  skippedCount  Int           @default(0) @map("skipped_count")
-  errorCount    Int           @default(0) @map("error_count")
-  docsCreated   Int           @default(0) @map("docs_created")
-  docsSkipped   Int           @default(0) @map("docs_skipped")
-  errors        Json?
-  message       String?       @db.VarChar(500)
+  totalEntries Int     @default(0) @map("total_entries")
+  createdCount Int     @default(0) @map("created_count")
+  skippedCount Int     @default(0) @map("skipped_count")
+  errorCount   Int     @default(0) @map("error_count")
+  docsCreated  Int     @default(0) @map("docs_created")
+  docsSkipped  Int     @default(0) @map("docs_skipped")
+  errors       Json?
+  message      String? @db.VarChar(500)
 
-  startedAt     DateTime?     @map("started_at")
-  finishedAt    DateTime?     @map("finished_at")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  triggeredBy   String?       @map("triggered_by") @db.VarChar(36)
+  startedAt   DateTime? @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  triggeredBy String?   @map("triggered_by") @db.VarChar(36)
 
-  claimIdRule   ClaimIdRule   @relation(fields: [claimIdRuleId], references: [id], onDelete: Cascade)
-  subCategory   SubCategory   @relation(fields: [subCategoryId], references: [id])
+  claimIdRule ClaimIdRule @relation(fields: [claimIdRuleId], references: [id], onDelete: Cascade)
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id])
 
   @@index([subCategoryId])
   @@index([claimIdRuleId])
