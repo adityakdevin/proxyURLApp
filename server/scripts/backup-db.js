@@ -107,5 +107,12 @@ try {
 
 } catch (error) {
   console.error('Backup failed:', error.message);
+  if (error.code === 'ENOENT') {
+    console.error(
+      `\n"${MYSQLDUMP}" was not found. Add the MySQL "bin" folder to PATH, or set MYSQLDUMP_PATH ` +
+        `in server/.env to the full path of mysqldump.exe, e.g.\n` +
+        `  MYSQLDUMP_PATH="C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqldump.exe"`
+    );
+  }
   process.exit(1);
 }
