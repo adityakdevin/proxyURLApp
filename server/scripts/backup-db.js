@@ -11,7 +11,10 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-const urlPattern = /mysql:\/\/([^:]+):([^@]*)@([^:]+):(\d+)\/(.+)/;
+// Split on the LAST "@" so a password containing "@" (e.g. "vps@1234") parses
+// correctly: user is up to the first ":", host has no "@"/":"/"/", and any
+// trailing "?params" on the database name is ignored.
+const urlPattern = /^mysql:\/\/([^:]+):(.*)@([^:@/]+):(\d+)\/([^?]+)/;
 const match = DATABASE_URL.match(urlPattern);
 
 if (!match) {
