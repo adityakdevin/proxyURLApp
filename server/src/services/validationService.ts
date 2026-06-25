@@ -31,6 +31,33 @@ export class ValidationService {
       return;
     }
 
+    if (claim.documents.length === 0) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.validationRun.update({
+          where: { id: runId },
+          data: { status: 'RUNNING', startedAt: new Date() },
+        });
+        await tx.validationResult.createMany({
+          data: this.validators.map((v): Prisma.ValidationResultCreateManyInput => ({
+            runId,
+            claimId: claim.id,
+            validatorKey: v.key,
+            status: 'DOCS_NOT_AVAILABLE',
+            summary: 'No documents available to validate.',
+          })),
+        });
+        await tx.claim.update({
+          where: { id: claim.id },
+          data: Object.fromEntries(COLUMNS.map((c) => [c, 'DOCS_NOT_AVAILABLE'])),
+        });
+        await tx.validationRun.update({
+          where: { id: runId },
+          data: { status: 'COMPLETED', finishedAt: new Date() },
+        });
+      });
+      return;
+    }
+
     // One OCR worker for the whole run (META OCRs every image/PDF); closed in finally.
     const ocr = new TesseractOcrPort();
     try {

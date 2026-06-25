@@ -77,7 +77,8 @@ export interface ValidationStatuses {
  *  - any FAILED            -> 'Forged'
  *  - all PASSED            -> 'OK'
  *  - otherwise (PENDING /
- *    IN_PROGRESS present)  -> 'Pending'
+ *    IN_PROGRESS /
+ *    DOCS_NOT_AVAILABLE)   -> 'Pending'
  */
 export function deriveForgeryStatus(v: ValidationStatuses): ForgeryStatus {
   const checks = [
