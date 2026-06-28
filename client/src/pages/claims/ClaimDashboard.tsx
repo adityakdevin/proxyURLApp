@@ -6,6 +6,7 @@ import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { ValidationBadge } from '@/components/ValidationBadge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -246,27 +247,27 @@ export default function ClaimDashboard() {
     {
       id: 'spell',
       header: 'Spell',
-      cell: ({ row }) => <Badge variant="outline">{row.original.spellCheckStatus}</Badge>,
+      cell: ({ row }) => <ValidationBadge status={row.original.spellCheckStatus} />,
     },
     {
       id: 'qr',
       header: 'QR',
-      cell: ({ row }) => <Badge variant="outline">{row.original.qrStatus}</Badge>,
+      cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} />,
     },
     {
       id: 'meta',
       header: 'Meta',
-      cell: ({ row }) => <Badge variant="outline">{row.original.metaExtractionStatus}</Badge>,
+      cell: ({ row }) => <ValidationBadge status={row.original.metaExtractionStatus} />,
     },
     {
       id: 'intra',
       header: 'Intra-Claim',
-      cell: ({ row }) => <Badge variant="outline">{row.original.intraClaimStatus}</Badge>,
+      cell: ({ row }) => <ValidationBadge status={row.original.intraClaimStatus} />,
     },
     {
       id: 'full',
       header: 'Full Scan',
-      cell: ({ row }) => <Badge variant="outline">{row.original.fullScanStatus}</Badge>,
+      cell: ({ row }) => <ValidationBadge status={row.original.fullScanStatus} />,
     },
     {
       id: 'created',

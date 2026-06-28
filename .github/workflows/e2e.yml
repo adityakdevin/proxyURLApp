@@ -1,0 +1,94 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # API / HTTP end-to-end (supertest, no browser). Fast, deterministic. #
+  # ------------------------------------------------------------------ #
+  api-e2e:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: proxyapp_test
+        ports:
+          - 3306:3306
+        # MySQL 8 defaults to InnoDB + DYNAMIC row format, so `prisma db push`
+        # creates the documents table without the 2144-byte key-length error
+        # seen on legacy MyISAM/COMPACT boxes.
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: "mysql://root:root@127.0.0.1:3306/proxyapp_test"
+      TEST_DATABASE_URL: "mysql://root:root@127.0.0.1:3306/proxyapp_test"
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: Push schema to test DB
+        run: npm run db:push
+      - name: Run API E2E suite
+        run: npm run test:e2e:api
+
+  # ----------------------------------------------------------------- #
+  # Browser smoke (Playwright). Heavier; boots the full dev stack.    #
+  # ----------------------------------------------------------------- #
+  ui-e2e:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: proxyapp_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: "mysql://root:root@127.0.0.1:3306/proxyapp_test"
+      E2E_DATABASE_URL: "mysql://root:root@127.0.0.1:3306/proxyapp_test"
+      CLIENT_URL: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: Push schema to test DB
+        run: npm run db:push
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      # test:e2e:ui seeds the forcePasswordChange=false E2E admin (db:seed:e2e)
+      # into E2E_DATABASE_URL, then runs Playwright (which boots the dev stack
+      # bound to the same DB).
+      - name: Run UI E2E smoke
+        run: npm run test:e2e:ui
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

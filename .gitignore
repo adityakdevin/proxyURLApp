@@ -31,6 +31,12 @@ yarn-error.log*
 # Testing
 coverage/
 
+# Playwright (artifacts written at repo root by the UI E2E run)
+test-results/
+playwright-report/
+playwright/.cache/
+e2e/.auth/
+
 # Prisma
 server/prisma/*.db
 server/prisma/*.db-journal
@@ -40,10 +46,12 @@ server/prisma/*.db-journal
 
 # Vite
 client/.vite/
-docs
 start.bat
 
 # Claims module runtime artifacts (must never be committed)
 *.traineddata
 server/uploads/
 uploads/
+
+# Sample claim PDFs (6.6 MB of binary/PII source docs — keep local, not in git)
+docs/samples/

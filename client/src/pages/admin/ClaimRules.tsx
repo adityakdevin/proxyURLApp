@@ -6,6 +6,7 @@ import { DataTable } from '@/components/shared/DataTable';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { VALIDATION_STATUS_VALUES } from '@/lib/validationStatus';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -55,7 +56,6 @@ const FIELD_LABELS: Record<RuleField, string> = {
 const OP_LABELS: Record<RuleOperator, string> = { EQ: '=', NEQ: '≠', GTE: '≥', LTE: '≤', GT: '>', LT: '<' };
 const NUMERIC_FIELDS: RuleField[] = ['DOCUMENT_COUNT', 'REMARK_COUNT'];
 const STATUS_FIELDS: RuleField[] = ['SPELL_STATUS', 'QR_STATUS', 'META_STATUS', 'INTRA_STATUS', 'FULL_STATUS'];
-const VALIDATION_VALUES = ['PENDING', 'IN_PROGRESS', 'PASSED', 'FAILED'];
 const opsFor = (f: RuleField): RuleOperator[] =>
   NUMERIC_FIELDS.includes(f) ? ['EQ', 'NEQ', 'GTE', 'LTE', 'GT', 'LT'] : ['EQ', 'NEQ'];
 
@@ -113,7 +113,7 @@ export default function ClaimRules() {
     if (form.field === 'ASSIGNED') return ['true', 'false'];
     if (form.field === 'HAS_DOCUMENT_TYPE') return docTypeNames;
     if (form.field === 'WORKFLOW_STATUS') return statusNames;
-    if (STATUS_FIELDS.includes(form.field)) return VALIDATION_VALUES;
+    if (STATUS_FIELDS.includes(form.field)) return VALIDATION_STATUS_VALUES;
     return null;
   }, [form.field, docTypeNames, statusNames]);
 

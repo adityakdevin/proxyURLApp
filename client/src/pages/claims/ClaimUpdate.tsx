@@ -4,6 +4,11 @@ import { ArrowLeft } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  ValidationStatus,
+  validationStatusLabel,
+  validationStatusVariant,
+} from '@/lib/validationStatus';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -72,7 +77,7 @@ function humanSize(bytes: number | null): string {
 
 interface ValResult {
   validatorKey: 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL';
-  status: 'PENDING' | 'IN_PROGRESS' | 'PASSED' | 'FAILED';
+  status: ValidationStatus;
   summary: string | null;
 }
 interface ValRun {
@@ -91,12 +96,6 @@ interface RuleEval {
   actual: string;
 }
 const OP_SYMBOL: Record<string, string> = { EQ: '=', NEQ: '≠', GTE: '≥', LTE: '≤', GT: '>', LT: '<' };
-function statusVariant(s: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (s === 'PASSED') return 'default';
-  if (s === 'FAILED') return 'destructive';
-  if (s === 'IN_PROGRESS') return 'secondary';
-  return 'outline';
-}
 const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof ClaimDetail }[] = [
   { key: 'SPELL', label: 'Spell', column: 'spellCheckStatus' },
   { key: 'QR', label: 'QR', column: 'qrStatus' },
@@ -404,8 +403,8 @@ export default function ClaimUpdate() {
               const colVal = String(claim[v.column]);
               const res = resultFor(v.key);
               return (
-                <Badge key={v.key} variant={statusVariant(colVal)} title={res?.summary ?? ''}>
-                  {v.label}: {colVal}
+                <Badge key={v.key} variant={validationStatusVariant(colVal)} title={res?.summary ?? ''}>
+                  {v.label}: {validationStatusLabel(colVal)}
                 </Badge>
               );
             })}
