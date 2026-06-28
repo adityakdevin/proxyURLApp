@@ -66,6 +66,17 @@ describe('ValidationService + drainer', () => {
 
   it('runOne executes validators, writes results, sets columns + COMPLETED', async () => {
     const claim = await makeClaim('C-V1');
+    // A claim with zero documents short-circuits to DOCS_NOT_AVAILABLE before any
+    // validator runs (see runOne), so attach one document so the validators fire.
+    await prisma.document.create({
+      data: {
+        claimId: claim.id,
+        source: 'UPLOADED',
+        fileName: 'doc.pdf',
+        storagePath: `/tmp/${SUF}-C-V1.pdf`,
+        createdBy: adminId,
+      },
+    });
     const run = await prisma.validationRun.create({
       data: { claimId: claim.id, trigger: 'MANUAL', status: 'QUEUED' },
     });
