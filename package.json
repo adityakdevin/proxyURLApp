@@ -20,14 +20,19 @@
     "db:generate": "npm run db:generate --workspace=server",
     "db:seed": "npm run db:seed --workspace=server",
     "db:seed:demo": "npm run db:seed:demo --workspace=server",
+    "db:seed:e2e": "npm run db:seed:e2e --workspace=server",
     "db:reset-admin": "npm run db:reset-admin --workspace=server",
     "db:studio": "npm run db:studio --workspace=server",
     "db:backup": "npm run db:backup --workspace=server",
     "test": "npm run test --workspace=server",
+    "test:e2e:api": "npm run test:e2e:api --workspace=server",
+    "test:e2e:ui": "npm run db:seed:e2e && playwright test",
+    "test:e2e": "npm run test:e2e:api && npm run test:e2e:ui",
     "lint": "npm run lint --workspaces",
     "deploy": "npm run db:generate && npm run db:push && npm run build"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "concurrently": "^8.2.2"
   },
   "engines": {
