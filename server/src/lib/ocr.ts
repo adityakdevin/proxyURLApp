@@ -1,6 +1,6 @@
 import os from 'os';
 import path from 'path';
-import Jimp from 'jimp';
+import { Jimp } from 'jimp';
 import { createWorker, Worker } from 'tesseract.js';
 import { OcrPort, WordBox } from '../validators/types.js';
 import { clamp01 } from './bbox.js';

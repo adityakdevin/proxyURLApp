@@ -1,4 +1,4 @@
-import Jimp from 'jimp';
+import { Jimp } from 'jimp';
 import jsQR from 'jsqr';
 import { Validator, ValidatorContext, FindingInput } from './types.js';
 import { qrOutcome } from './logic.js';
