@@ -128,7 +128,7 @@ dialog shows a banner pointing you here.
 ## 8. Smoke test
 
 1. Log in as an admin.
-2. **Claims → Upload Observations** → choose User Type → Project Type → Category → Sub-Category.
+2. **Claims → Upload Observations** → choose User Type → Project → Category → Sub-Category.
 3. Upload `docs/samples/Forged Documents Observations.xlsx` → **Import** → expect *created/updated* counts.
 4. **Export** → confirm the 10-column sheet downloads with the **Status** column filled.
 

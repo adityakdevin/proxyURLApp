@@ -16,7 +16,7 @@ flowchart TD
   Dash --> Pick{"Choose area"}
 
   %% Proxy / core master data
-  Pick --> Core["Core master data:<br/>User Types · Project Types · Users<br/>Categories · Sub-Categories · URL Configs"]
+  Pick --> Core["Core master data:<br/>User Types · Projects · Users<br/>Categories · Sub-Categories · URL Configs"]
 
   %% Claims configuration
   Pick --> CC["Claims Config (sidebar group)"]
@@ -83,6 +83,6 @@ flowchart TD
 ## Legend / notes
 
 - **Solid arrows** = navigation or a triggered action. **Dotted arrows** = data feeding a view (e.g., validation results and live-evaluated rules show on the Claim Update page).
-- **Scope:** a `USER` sees all claims in their `(UserType, ProjectType)` pair but can only edit ones assigned to them; a `TEAM_LEAD` can edit any claim in their pair; an `ADMIN` sees/edits everything. The same scope governs the export.
+- **Scope:** a `USER` sees all claims in their `(UserType, Project)` pair but can only edit ones assigned to them; a `TEAM_LEAD` can edit any claim in their pair; an `ADMIN` sees/edits everything. The same scope governs the export.
 - **Validation lifecycle:** each of the 5 columns goes `PENDING → IN_PROGRESS → PASSED/FAILED` during a `ValidationRun`. Runs are auto-enqueued after ingestion/upload and can be triggered manually ("Validate").
 - **Claim Rules (2E)** are admin-defined and evaluated **live** when a claim is viewed (not stored).

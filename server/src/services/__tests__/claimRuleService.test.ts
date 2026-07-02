@@ -13,7 +13,6 @@ describe('ClaimRuleService', () => {
   let adminId: string;
   let workflowStatusId: string;
   const SUF = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-  let utId: string;
   let ptId: string;
   let catId: string;
 
@@ -22,11 +21,9 @@ describe('ClaimRuleService', () => {
     service = new ClaimRuleService(prisma);
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
     adminId = admin!.id;
-    const ut = await prisma.userType.create({ data: { name: `cr-ut-${SUF}` } });
-    const pt = await prisma.projectType.create({ data: { name: `cr-pt-${SUF}` } });
-    utId = ut.id;
+    const pt = await prisma.project.create({ data: { name: `cr-pt-${SUF}` } });
     ptId = pt.id;
-    const cat = await prisma.category.create({ data: { name: `cr-cat-${SUF}`, userTypeId: utId, projectTypeId: ptId } });
+    const cat = await prisma.category.create({ data: { name: `cr-cat-${SUF}`, projectId: ptId } });
     catId = cat.id;
     const sc = await prisma.subCategory.create({ data: { name: `cr-sc-${SUF}`, categoryId: catId } });
     subCategoryId = sc.id;
@@ -45,8 +42,7 @@ describe('ClaimRuleService', () => {
     await truncateClaimsTables(prisma);
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
-    await prisma.userType.deleteMany({ where: { id: utId } });
-    await prisma.projectType.deleteMany({ where: { id: ptId } });
+    await prisma.project.deleteMany({ where: { id: ptId } });
     await disconnectTestPrisma();
   });
 

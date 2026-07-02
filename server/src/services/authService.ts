@@ -123,8 +123,7 @@ export class AuthService {
         fullName: user.fullName,
         role: user.role,
         forcePasswordChange: user.forcePasswordChange,
-        userTypeId: assignment?.userTypeId,
-        projectTypeId: assignment?.projectTypeId,
+        projectId: assignment?.projectId,
       },
     };
   }

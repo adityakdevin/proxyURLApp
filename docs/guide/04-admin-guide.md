@@ -20,8 +20,8 @@ All admin screens live under the **Admin** area, which only administrators can s
 
 Set things up in this order the first time:
 
-1. **User Types** and **Project Types** — the building blocks of a "scope."
-2. **Users** — the people, each given a User Type + Project Type.
+1. **User Types** and **Projects** — the building blocks of a "scope."
+2. **Users** — the people, each given a User Type + Project.
 3. **Categories** — top-level groupings, each tied to a scope.
 4. **Sub-Categories** — sections inside a category.
 5. For each Sub-Category that holds claims:
@@ -34,17 +34,17 @@ Set things up in this order the first time:
 
 ---
 
-## 4.2 User Types & Project Types (the "scope")
+## 4.2 User Types & Projects (the "scope")
 
-Every user is given **one User Type + one Project Type**. Together these form their
+Every user is given **one User Type + one Project**. Together these form their
 **scope** — the boundary of what they can see. Categories are also built for a scope,
 so the two line up.
 
 - **User Type** — usually a role or function, e.g. _Claims Officer_.
-- **Project Type** — usually a project, region, or financial year, e.g. _FY2025_.
+- **Project** — usually a project, region, or financial year, e.g. _FY2025_.
 
 ### To create one
-1. Go to **Admin → User Types** (or **Project Types**).
+1. Go to **Admin → User Types** (or **Projects**).
 2. Click **Add**.
 3. Enter a **Name** (required) and optional **Description**.
 4. Leave **Status** as **Active**.
@@ -52,7 +52,7 @@ so the two line up.
 
 > 📷 **Screenshot placeholder:** _The User Types list and the Add dialog._
 
-> ⚠️ Setting a User Type or Project Type to **Inactive** hides everything in that
+> ⚠️ Setting a User Type or Project to **Inactive** hides everything in that
 > scope from users — including their whole menu. Only deactivate when you mean to.
 
 ---
@@ -67,7 +67,7 @@ so the two line up.
    - **Full Name**,
    - **Temporary Password** (must be 8+ chars with uppercase, lowercase, and a number),
    - **Role** — **User**, **Team Lead**, or **Admin**,
-   - **Assignment** — the **User Type + Project Type** this person belongs to.
+   - **Assignment** — the **User Type + Project** this person belongs to.
 4. Click **Save**.
 
 > 📷 **Screenshot placeholder:** _The Add User form showing role and assignment fields._
@@ -87,7 +87,7 @@ Administrators can **impersonate** a user to see exactly what that person sees �
 for troubleshooting "I can't find my claim" reports. Every impersonation is recorded in
 the audit trail. Stop impersonating to return to your own account.
 
-> ⚠️ Each user can only have **one assignment** (one User Type + Project Type). To move
+> ⚠️ Each user can only have **one assignment** (one User Type + Project). To move
 > someone to a different scope, edit their assignment.
 
 ---
@@ -95,7 +95,7 @@ the audit trail. Stop impersonating to return to your own account.
 ## 4.4 Categories
 
 A **Category** is a top-level grouping that is **bound to one scope** (a User Type +
-Project Type).
+Project).
 
 1. Go to **Admin → Categories**.
 2. Click **Add Category**.
@@ -103,12 +103,12 @@ Project Type).
    - **Name** (required),
    - **Description** (optional),
    - **User Type** (required),
-   - **Project Type** (required).
+   - **Project** (required).
 4. Click **Save** / **Create**.
 
-> 📷 **Screenshot placeholder:** _The Create Category dialog with User Type and Project Type dropdowns._
+> 📷 **Screenshot placeholder:** _The Create Category dialog with User Type and Project dropdowns._
 
-> ⚠️ The **User Type** and **Project Type** are locked once the category is created —
+> ⚠️ The **User Type** and **Project** are locked once the category is created —
 > you can't move a category to a different scope afterwards. Choose carefully.
 
 The list shows each category's scope and a **usage** count (how many sub-categories it
@@ -119,7 +119,7 @@ holds).
 ## 4.5 Sub-Categories
 
 A **Sub-Category** sits **inside a Category**. It automatically **inherits the
-category's scope**, so you don't pick a User Type/Project Type here — you just pick the
+category's scope**, so you don't pick a User Type/Project here — you just pick the
 parent category.
 
 1. Go to **Admin → Sub-Categories**.
@@ -322,7 +322,7 @@ These build the **website menu** users see. A link lives under a specific
 3. Fill in:
    - **Label** — the name users see in the menu,
    - **Target URL** — the real website address,
-   - **User Type**, **Project Type**, **Category**, **Sub-Category** — where it belongs
+   - **User Type**, **Project**, **Category**, **Sub-Category** — where it belongs
      and who may see it,
    - (Advanced) the **proxy mode** and timeouts — leave at defaults unless you have a
      reason to change them.
@@ -343,7 +343,7 @@ Category → Sub-Category. The app opens it safely "through" itself and logs the
 - **Deactivate, don't delete**, when you can — setting something **Inactive** hides it
   while preserving history.
 - **One default status** per sub-category, always.
-- **Match scopes** — a user only sees a Category if their User Type + Project Type
+- **Match scopes** — a user only sees a Category if their User Type + Project
   match it exactly. "User can't see anything" almost always means a scope mismatch;
   use **impersonation** to confirm.
 

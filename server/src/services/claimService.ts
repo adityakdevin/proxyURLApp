@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma, Status, Claim, Role } from '@prisma/client';
+import { PrismaClient, Prisma, Status, Claim, Role, ValidationStatus } from '@prisma/client';
 import {
   ObservationExportRow,
   ObservationRowError,
@@ -12,18 +12,29 @@ export class ClaimServiceError extends Error {
   }
 }
 
-/** folderPath, when present, must mirror the ClaimIdRule.scanLocation rule (spec §6.3/§10). */
+/**
+ * folderPath, when present, must mirror the ClaimIdRule.scanLocation rule (spec §6.3/§10).
+ * The ".." traversal guard and the C:-drive ban apply on EVERY OS (the C: system drive is
+ * never a valid claims folder). Only the absolute-drive-letter shape is enforced on Windows
+ * (production); in macOS/Linux dev any other traversal-free path is accepted, since
+ * resolveScanRoot() strips a drive-letter prefix (if present) and re-roots under
+ * CLAIMS_SCAN_ROOT — so "D:\\Claims\\Daily\\<VIN>" and "Claims/Daily/<VIN>" both resolve to
+ * <CLAIMS_SCAN_ROOT>/Claims/Daily/<VIN>.
+ */
 function validateFolderPath(value: string): void {
-  if (!/^[A-Za-z]:\\.+/.test(value) || /^[Cc]:\\/.test(value)) {
-    throw new ClaimServiceError(
-      'INVALID_FOLDER_PATH',
-      'folderPath must be an absolute drive-letter path and cannot be on the C drive'
-    );
-  }
   if (value.split(/[\\/]/).includes('..')) {
     throw new ClaimServiceError(
       'INVALID_FOLDER_PATH',
       'folderPath must not contain ".." path segments'
+    );
+  }
+  if (/^[Cc]:\\/.test(value)) {
+    throw new ClaimServiceError('INVALID_FOLDER_PATH', 'folderPath cannot be on the C drive');
+  }
+  if (process.platform === 'win32' && !/^[A-Za-z]:\\.+/.test(value)) {
+    throw new ClaimServiceError(
+      'INVALID_FOLDER_PATH',
+      'folderPath must be an absolute drive-letter path'
     );
   }
 }
@@ -56,7 +67,15 @@ export interface ListClaimsFilters {
   search?: string;
   /** Admin-only lifecycle filter; ignored for scoped callers (always ACTIVE). Defaults to ACTIVE. */
   status?: Status;
-  scope?: { userTypeId: string; projectTypeId: string } | 'ALL';
+  /** Per-check result filters (each of the five validation columns). */
+  spellCheckStatus?: ValidationStatus;
+  qrStatus?: ValidationStatus;
+  metaExtractionStatus?: ValidationStatus;
+  intraClaimStatus?: ValidationStatus;
+  fullScanStatus?: ValidationStatus;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  scope?: { subCategoryIds: string[] } | 'ALL';
   callerId?: string;
   page?: number;
   limit?: number;
@@ -85,22 +104,19 @@ export class ClaimService {
   async create(
     input: CreateClaimInput,
     actorId: string,
-    scope?: { userTypeId: string; projectTypeId: string } | 'ALL',
+    scope?: { subCategoryIds: string[] } | 'ALL',
     opts?: { trustedFolderPath?: boolean }
   ): Promise<Claim> {
     const subCategory = await this.prisma.subCategory.findUnique({
       where: { id: input.subCategoryId },
-      include: { category: { select: { userTypeId: true, projectTypeId: true } } },
     });
     if (!subCategory) {
       throw new ClaimServiceError('SUBCATEGORY_NOT_FOUND', 'SubCategory not found');
     }
-    const pairUserTypeId = subCategory.category.userTypeId;
-    const pairProjectTypeId = subCategory.category.projectTypeId;
 
-    // Team Lead may only create claims inside their assigned (UserType, ProjectType) pair.
+    // Team Lead may only create claims inside a sub-category they are granted.
     if (scope && scope !== 'ALL') {
-      if (scope.userTypeId !== pairUserTypeId || scope.projectTypeId !== pairProjectTypeId) {
+      if (!scope.subCategoryIds.includes(input.subCategoryId)) {
         throw new ClaimServiceError('OUT_OF_SCOPE', 'SubCategory is outside your scope');
       }
     }
@@ -110,7 +126,7 @@ export class ClaimService {
     }
 
     if (input.assignedToUserId) {
-      await this.validateAssignee(input.assignedToUserId, pairUserTypeId, pairProjectTypeId);
+      await this.validateAssignee(input.assignedToUserId, input.subCategoryId);
     }
 
     const def = await this.prisma.statusMaster.findFirst({
@@ -184,20 +200,16 @@ export class ClaimService {
     rows: ParsedObservationRow[],
     subCategoryId: string,
     actorId: string,
-    scope?: { userTypeId: string; projectTypeId: string } | 'ALL'
+    scope?: { subCategoryIds: string[] } | 'ALL'
   ): Promise<ObservationImportResult> {
     const subCategory = await this.prisma.subCategory.findUnique({
       where: { id: subCategoryId },
-      include: { category: { select: { userTypeId: true, projectTypeId: true } } },
     });
     if (!subCategory) {
       throw new ClaimServiceError('SUBCATEGORY_NOT_FOUND', 'SubCategory not found');
     }
     if (scope && scope !== 'ALL') {
-      if (
-        scope.userTypeId !== subCategory.category.userTypeId ||
-        scope.projectTypeId !== subCategory.category.projectTypeId
-      ) {
+      if (!scope.subCategoryIds.includes(subCategoryId)) {
         throw new ClaimServiceError('OUT_OF_SCOPE', 'SubCategory is outside your scope');
       }
     }
@@ -312,7 +324,7 @@ export class ClaimService {
       const claim = await tx.claim.findUnique({
         where: { id: claimId },
         include: {
-          subCategory: { include: { category: { select: { userTypeId: true, projectTypeId: true } } } },
+          subCategory: { include: { category: { select: { projectId: true } } } },
           workflowStatus: { select: { isTerminal: true } },
         },
       });
@@ -329,11 +341,7 @@ export class ClaimService {
       }
       // A (non-null) reassignment target must be an active, non-admin user in the claim's scope.
       if (reassignRequested && input.newAssigneeId) {
-        await this.validateAssignee(
-          input.newAssigneeId,
-          claim.subCategory.category.userTypeId,
-          claim.subCategory.category.projectTypeId
-        );
+        await this.validateAssignee(input.newAssigneeId, claim.subCategoryId);
       }
 
       let statusAfterId: string | null = null;
@@ -382,50 +390,44 @@ export class ClaimService {
     });
   }
 
+  // Whether a user has been granted access to a given SubCategory.
+  private async hasSubCategoryAccess(userId: string, subCategoryId: string): Promise<boolean> {
+    const row = await this.prisma.userSubCategory.findUnique({
+      where: { userId_subCategoryId: { userId, subCategoryId } },
+      select: { id: true },
+    });
+    return !!row;
+  }
+
   async canEditClaim(claimId: string, callerId: string, callerRole: Role): Promise<boolean> {
     const claim = await this.prisma.claim.findUnique({
       where: { id: claimId },
-      include: { subCategory: { include: { category: true } } },
+      select: { status: true, subCategoryId: true, assignedToUserId: true },
     });
     // A soft-deleted claim is editable by no one (incl. admins) until restored.
     if (!claim || claim.status !== 'ACTIVE') return false;
     if (callerRole === 'ADMIN') return true;
     if (callerRole === 'TEAM_LEAD') {
-      const assignment = await this.prisma.userAssignment.findUnique({
-        where: { userId: callerId },
-      });
-      if (!assignment) return false;
-      return (
-        claim.subCategory.category.userTypeId === assignment.userTypeId &&
-        claim.subCategory.category.projectTypeId === assignment.projectTypeId
-      );
+      return this.hasSubCategoryAccess(callerId, claim.subCategoryId);
     }
-    // USER: must be the assignee AND still in the claim's scope (closes a
-    // stale-assignment edge case).
+    // USER: must be the assignee AND still be granted the claim's sub-category
+    // (closes a stale-assignment edge case).
     if (claim.assignedToUserId !== callerId) return false;
-    const assignment = await this.prisma.userAssignment.findUnique({
-      where: { userId: callerId },
-    });
-    if (!assignment) return false;
-    return (
-      claim.subCategory.category.userTypeId === assignment.userTypeId &&
-      claim.subCategory.category.projectTypeId === assignment.projectTypeId
-    );
+    return this.hasSubCategoryAccess(callerId, claim.subCategoryId);
   }
 
   /**
-   * An assignee must be an ACTIVE, non-ADMIN user who holds an assignment
-   * matching the claim's (UserType, ProjectType) pair. Mirrors the
-   * /user/users-in-scope lookup that populates the "Assign to" dropdown.
+   * An assignee must be an ACTIVE, non-ADMIN user who has been granted the
+   * claim's SubCategory. Mirrors the /user/users-in-scope lookup that
+   * populates the "Assign to" dropdown.
    */
   private async validateAssignee(
     assigneeId: string,
-    userTypeId: string,
-    projectTypeId: string
+    subCategoryId: string
   ): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id: assigneeId },
-      include: { assignments: true },
+      select: { status: true, role: true },
     });
     if (!user || user.status !== 'ACTIVE' || user.role === 'ADMIN') {
       throw new ClaimServiceError(
@@ -433,10 +435,7 @@ export class ClaimService {
         'Assignee must be an active, non-admin user'
       );
     }
-    const inScope = user.assignments.some(
-      (a) => a.userTypeId === userTypeId && a.projectTypeId === projectTypeId
-    );
-    if (!inScope) {
+    if (!(await this.hasSubCategoryAccess(assigneeId, subCategoryId))) {
       throw new ClaimServiceError('INVALID_ASSIGNEE', "Assignee is not in this claim's scope");
     }
   }
@@ -463,24 +462,33 @@ export class ClaimService {
     // Non-admins never see soft-deleted claims; admins may, for audit/restore.
     if (claim.status !== 'ACTIVE' && callerRole !== 'ADMIN') return null;
     if (callerRole !== 'ADMIN') {
-      const assignment = await this.prisma.userAssignment.findUnique({
-        where: { userId: callerId },
-      });
-      if (!assignment) return null;
-      if (
-        claim.subCategory.category.userTypeId !== assignment.userTypeId ||
-        claim.subCategory.category.projectTypeId !== assignment.projectTypeId
-      ) {
+      if (!(await this.hasSubCategoryAccess(callerId, claim.subCategoryId))) {
         return null;
       }
     }
     return claim;
   }
 
+  /** Columns clients may sort the claim list by (guards against arbitrary orderBy keys). */
+  private static readonly SORTABLE_FIELDS = new Set([
+    'claimId',
+    'createdAt',
+    'spellCheckStatus',
+    'qrStatus',
+    'metaExtractionStatus',
+    'intraClaimStatus',
+    'fullScanStatus',
+  ]);
+
   async list(filters: ListClaimsFilters) {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 20;
     const where = this.buildWhere(filters);
+    const sortBy =
+      filters.sortBy && ClaimService.SORTABLE_FIELDS.has(filters.sortBy)
+        ? filters.sortBy
+        : 'createdAt';
+    const sortOrder = filters.sortOrder === 'asc' ? 'asc' : 'desc';
     const [data, total] = await Promise.all([
       this.prisma.claim.findMany({
         where,
@@ -489,7 +497,7 @@ export class ClaimService {
           workflowStatus: { select: { id: true, name: true, isTerminal: true } },
           assignedTo: { select: { id: true, fullName: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { [sortBy]: sortOrder },
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -511,13 +519,13 @@ export class ClaimService {
       where.assignedToUserId = filters.assignedToUserId;
     }
     if (filters.search) where.claimId = { contains: filters.search };
+    if (filters.spellCheckStatus) where.spellCheckStatus = filters.spellCheckStatus;
+    if (filters.qrStatus) where.qrStatus = filters.qrStatus;
+    if (filters.metaExtractionStatus) where.metaExtractionStatus = filters.metaExtractionStatus;
+    if (filters.intraClaimStatus) where.intraClaimStatus = filters.intraClaimStatus;
+    if (filters.fullScanStatus) where.fullScanStatus = filters.fullScanStatus;
     if (filters.scope && filters.scope !== 'ALL') {
-      where.subCategory = {
-        category: {
-          userTypeId: filters.scope.userTypeId,
-          projectTypeId: filters.scope.projectTypeId,
-        },
-      };
+      where.subCategoryId = { in: filters.scope.subCategoryIds };
     }
     return where;
   }

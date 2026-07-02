@@ -9,8 +9,7 @@ import ChangePassword from '@/pages/auth/ChangePassword';
 // Admin pages
 import AdminLayout from '@/components/layout/AdminLayout';
 import AdminDashboard from '@/pages/admin/Dashboard';
-import UserTypes from '@/pages/admin/UserTypes';
-import ProjectTypes from '@/pages/admin/ProjectTypes';
+import Projects from '@/pages/admin/Projects';
 import Users from '@/pages/admin/Users';
 import Categories from '@/pages/admin/Categories';
 import SubCategories from '@/pages/admin/SubCategories';
@@ -77,8 +76,7 @@ function App() {
           }
         >
           <Route index element={<AdminDashboard />} />
-          <Route path="user-types" element={<UserTypes />} />
-          <Route path="project-types" element={<ProjectTypes />} />
+          <Route path="projects" element={<Projects />} />
           <Route path="users" element={<Users />} />
           <Route path="categories" element={<Categories />} />
           <Route path="sub-categories" element={<SubCategories />} />

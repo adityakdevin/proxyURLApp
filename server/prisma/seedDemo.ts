@@ -10,7 +10,7 @@
  *
  * What it creates (a complete, navigable hierarchy):
  *   • 3 login accounts, one per role  (admin / team lead / regular user)
- *   • 1 UserType  + 1 ProjectType     (the access "scope")
+ *   • 1 Project     (the access "scope")
  *   • 1 Category  + 1 SubCategory      bound to that scope
  *   • Workflow statuses                New → In Progress → Verified → Closed
  *   • Document types, a Claim-ID Rule, claim Rules, and 2 proxy menu URLs
@@ -67,25 +67,20 @@ async function main() {
   const adminId = users.ADMIN.id;
   const audit = { createdBy: adminId, updatedBy: adminId };
 
-  // ── 2. Access scope: UserType + ProjectType ────────────────────────────────
-  const userType = await prisma.userType.upsert({
-    where: { name: 'Claims Officer' },
-    update: {},
-    create: { name: 'Claims Officer', description: 'Demo user type for claim handling', ...audit },
-  });
-  const projectType = await prisma.projectType.upsert({
+  // ── 2. Access scope: Project ───────────────────────────────────────────
+  const project = await prisma.project.upsert({
     where: { name: 'FY2025' },
     update: {},
     create: { name: 'FY2025', description: 'Demo project / financial year', ...audit },
   });
-  console.log(`  scope ensured: ${userType.name} / ${projectType.name}`);
+  console.log(`  scope ensured: ${project.name}`);
 
   // ── 3. Assign Team Lead + User (and Admin) to the scope ─────────────────────
   for (const role of ['ADMIN', 'TEAM_LEAD', 'USER'] as const) {
     await prisma.userAssignment.upsert({
       where: { userId: users[role].id },
-      update: { userTypeId: userType.id, projectTypeId: projectType.id },
-      create: { userId: users[role].id, userTypeId: userType.id, projectTypeId: projectType.id },
+      update: { projectId: project.id },
+      create: { userId: users[role].id, projectId: project.id },
     });
   }
   console.log('  assignments ensured for admin, teamlead, user');
@@ -93,18 +88,16 @@ async function main() {
   // ── 4. Category → SubCategory ──────────────────────────────────────────────
   const category = await prisma.category.upsert({
     where: {
-      name_userTypeId_projectTypeId: {
+      name_projectId: {
         name: 'Vehicle Claims',
-        userTypeId: userType.id,
-        projectTypeId: projectType.id,
+        projectId: project.id,
       },
     },
     update: {},
     create: {
       name: 'Vehicle Claims',
-      description: 'Demo category bound to Claims Officer / FY2025',
-      userTypeId: userType.id,
-      projectTypeId: projectType.id,
+      description: 'Demo category bound to FY2025',
+      projectId: project.id,
       ...audit,
     },
   });
@@ -119,6 +112,19 @@ async function main() {
     },
   });
   console.log(`  category/sub-category ensured: ${category.name} → ${subCategory.name}`);
+
+  // ── 4b. Grant granular sub-category access (drives menu/URL + claims scope) ──
+  // Admins bypass scope, so only Team Lead + User need an explicit grant.
+  for (const role of ['TEAM_LEAD', 'USER'] as const) {
+    await prisma.userSubCategory.upsert({
+      where: {
+        userId_subCategoryId: { userId: users[role].id, subCategoryId: subCategory.id },
+      },
+      update: {},
+      create: { userId: users[role].id, subCategoryId: subCategory.id },
+    });
+  }
+  console.log('  sub-category access granted to teamlead, user');
 
   // ── 5. Workflow statuses: New → In Progress → Verified → Closed ─────────────
   const statusDefs = [
@@ -144,8 +150,9 @@ async function main() {
     { name: 'PAN Card', category: 'GOVT', govtCode: 'PAN', order: 2 },
     { name: 'Invoice', category: 'CUSTOM', order: 3 },
   ];
+  const docTypeIds: Record<string, string> = {};
   for (const d of docTypes) {
-    await prisma.documentTypeMaster.upsert({
+    const row = await prisma.documentTypeMaster.upsert({
       where: { name_subCategoryId: { name: d.name, subCategoryId: subCategory.id } },
       update: {},
       create: {
@@ -157,6 +164,7 @@ async function main() {
         ...audit,
       },
     });
+    docTypeIds[d.name] = row.id;
   }
   console.log('  document types ensured: Aadhar Card, PAN Card, Invoice');
 
@@ -176,10 +184,22 @@ async function main() {
   console.log('  claim-id rule ensured: start 1, length 8, FOLDER names, D:\\Claims\\Daily');
 
   // ── 8. Claim Rules (the checklist shown on the claim detail page) ──────────
+  // One rule per RuleField so the demo exercises EVERY option in the "Field"
+  // dropdown. Across the 5 sample claims these produce a full mix of pass/fail.
+  //   • numeric fields (DOCUMENT_COUNT, REMARK_COUNT) accept EQ/NEQ/GTE/LTE/GT/LT
+  //   • every other field accepts only EQ/NEQ
+  //   • status values must match the ValidationStatus enum exactly (e.g. PASSED)
   const claimRules: { name: string; field: any; operator: any; value: string; order: number }[] = [
     { name: 'At least one document', field: 'DOCUMENT_COUNT', operator: 'GTE', value: '1', order: 1 },
-    { name: 'Must be assigned', field: 'ASSIGNED', operator: 'EQ', value: 'true', order: 2 },
-    { name: 'Spell check passed', field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED', order: 3 },
+    { name: 'Has a remark logged', field: 'REMARK_COUNT', operator: 'GTE', value: '1', order: 2 },
+    { name: 'Must be assigned', field: 'ASSIGNED', operator: 'EQ', value: 'true', order: 3 },
+    { name: 'Invoice attached', field: 'HAS_DOCUMENT_TYPE', operator: 'EQ', value: 'Invoice', order: 4 },
+    { name: 'Work has started (not New)', field: 'WORKFLOW_STATUS', operator: 'NEQ', value: 'New', order: 5 },
+    { name: 'Spell check passed', field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED', order: 6 },
+    { name: 'QR check passed', field: 'QR_STATUS', operator: 'EQ', value: 'PASSED', order: 7 },
+    { name: 'Metadata check passed', field: 'META_STATUS', operator: 'EQ', value: 'PASSED', order: 8 },
+    { name: 'Intra-claim consistency passed', field: 'INTRA_STATUS', operator: 'EQ', value: 'PASSED', order: 9 },
+    { name: 'Full scan passed', field: 'FULL_STATUS', operator: 'EQ', value: 'PASSED', order: 10 },
   ];
   for (const r of claimRules) {
     const exists = await prisma.claimRule.findFirst({
@@ -199,7 +219,7 @@ async function main() {
       });
     }
   }
-  console.log('  claim rules ensured: document count, assigned, spell passed');
+  console.log(`  claim rules ensured: ${claimRules.length} rules, one per field (all dropdown options)`);
 
   // ── 9. Proxy menu URLs (Category → SubCategory → URL) ──────────────────────
   const urls = [
@@ -216,8 +236,7 @@ async function main() {
           label: u.label,
           description: `Demo proxied URL: ${u.label}`,
           targetUrl: u.targetUrl,
-          userTypeId: userType.id,
-          projectTypeId: projectType.id,
+          projectId: project.id,
           categoryId: category.id,
           subCategoryId: subCategory.id,
           ...audit,
@@ -228,10 +247,10 @@ async function main() {
   console.log('  proxy URLs ensured: Vehicle Lookup Portal, Dealer Directory');
 
   // ── 10. Sample claims across mixed workflow + validation states ────────────
+  // Live & honest demo: every check starts PENDING. The real Spell/QR/Meta/Intra/Full
+  // results are computed only when the presenter clicks Validate (or on upload/sync),
+  // so the badges can never contradict what the documents actually contain.
   const P = ValidationStatus.PENDING;
-  const IP = ValidationStatus.IN_PROGRESS;
-  const PASS = ValidationStatus.PASSED;
-  const FAIL = ValidationStatus.FAILED;
 
   type Demo = {
     claimId: string;
@@ -246,6 +265,7 @@ async function main() {
     schemeType?: string;
     observationRemarks?: string;
     remark?: { text: string; by: string; from?: string; to?: string };
+    docs?: { file: string; type: string | null }[]; // type = document-type name, or null (untyped)
   };
 
   const demoClaims: Demo[] = [
@@ -264,33 +284,42 @@ async function main() {
       claimId: 'CLM10002',
       statusName: 'In Progress',
       assignTo: 'USER',
-      v: [PASS, PASS, PASS, IP, P],
+      v: [P, P, P, P, P],
       folderPath: 'D:\\Claims\\Daily\\CLM10002',
       dealerName: 'Sunrise Motors',
       dealerCode: 'DLR001',
       vinNo: 'MAJWXY2234567890',
       customerName: 'Priya Patel',
       schemeType: 'Service Scheme',
+      docs: [
+        { file: 'MZBFB812LSN565854 OK (Emp. ID).jpg', type: 'Invoice' },
+        { file: 'MZBFB812LSN552928 Same Photo (Emp card).jpg', type: 'Aadhar Card' },
+      ],
       remark: { text: 'Picked up for review, documents look complete.', by: 'USER', from: 'New', to: 'In Progress' },
     },
     {
       claimId: 'CLM10003',
       statusName: 'Verified',
       assignTo: 'USER',
-      v: [PASS, PASS, PASS, PASS, PASS],
+      v: [P, P, P, P, P],
       folderPath: 'D:\\Claims\\Daily\\CLM10003',
       dealerName: 'Highway Auto',
       dealerCode: 'DLR002',
       vinNo: 'MAJWXY3334567890',
       customerName: 'Amit Verma',
       schemeType: 'Extended Warranty',
+      docs: [
+        { file: 'MZBEP812LSN709192 Same policy no..pdf', type: 'Invoice' },
+        { file: 'MZBEP812LSN709538 Same policy no..pdf', type: 'PAN Card' },
+        { file: 'MZBFB812LSN555495 Same Photo (Emp card).jpg', type: 'Aadhar Card' },
+      ],
       remark: { text: 'All checks passed. Marked as verified.', by: 'USER', from: 'In Progress', to: 'Verified' },
     },
     {
       claimId: 'CLM10004',
       statusName: 'In Progress',
       assignTo: 'TEAM_LEAD',
-      v: [PASS, FAIL, PASS, FAIL, FAIL],
+      v: [P, P, P, P, P],
       folderPath: 'D:\\Claims\\Daily\\CLM10004',
       dealerName: 'Metro Cars',
       dealerCode: 'DLR003',
@@ -298,19 +327,28 @@ async function main() {
       customerName: 'Sneha Iyer',
       schemeType: 'Loyalty Scheme',
       observationRemarks: 'QR code does not decode; suspected forged invoice.',
+      docs: [
+        { file: 'MZBB6814LSN024292 Same QR.pdf', type: 'Aadhar Card' }, // no Invoice → "Invoice attached" rule fails
+        { file: 'MZBB6814MSN022501 Same QR.pdf', type: null }, // duplicate QR code across two docs
+        { file: 'MZBFB812LSN534536 Spelling errors (Emp. card).jpg', type: null },
+      ],
       remark: { text: 'QR and consistency checks failed — escalating for manual inspection.', by: 'TEAM_LEAD', from: 'New', to: 'In Progress' },
     },
     {
       claimId: 'CLM10005',
       statusName: 'Closed',
       assignTo: 'USER',
-      v: [PASS, PASS, PASS, PASS, PASS],
+      v: [P, P, P, P, P],
       folderPath: 'D:\\Claims\\Daily\\CLM10005',
       dealerName: 'Highway Auto',
       dealerCode: 'DLR002',
       vinNo: 'MAJWXY5534567890',
       customerName: 'Vikram Singh',
       schemeType: 'Service Scheme',
+      docs: [
+        { file: 'MZBFB812LSN538764 Spelling errors (Salary slip).jpg', type: 'Invoice' },
+        { file: 'MZBFB812LSN555495 Spelling errors (Emp. card).jpg', type: 'PAN Card' },
+      ],
       remark: { text: 'Claim approved and closed.', by: 'USER', from: 'Verified', to: 'Closed' },
     },
   ];
@@ -363,8 +401,35 @@ async function main() {
         });
       }
     }
+
+    // Documents — feed the DOCUMENT_COUNT / HAS_DOCUMENT_TYPE claim rules.
+    // Reset the demo claim's docs each run so re-seeding heals stale rows.
+    // Source is SCANNED (they mirror the folder): only SCANNED docs are served via
+    // CLAIMS_SCAN_ROOT, so this is what makes "open document" work on macOS.
+    // storagePath mirrors the claim's folderPath so it lines up with folder syncs.
+    await prisma.document.deleteMany({ where: { claimId: claim.id } });
+    for (const d of c.docs ?? []) {
+      const storagePath = c.folderPath ? `${c.folderPath}\\${d.file}` : d.file;
+      const ext = d.file.toLowerCase().split('.').pop();
+      const mimeType =
+        ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+        : ext === 'png' ? 'image/png'
+        : ext === 'pdf' ? 'application/pdf'
+        : 'application/octet-stream';
+      await prisma.document.create({
+        data: {
+          claimId: claim.id,
+          documentTypeId: d.type ? docTypeIds[d.type] : null,
+          source: 'SCANNED',
+          fileName: d.file,
+          storagePath,
+          mimeType,
+          createdBy: adminId,
+        },
+      });
+    }
   }
-  console.log(`  ${demoClaims.length} sample claims ensured (mixed workflow + validation states)`);
+  console.log(`  ${demoClaims.length} sample claims ensured (mixed workflow + validation states, with documents)`);
 
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log('\nDEMO seed completed successfully!\n');

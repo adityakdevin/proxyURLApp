@@ -7,12 +7,12 @@ import { hashPassword } from '../../../utils/password.js';
  * Seeds a complete access graph so the HTTP layer (auth → scope → role guards →
  * service → DB) can be exercised end-to-end without depending on `db:seed`:
  *
- *   UserType + ProjectType  ──┐
- *                             ├─ Category ─ SubCategory ─ (StatusMaster, Claims)
- *   (a second, disjoint pair) ─┘  used for OUT_OF_SCOPE assertions
+ *   Project  ──┐
+ *              ├─ Category ─ SubCategory ─ (StatusMaster, Claims)
+ *   (a second, disjoint project) ─┘  used for OUT_OF_SCOPE assertions
  *
- *   Users: admin (scope ALL), teamLead + user (assigned to the in-scope pair),
- *          otherTeamLead (assigned to the disjoint pair).
+ *   Users: admin (scope ALL), teamLead + user (assigned to the in-scope project),
+ *          otherTeamLead (assigned to the disjoint project).
  *
  * All four users share TEST_PASSWORD and have forcePasswordChange=false so they
  * pass the password-change gate. Names carry a per-suite random suffix to keep
@@ -28,12 +28,10 @@ export interface SeededUser {
 
 export interface ScopeGraph {
   suffix: string;
-  userTypeId: string;
-  projectTypeId: string;
+  projectId: string;
   categoryId: string;
   subCategoryId: string;
-  otherUserTypeId: string;
-  otherProjectTypeId: string;
+  otherProjectId: string;
   otherCategoryId: string;
   otherSubCategoryId: string;
   admin: SeededUser;
@@ -50,21 +48,19 @@ export async function seedScopeGraph(prisma: PrismaClient, label: string): Promi
   const suffix = `${label}-${rand()}`;
   const passwordHash = await hashPassword(TEST_PASSWORD);
 
-  // In-scope pair
-  const userType = await prisma.userType.create({ data: { name: `UT-${suffix}` } });
-  const projectType = await prisma.projectType.create({ data: { name: `PT-${suffix}` } });
+  // In-scope project
+  const project = await prisma.project.create({ data: { name: `PT-${suffix}` } });
   const category = await prisma.category.create({
-    data: { name: `Cat-${suffix}`, userTypeId: userType.id, projectTypeId: projectType.id },
+    data: { name: `Cat-${suffix}`, projectId: project.id },
   });
   const subCategory = await prisma.subCategory.create({
     data: { name: `Sub-${suffix}`, categoryId: category.id },
   });
 
-  // Disjoint pair (for OUT_OF_SCOPE)
-  const otherUserType = await prisma.userType.create({ data: { name: `UT2-${suffix}` } });
-  const otherProjectType = await prisma.projectType.create({ data: { name: `PT2-${suffix}` } });
+  // Disjoint project (for OUT_OF_SCOPE)
+  const otherProject = await prisma.project.create({ data: { name: `PT2-${suffix}` } });
   const otherCategory = await prisma.category.create({
-    data: { name: `Cat2-${suffix}`, userTypeId: otherUserType.id, projectTypeId: otherProjectType.id },
+    data: { name: `Cat2-${suffix}`, projectId: otherProject.id },
   });
   const otherSubCategory = await prisma.subCategory.create({
     data: { name: `Sub2-${suffix}`, categoryId: otherCategory.id },
@@ -88,16 +84,15 @@ export async function seedScopeGraph(prisma: PrismaClient, label: string): Promi
   const otherTeamLead = await mkUser(`tl2-${suffix}`, 'TEAM_LEAD');
 
   await prisma.userAssignment.create({
-    data: { userId: teamLead.id, userTypeId: userType.id, projectTypeId: projectType.id },
+    data: { userId: teamLead.id, projectId: project.id },
   });
   await prisma.userAssignment.create({
-    data: { userId: user.id, userTypeId: userType.id, projectTypeId: projectType.id },
+    data: { userId: user.id, projectId: project.id },
   });
   await prisma.userAssignment.create({
     data: {
       userId: otherTeamLead.id,
-      userTypeId: otherUserType.id,
-      projectTypeId: otherProjectType.id,
+      projectId: otherProject.id,
     },
   });
 
@@ -109,12 +104,10 @@ export async function seedScopeGraph(prisma: PrismaClient, label: string): Promi
 
   return {
     suffix,
-    userTypeId: userType.id,
-    projectTypeId: projectType.id,
+    projectId: project.id,
     categoryId: category.id,
     subCategoryId: subCategory.id,
-    otherUserTypeId: otherUserType.id,
-    otherProjectTypeId: otherProjectType.id,
+    otherProjectId: otherProject.id,
     otherCategoryId: otherCategory.id,
     otherSubCategoryId: otherSubCategory.id,
     admin: pick(admin),
@@ -166,8 +159,7 @@ export async function cleanupScopeGraph(prisma: PrismaClient, g: ScopeGraph): Pr
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   await prisma.subCategory.deleteMany({ where: { id: { in: subCategoryIds } } });
   await prisma.category.deleteMany({ where: { id: { in: [g.categoryId, g.otherCategoryId] } } });
-  await prisma.userType.deleteMany({ where: { id: { in: [g.userTypeId, g.otherUserTypeId] } } });
-  await prisma.projectType.deleteMany({
-    where: { id: { in: [g.projectTypeId, g.otherProjectTypeId] } },
+  await prisma.project.deleteMany({
+    where: { id: { in: [g.projectId, g.otherProjectId] } },
   });
 }

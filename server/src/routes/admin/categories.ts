@@ -1,28 +1,16 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { body, param, query, validationResult } from 'express-validator';
+import { body, param, query } from 'express-validator';
+import { validate, prismaOf, parsePagination, paginated } from '../../lib/routeHelpers.js';
 
 const router = Router();
-
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
 
 // GET /api/admin/categories
 router.get(
   '/',
   [
     query('status').optional().isIn(['ACTIVE', 'INACTIVE']),
-    query('userTypeId').optional().isUUID(),
-    query('projectTypeId').optional().isUUID(),
+    query('projectId').optional().isUUID(),
     query('search').optional().isString(),
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
@@ -32,30 +20,17 @@ router.get(
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const prisma = req.app.get('prisma') as PrismaClient;
-      const {
-        status,
-        userTypeId,
-        projectTypeId,
-        search,
-        page = '1',
-        limit = '10',
-        sortBy = 'name',
-        sortOrder = 'asc',
-      } = req.query;
-
-      const pageNum = parseInt(page as string, 10);
-      const limitNum = parseInt(limit as string, 10);
-      const skip = (pageNum - 1) * limitNum;
+      const prisma = prismaOf(req);
+      const { status, projectId, search, sortBy = 'name', sortOrder = 'asc' } = req.query;
+      const { page, limit, skip, take } = parsePagination(req.query);
 
       const where: Record<string, unknown> = {};
       if (status) where.status = status;
-      if (userTypeId) where.userTypeId = userTypeId;
-      if (projectTypeId) where.projectTypeId = projectTypeId;
+      if (projectId) where.projectId = projectId;
       if (search) {
         where.OR = [
-          { name: { contains: search as string, mode: 'insensitive' } },
-          { description: { contains: search as string, mode: 'insensitive' } },
+          { name: { contains: search as string } },
+          { description: { contains: search as string } },
         ];
       }
 
@@ -63,26 +38,17 @@ router.get(
         prisma.category.findMany({
           where,
           skip,
-          take: limitNum,
+          take,
           orderBy: { [sortBy as string]: sortOrder },
           include: {
-            userType: { select: { id: true, name: true } },
-            projectType: { select: { id: true, name: true } },
+            project: { select: { id: true, name: true } },
             _count: { select: { subCategories: true } },
           },
         }),
         prisma.category.count({ where }),
       ]);
 
-      res.json({
-        data: categories,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          totalPages: Math.ceil(total / limitNum),
-        },
-      });
+      res.json(paginated(categories, total, page, limit));
     } catch (error) {
       next(error);
     }
@@ -94,8 +60,7 @@ router.post(
   '/',
   [
     body('name').trim().notEmpty().withMessage('Name is required'),
-    body('userTypeId').isUUID().withMessage('Valid User Type is required'),
-    body('projectTypeId').isUUID().withMessage('Valid Project Type is required'),
+    body('projectId').isUUID().withMessage('Valid Project is required'),
     body('description').optional().isString(),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
   ],
@@ -103,35 +68,25 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const prisma = req.app.get('prisma') as PrismaClient;
-      const { name, userTypeId, projectTypeId, description, status = 'ACTIVE' } = req.body;
+      const { name, projectId, description, status = 'ACTIVE' } = req.body;
 
-      // Verify User Type and Project Type exist and are active
-      const [userType, projectType] = await Promise.all([
-        prisma.userType.findUnique({ where: { id: userTypeId } }),
-        prisma.projectType.findUnique({ where: { id: projectTypeId } }),
-      ]);
+      // Verify Project exists and is active
+      const project = await prisma.project.findUnique({ where: { id: projectId } });
 
-      if (!userType || userType.status !== 'ACTIVE') {
+      if (!project || project.status !== 'ACTIVE') {
         return res.status(400).json({
-          error: 'Invalid or inactive User Type',
-          code: 'INVALID_USER_TYPE',
+          error: 'Invalid or inactive Project',
+          code: 'INVALID_PROJECT',
         });
       }
 
-      if (!projectType || projectType.status !== 'ACTIVE') {
-        return res.status(400).json({
-          error: 'Invalid or inactive Project Type',
-          code: 'INVALID_PROJECT_TYPE',
-        });
-      }
-
-      // Check for duplicate name within same User Type + Project Type pair
+      // Check for duplicate name within same Project
       const existing = await prisma.category.findFirst({
-        where: { name, userTypeId, projectTypeId },
+        where: { name, projectId },
       });
       if (existing) {
         return res.status(409).json({
-          error: 'A Category with this name already exists for this User Type + Project Type',
+          error: 'A Category with this name already exists for this Project',
           code: 'DUPLICATE_NAME',
         });
       }
@@ -139,16 +94,14 @@ router.post(
       const category = await prisma.category.create({
         data: {
           name,
-          userTypeId,
-          projectTypeId,
+          projectId,
           description,
           status,
           createdBy: req.session!.userId,
           updatedBy: req.session!.userId,
         },
         include: {
-          userType: { select: { id: true, name: true } },
-          projectType: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } },
         },
       });
 
@@ -172,8 +125,7 @@ router.get(
       const category = await prisma.category.findUnique({
         where: { id },
         include: {
-          userType: { select: { id: true, name: true } },
-          projectType: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } },
           _count: { select: { subCategories: true } },
         },
       });
@@ -200,15 +152,14 @@ router.put(
     body('name').optional().trim().notEmpty(),
     body('description').optional().isString(),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
-    body('userTypeId').optional().isUUID(),
-    body('projectTypeId').optional().isUUID(),
+    body('projectId').optional().isUUID(),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const prisma = req.app.get('prisma') as PrismaClient;
       const { id } = req.params;
-      const { name, description, status, userTypeId, projectTypeId } = req.body;
+      const { name, description, status, projectId } = req.body;
 
       const existing = await prisma.category.findUnique({
         where: { id },
@@ -222,31 +173,29 @@ router.put(
         });
       }
 
-      // Cannot change User Type or Project Type if sub-categories exist
-      if ((userTypeId || projectTypeId) && existing._count.subCategories > 0) {
+      // Cannot change Project if sub-categories exist
+      if (projectId && existing._count.subCategories > 0) {
         return res.status(409).json({
-          error: 'Cannot change User Type or Project Type when sub-categories exist',
+          error: 'Cannot change Project when sub-categories exist',
           code: 'HAS_DEPENDENCIES',
         });
       }
 
       // Check for duplicate name
       const finalName = name || existing.name;
-      const finalUserTypeId = userTypeId || existing.userTypeId;
-      const finalProjectTypeId = projectTypeId || existing.projectTypeId;
+      const finalProjectId = projectId || existing.projectId;
 
-      if (name || userTypeId || projectTypeId) {
+      if (name || projectId) {
         const duplicate = await prisma.category.findFirst({
           where: {
             name: finalName,
-            userTypeId: finalUserTypeId,
-            projectTypeId: finalProjectTypeId,
+            projectId: finalProjectId,
             id: { not: id },
           },
         });
         if (duplicate) {
           return res.status(409).json({
-            error: 'A Category with this name already exists for this User Type + Project Type',
+            error: 'A Category with this name already exists for this Project',
             code: 'DUPLICATE_NAME',
           });
         }
@@ -258,13 +207,11 @@ router.put(
           ...(name && { name }),
           ...(description !== undefined && { description }),
           ...(status && { status }),
-          ...(userTypeId && { userTypeId }),
-          ...(projectTypeId && { projectTypeId }),
+          ...(projectId && { projectId }),
           updatedBy: req.session!.userId,
         },
         include: {
-          userType: { select: { id: true, name: true } },
-          projectType: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } },
         },
       });
 

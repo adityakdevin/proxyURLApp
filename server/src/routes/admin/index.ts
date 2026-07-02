@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { authMiddleware, adminMiddleware, passwordChangedMiddleware } from '../../middleware/auth.js';
-import userTypesRoutes from './userTypes.js';
-import projectTypesRoutes from './projectTypes.js';
+import projectsRoutes from './projects.js';
 import usersRoutes from './users.js';
 import categoriesRoutes from './categories.js';
 import subCategoriesRoutes from './subCategories.js';
@@ -24,8 +23,7 @@ router.use(authMiddleware);
 router.use(adminMiddleware);
 router.use(passwordChangedMiddleware);
 
-router.use('/user-types', userTypesRoutes);
-router.use('/project-types', projectTypesRoutes);
+router.use('/projects', projectsRoutes);
 router.use('/users', usersRoutes);
 router.use('/categories', categoriesRoutes);
 router.use('/sub-categories', subCategoriesRoutes);

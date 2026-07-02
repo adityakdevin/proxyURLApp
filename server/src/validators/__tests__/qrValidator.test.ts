@@ -20,12 +20,9 @@ function ctx(documents: ValidatorDoc[]): ValidatorContext {
     claim: { id: 'c', claimId: 'C1', subCategoryId: 's' },
     documents,
     prisma: {} as never,
-    fsPort: {
-      stat: async () => ({ exists: false, isDirectory: false, isFile: false, sizeBytes: 0 }),
-      listFiles: async () => [],
-    },
     ocr: { extractImageText: async () => '' },
     shared: new Map(),
+    wordBoxes: new Map(),
   };
 }
 

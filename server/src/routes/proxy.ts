@@ -916,8 +916,7 @@ router.all('/:opaqueId', async (req: Request, res: Response, next: NextFunction)
     const durationMs = Date.now() - startTime;
     auditLogService.logAccess({
       userId,
-      userTypeId: accessResult.userTypeId!,
-      projectTypeId: accessResult.projectTypeId!,
+      projectId: accessResult.projectId!,
       urlConfigId: accessResult.urlConfig.id,
       targetUrl: accessResult.urlConfig.targetUrl,
       requestMethod: req.method,
@@ -1082,8 +1081,7 @@ router.get('/redirect/:opaqueId', async (req: Request, res: Response) => {
     // Log the redirect access
     auditLogService.logAccess({
       userId,
-      userTypeId: accessResult.userTypeId!,
-      projectTypeId: accessResult.projectTypeId!,
+      projectId: accessResult.projectId!,
       urlConfigId: accessResult.urlConfig.id,
       targetUrl: accessResult.urlConfig.targetUrl,
       requestMethod: 'GET',

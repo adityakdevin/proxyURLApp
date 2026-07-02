@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The Proxy URL App is a web-based application that provides controlled access to external or internal URLs through a proxy mechanism. Access is governed by Project Types, User Types, Categories, and Sub-Categories, with complete audit logging for security and traceability.
+The Proxy URL App is a web-based application that provides controlled access to external or internal URLs through a proxy mechanism. Access is governed by Projects, User Types, Categories, and Sub-Categories, with complete audit logging for security and traceability.
 
 ---
 
@@ -27,14 +27,14 @@ The Proxy URL App is a web-based application that provides controlled access to 
 - Manages user sessions (view active sessions, force terminate)
 - Impersonates end users for troubleshooting (sees exactly what user sees; all actions logged as "admin as user")
 - All admins have equal permissions (flat hierarchy)
-- Completely separate from User Type + Project Type assignment system
+- Completely separate from User Type + Project assignment system
 - Can manage own profile (full name, password)
 
 ### 3.2 End User
 - Logs in to the system
-- Views dynamically generated menus based on assigned Project Type + User Type
+- Views dynamically generated menus based on assigned Project + User Type
 - Accesses proxy URLs based on permissions
-- Has a single Project Type + User Type assignment (future: multiple pairs)
+- Has a single Project + User Type assignment (future: multiple pairs)
 
 ---
 
@@ -91,7 +91,7 @@ The Proxy URL App is a web-based application that provides controlled access to 
 
 ### 5.6 Session Termination Triggers
 - User deactivation
-- Project Type deactivation (immediate termination for all affected users)
+- Project deactivation (immediate termination for all affected users)
 - User Type deactivation (immediate termination for all affected users)
 - Password change
 - Manual termination by admin
@@ -104,24 +104,24 @@ The Proxy URL App is a web-based application that provides controlled access to 
 
 ```
 User Type (standalone master, globally unique names)
-Project Type (standalone master, globally unique names)
+Project (standalone master, globally unique names)
 
 Category
-  - References: User Type + Project Type (both required)
-  - Each Category belongs to exactly one User Type + Project Type pair
+  - References: User Type + Project (both required)
+  - Each Category belongs to exactly one User Type + Project pair
   - Same category name can exist as separate records for different pairs
 
 Sub-Category
   - References: Parent Category
-  - Inherits User Type + Project Type from parent Category
+  - Inherits User Type + Project from parent Category
 
 URL Configuration
-  - References: User Type + Project Type + Category + Sub-Category (all explicit, with validation)
+  - References: User Type + Project + Category + Sub-Category (all explicit, with validation)
   - Contains: target_url, label (display name), description (optional)
   - Opaque ID auto-generated (UUID) for URL masking
 
 Users (End Users)
-  - Has single Project Type + User Type assignment (mandatory at creation)
+  - Has single Project + User Type assignment (mandatory at creation)
   - Stored in junction table for future multi-assignment support
 ```
 
@@ -130,11 +130,11 @@ Users (End Users)
 | Entity | Scope |
 |--------|-------|
 | User Types | Global, standalone master |
-| Project Types | Global, standalone master |
-| Categories | Per User Type + Project Type pair |
+| Projects | Global, standalone master |
+| Categories | Per User Type + Project pair |
 | Sub-Categories | Per Category (inherits parent's scope) |
 | URL Configurations | Per Category + Sub-Category (validated against parent scopes) |
-| End Users | Single Project Type + User Type assignment |
+| End Users | Single Project + User Type assignment |
 | Admins | No assignments; full system access |
 
 ### 6.3 Audit Fields (All Entities)
@@ -154,10 +154,10 @@ Note: Audit fields stored in database but hidden from admin UI.
 - Delete: Permanent removal from database
 - **Deletion blocked for entities with dependencies:**
   - Cannot delete User Type if users assigned to it
-  - Cannot delete Project Type if users or categories reference it
+  - Cannot delete Project if users or categories reference it
   - Cannot delete Category if sub-categories exist
   - Cannot delete Sub-Category if URL configs exist
-- When User Type or Project Type deactivated: dependent Categories, URLs become hidden from menus
+- When User Type or Project deactivated: dependent Categories, URLs become hidden from menus
 
 ### 6.5 Status Values
 
@@ -184,9 +184,9 @@ All entities use binary status: `active` or `inactive`
 
 ---
 
-### 7.2 Project Type Master
+### 7.2 Project Master
 
-**Purpose:** Define project types as standalone entities
+**Purpose:** Define projects as standalone entities
 
 **Features:**
 - CRUD operations
@@ -194,7 +194,7 @@ All entities use binary status: `active` or `inactive`
 - Deletion blocked if users or categories reference it
 
 **Fields:**
-- Project type name (unique)
+- Project name (unique)
 - Description
 - Status (active/inactive)
 - Audit fields
@@ -207,9 +207,9 @@ All entities use binary status: `active` or `inactive`
 
 **Features:**
 - Create and manage users (one at a time via UI)
-- Assign User Type and Project Type (both mandatory at creation)
+- Assign User Type and Project (both mandatory at creation)
 - Two independent dropdowns for assignment (not cascading)
-- Dropdowns show only active User Types and Project Types
+- Dropdowns show only active User Types and Projects
 - Activate/deactivate/delete users
 - Deactivation immediately terminates user's active sessions
 - Deletion removes all user's audit log entries
@@ -219,7 +219,7 @@ All entities use binary status: `active` or `inactive`
 - Password (bcrypt hashed)
 - Full name
 - User Type reference (required)
-- Project Type reference (required)
+- Project reference (required)
 - Status (active/inactive)
 - Force password change flag
 - Failed login attempts
@@ -230,26 +230,26 @@ All entities use binary status: `active` or `inactive`
 
 ### 7.4 Category Master
 
-**Purpose:** Define menu categories scoped to User Type + Project Type pairs
+**Purpose:** Define menu categories scoped to User Type + Project pairs
 
 **Features:**
 - CRUD operations
-- Requires both User Type AND Project Type selection (independent dropdowns)
+- Requires both User Type AND Project selection (independent dropdowns)
 - Same category name can exist as separate records for different pairs
-- Dropdowns show only active User Types and Project Types
+- Dropdowns show only active User Types and Projects
 - Deletion blocked if sub-categories exist
-- Cannot change User Type or Project Type if sub-categories exist
+- Cannot change User Type or Project if sub-categories exist
 - Display order: alphabetical by name
 
 **List View:**
-- Columns: Category Name, User Type, Project Type, Status
-- Filters: User Type, Project Type (both available)
+- Columns: Category Name, User Type, Project, Status
+- Filters: User Type, Project (both available)
 - Search: Per-list search box
 
 **Fields:**
 - Category name
 - User Type reference (required)
-- Project Type reference (required)
+- Project reference (required)
 - Description
 - Status (active/inactive)
 - Audit fields
@@ -263,13 +263,13 @@ All entities use binary status: `active` or `inactive`
 **Features:**
 - CRUD operations
 - Linked to parent category
-- Inherits User Type + Project Type from parent Category
+- Inherits User Type + Project from parent Category
 - Deletion blocked if URL configurations exist
 - Display order: alphabetical by name
 
 **List View:**
-- Columns: Sub-Category Name, Category, User Type, Project Type, Status (full context)
-- Filters: User Type, Project Type, Category
+- Columns: Sub-Category Name, Category, User Type, Project, Status (full context)
+- Filters: User Type, Project, Category
 - Search: Per-list search box
 
 **Fields:**
@@ -287,8 +287,8 @@ All entities use binary status: `active` or `inactive`
 
 **Features:**
 - Define target URL (actual destination)
-- Explicit selection of all four fields: User Type, Project Type, Category, Sub-Category
-- **Cascading filters:** Select User Type + Project Type first → Category dropdown filters to matching categories → Sub-Category dropdown filters to selected category's children
+- Explicit selection of all four fields: User Type, Project, Category, Sub-Category
+- **Cascading filters:** Select User Type + Project first → Category dropdown filters to matching categories → Sub-Category dropdown filters to selected category's children
 - System validates all selections align
 - Opaque ID (UUID) auto-generated on creation for URL masking
 - Enable/disable access
@@ -297,8 +297,8 @@ All entities use binary status: `active` or `inactive`
 - Disabled URLs hidden completely from menus
 
 **List View:**
-- Columns: Label, Target URL, User Type, Project Type, Category, Sub-Category, Status
-- Filters: User Type, Project Type, Category, Sub-Category, Status (all available)
+- Columns: Label, Target URL, User Type, Project, Category, Sub-Category, Status
+- Filters: User Type, Project, Category, Sub-Category, Status (all available)
 - Search: Per-list search box
 
 **Fields:**
@@ -306,7 +306,7 @@ All entities use binary status: `active` or `inactive`
 - Description (optional; shown as tooltip in user menu)
 - Target URL
 - User Type reference (required)
-- Project Type reference (required)
+- Project reference (required)
 - Category reference (required)
 - Sub-category reference (required)
 - Opaque ID (auto-generated UUID)
@@ -341,7 +341,7 @@ All entities use binary status: `active` or `inactive`
 **Captured Data:**
 - User identity
 - User Type ID (from user's assignment at time of access)
-- Project Type ID (from user's assignment at time of access)
+- Project ID (from user's assignment at time of access)
 - URL accessed (display name + target)
 - Timestamp (displayed in user's local timezone)
 - IP address
@@ -353,7 +353,7 @@ All entities use binary status: `active` or `inactive`
 **Filters:**
 - Filter by user
 - Filter by User Type
-- Filter by Project Type
+- Filter by Project
 - Filter by date range
 - Filter by URL
 - Filter by response status
@@ -391,7 +391,7 @@ All entities use binary status: `active` or `inactive`
   - Total accessible URLs count (single number)
   - Frequently Accessed: Top 5 most accessed URLs (all time), showing label only
   - Recent Activity: Last 5 accessed URLs, showing label + timestamp
-- All scoped automatically to user's assigned Project Type + User Type
+- All scoped automatically to user's assigned Project + User Type
 
 ---
 
@@ -402,7 +402,7 @@ All entities use binary status: `active` or `inactive`
 **Location:** Left sidebar
 
 **Features:**
-- Menu generated based on user's assigned Project Type + User Type
+- Menu generated based on user's assigned Project + User Type
 - Hierarchical display: Category → Sub-Category → URL items (3 levels)
 - Alphabetical ordering at each level
 - **Auto-expand behavior:** Expanding Category auto-expands all its Sub-Categories
@@ -412,7 +412,7 @@ All entities use binary status: `active` or `inactive`
 - Unauthorized/disabled items hidden completely
 - Deep linking supported (bookmarked URLs load after login)
 
-**Future (multi-pair support):** Categories grouped by Project Type headers when user has multiple assignments
+**Future (multi-pair support):** Categories grouped by Project headers when user has multiple assignments
 
 ---
 
@@ -460,10 +460,10 @@ All entities use binary status: `active` or `inactive`
 
 - Every proxy request validated against:
   - Valid session
-  - User's Project Type assignment
+  - User's Project assignment
   - User's User Type assignment
   - URL configuration active status
-  - Matching User Type + Project Type between user and URL Config
+  - Matching User Type + Project between user and URL Config
 
 ### 9.4 Error Handling
 
@@ -502,7 +502,7 @@ All entities use binary status: `active` or `inactive`
 - Immediate session invalidation on:
   - User deactivation
   - User Type deactivation (for affected users)
-  - Project Type deactivation (for affected users)
+  - Project deactivation (for affected users)
   - Password change
   - Manual termination by admin
 
@@ -555,7 +555,7 @@ All entities use binary status: `active` or `inactive`
 
 ### 12.2 Audit & Compliance
 - All successful access events logged (async)
-- Detailed logging (method, status, duration, User Type, Project Type)
+- Detailed logging (method, status, duration, User Type, Project)
 - Configurable retention period (via admin settings)
 - User deletion removes associated logs
 
@@ -588,18 +588,18 @@ All entities use binary status: `active` or `inactive`
 
 ## 14. Acceptance Criteria
 
-- [ ] User Type and Project Type masters implemented as standalone entities
-- [ ] Categories correctly scoped to User Type + Project Type pairs
+- [ ] User Type and Project masters implemented as standalone entities
+- [ ] Categories correctly scoped to User Type + Project pairs
 - [ ] Sub-Categories inherit scope from parent Category
 - [ ] URL Configurations have cascading dropdown validation
 - [ ] User assignment mandatory at creation (single pair)
 - [ ] Role-based access verified for all operations
-- [ ] Audit logs capture User Type + Project Type from user's assignment
-- [ ] Dynamic menus reflect correct permissions per Project Type + User Type
+- [ ] Audit logs capture User Type + Project from user's assignment
+- [ ] Dynamic menus reflect correct permissions per Project + User Type
 - [ ] Menu shows 3-level hierarchy with auto-expand
 - [ ] Proxy correctly masks all target URLs with UUID-based opaque IDs
 - [ ] Session management enforces single-session rule
-- [ ] Immediate session termination on User Type/Project Type deactivation
+- [ ] Immediate session termination on User Type/Project deactivation
 - [ ] Password policy enforced on creation and change
 - [ ] Account lockout with progressive delay working as specified
 - [ ] Deep linking functions correctly
@@ -627,9 +627,9 @@ Any change to this specification after approval will be handled through a formal
 - `GET/POST /api/admin/user-types`
 - `GET/PUT/DELETE /api/admin/user-types/:id`
 
-### Admin - Project Types
-- `GET/POST /api/admin/project-types`
-- `GET/PUT/DELETE /api/admin/project-types/:id`
+### Admin - Projects
+- `GET/POST /api/admin/projects`
+- `GET/PUT/DELETE /api/admin/projects/:id`
 
 ### Admin - Users
 - `GET/POST /api/admin/users`
@@ -685,8 +685,8 @@ user_types (
   updated_by
 )
 
--- Project Types (standalone)
-project_types (
+-- Projects (standalone)
+projects (
   id,
   name,              -- unique
   description,
@@ -718,16 +718,16 @@ users (
 user_assignments (
   id,
   user_id,           -- references users
-  project_type_id,   -- references project_types
+  project_id,   -- references projects
   user_type_id       -- references user_types
 )
 
--- Categories (scoped to User Type + Project Type pair)
+-- Categories (scoped to User Type + Project pair)
 categories (
   id,
   name,
   user_type_id,      -- references user_types
-  project_type_id,   -- references project_types
+  project_id,   -- references projects
   description,
   status,            -- active/inactive
   created_at,
@@ -757,7 +757,7 @@ url_configurations (
   target_url,
   opaque_id,         -- auto-generated UUID
   user_type_id,      -- references user_types
-  project_type_id,   -- references project_types
+  project_id,   -- references projects
   category_id,       -- references categories
   sub_category_id,   -- references sub_categories
   status,            -- active/inactive
@@ -783,7 +783,7 @@ audit_logs (
   id,
   user_id,           -- references users
   user_type_id,      -- user's assignment at time of access
-  project_type_id,   -- user's assignment at time of access
+  project_id,   -- user's assignment at time of access
   url_config_id,     -- references url_configurations
   target_url,
   request_method,
@@ -809,7 +809,7 @@ settings (
 
 ```
 ┌─────────────────┐     ┌─────────────────┐
-│   User Types    │     │  Project Types  │
+│   User Types    │     │  Projects  │
 │   (standalone)  │     │   (standalone)  │
 └────────┬────────┘     └────────┬────────┘
          │                       │
@@ -841,6 +841,6 @@ settings (
                     ┌──────────┴──────────┐
                     ▼                     ▼
             ┌─────────────┐       ┌─────────────┐
-            │ User Types  │       │Project Types│
+            │ User Types  │       │Projects│
             └─────────────┘       └─────────────┘
 ```

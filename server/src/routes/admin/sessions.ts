@@ -1,19 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { param, validationResult } from 'express-validator';
+import { param } from 'express-validator';
+import { validate } from '../../lib/routeHelpers.js';
 
 const router = Router();
-
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-    });
-  }
-  next();
-};
 
 // GET /api/admin/sessions - Get all active sessions
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {

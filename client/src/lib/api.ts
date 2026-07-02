@@ -2,17 +2,6 @@
 
 const API_BASE = '/api';
 
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
 async function handleResponse<T>(response: Response): Promise<T> {
   const data = await response.json();
 
@@ -21,12 +10,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
       localStorage.removeItem('auth-storage');
       window.location.href = '/login';
     }
-
-    throw new ApiError(
-      response.status,
-      data.code || 'UNKNOWN_ERROR',
-      data.error || 'An error occurred'
-    );
+    throw new Error(data.error || 'An error occurred');
   }
 
   return data;

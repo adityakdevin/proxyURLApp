@@ -19,7 +19,6 @@ describe('ValidationService + drainer', () => {
   let adminId: string;
   let workflowStatusId: string;
   const SUF = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-  let utId: string;
   let ptId: string;
   let catId: string;
 
@@ -33,12 +32,10 @@ describe('ValidationService + drainer', () => {
     prisma = getTestPrisma();
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
     adminId = admin!.id;
-    const ut = await prisma.userType.create({ data: { name: `vs-ut-${SUF}` } });
-    const pt = await prisma.projectType.create({ data: { name: `vs-pt-${SUF}` } });
-    utId = ut.id;
+    const pt = await prisma.project.create({ data: { name: `vs-pt-${SUF}` } });
     ptId = pt.id;
     const cat = await prisma.category.create({
-      data: { name: `vs-cat-${SUF}`, userTypeId: utId, projectTypeId: ptId },
+      data: { name: `vs-cat-${SUF}`, projectId: ptId },
     });
     catId = cat.id;
     const sc = await prisma.subCategory.create({ data: { name: `vs-sc-${SUF}`, categoryId: catId } });
@@ -59,8 +56,7 @@ describe('ValidationService + drainer', () => {
     await truncateClaimsTables(prisma);
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
-    await prisma.userType.deleteMany({ where: { id: utId } });
-    await prisma.projectType.deleteMany({ where: { id: ptId } });
+    await prisma.project.deleteMany({ where: { id: ptId } });
     await disconnectTestPrisma();
   });
 

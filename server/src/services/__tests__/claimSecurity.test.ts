@@ -8,8 +8,8 @@ import {
 } from '../../__tests__/helpers/testDb.js';
 
 /**
- * Self-contained security tests for ClaimService. Builds its own UserType /
- * ProjectType / Category / SubCategory / User / UserAssignment graph (none of
+ * Self-contained security tests for ClaimService. Builds its own
+ * Project / Category / SubCategory / User / UserAssignment graph (none of
  * which is touched by truncateClaimsTables) and tears it all down in afterAll,
  * so the suite does not depend on ambient seed data and leaves no residue.
  */
@@ -19,20 +19,18 @@ describe('ClaimService — scope & assignee security', () => {
   let statusService: StatusMasterService;
 
   // Scope A
-  let utA: string;
   let ptA: string;
   let scA: string; // SubCategory in scope A
   // Scope B
-  let utB: string;
   let ptB: string;
   let scB: string; // SubCategory in scope B
 
   let adminId: string;
-  let inScopeUser: string; // ACTIVE USER assigned to (utA, ptA)
-  let outScopeUser: string; // ACTIVE USER assigned to (utB, ptB)
-  let inactiveUser: string; // INACTIVE USER assigned to (utA, ptA)
-  let teamLeadA: string; // TEAM_LEAD assigned to (utA, ptA)
-  let teamLeadB: string; // TEAM_LEAD assigned to (utB, ptB)
+  let inScopeUser: string; // ACTIVE USER assigned to (ptA)
+  let outScopeUser: string; // ACTIVE USER assigned to (ptB)
+  let inactiveUser: string; // INACTIVE USER assigned to (ptA)
+  let teamLeadA: string; // TEAM_LEAD assigned to (ptA)
+  let teamLeadB: string; // TEAM_LEAD assigned to (ptB)
 
   const SUF = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   const createdUserIds: string[] = [];
@@ -46,22 +44,18 @@ describe('ClaimService — scope & assignee security', () => {
     if (!admin) throw new Error('Need an ADMIN user seeded to run these tests');
     adminId = admin.id;
 
-    const [userTypeA, userTypeB, projectTypeA, projectTypeB] = await Promise.all([
-      prisma.userType.create({ data: { name: `csec-utA-${SUF}` } }),
-      prisma.userType.create({ data: { name: `csec-utB-${SUF}` } }),
-      prisma.projectType.create({ data: { name: `csec-ptA-${SUF}` } }),
-      prisma.projectType.create({ data: { name: `csec-ptB-${SUF}` } }),
+    const [projectA, projectB] = await Promise.all([
+      prisma.project.create({ data: { name: `csec-ptA-${SUF}` } }),
+      prisma.project.create({ data: { name: `csec-ptB-${SUF}` } }),
     ]);
-    utA = userTypeA.id;
-    utB = userTypeB.id;
-    ptA = projectTypeA.id;
-    ptB = projectTypeB.id;
+    ptA = projectA.id;
+    ptB = projectB.id;
 
     const catA = await prisma.category.create({
-      data: { name: `csec-catA-${SUF}`, userTypeId: utA, projectTypeId: ptA },
+      data: { name: `csec-catA-${SUF}`, projectId: ptA },
     });
     const catB = await prisma.category.create({
-      data: { name: `csec-catB-${SUF}`, userTypeId: utB, projectTypeId: ptB },
+      data: { name: `csec-catB-${SUF}`, projectId: ptB },
     });
     const subA = await prisma.subCategory.create({
       data: { name: `csec-scA-${SUF}`, categoryId: catA.id },
@@ -76,8 +70,8 @@ describe('ClaimService — scope & assignee security', () => {
       tag: string,
       role: 'USER' | 'TEAM_LEAD',
       status: 'ACTIVE' | 'INACTIVE',
-      userTypeId: string,
-      projectTypeId: string
+      projectId: string,
+      subCategoryId: string
     ) {
       const u = await prisma.user.create({
         data: {
@@ -89,17 +83,21 @@ describe('ClaimService — scope & assignee security', () => {
         },
       });
       await prisma.userAssignment.create({
-        data: { userId: u.id, userTypeId, projectTypeId },
+        data: { userId: u.id, projectId },
+      });
+      // Access is restricted to specific sub-categories.
+      await prisma.userSubCategory.create({
+        data: { userId: u.id, subCategoryId },
       });
       createdUserIds.push(u.id);
       return u.id;
     }
 
-    inScopeUser = await mkUser('inScope', 'USER', 'ACTIVE', utA, ptA);
-    outScopeUser = await mkUser('outScope', 'USER', 'ACTIVE', utB, ptB);
-    inactiveUser = await mkUser('inactive', 'USER', 'INACTIVE', utA, ptA);
-    teamLeadA = await mkUser('tlA', 'TEAM_LEAD', 'ACTIVE', utA, ptA);
-    teamLeadB = await mkUser('tlB', 'TEAM_LEAD', 'ACTIVE', utB, ptB);
+    inScopeUser = await mkUser('inScope', 'USER', 'ACTIVE', ptA, scA);
+    outScopeUser = await mkUser('outScope', 'USER', 'ACTIVE', ptB, scB);
+    inactiveUser = await mkUser('inactive', 'USER', 'INACTIVE', ptA, scA);
+    teamLeadA = await mkUser('tlA', 'TEAM_LEAD', 'ACTIVE', ptA, scA);
+    teamLeadB = await mkUser('tlB', 'TEAM_LEAD', 'ACTIVE', ptB, scB);
   });
 
   beforeEach(async () => {
@@ -108,12 +106,12 @@ describe('ClaimService — scope & assignee security', () => {
 
   afterAll(async () => {
     await truncateClaimsTables(prisma);
+    await prisma.userSubCategory.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.userAssignment.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.subCategory.deleteMany({ where: { id: { in: [scA, scB] } } });
-    await prisma.category.deleteMany({ where: { userTypeId: { in: [utA, utB] } } });
-    await prisma.userType.deleteMany({ where: { id: { in: [utA, utB] } } });
-    await prisma.projectType.deleteMany({ where: { id: { in: [ptA, ptB] } } });
+    await prisma.category.deleteMany({ where: { projectId: { in: [ptA, ptB] } } });
+    await prisma.project.deleteMany({ where: { id: { in: [ptA, ptB] } } });
     await disconnectTestPrisma();
   });
 
@@ -132,7 +130,7 @@ describe('ClaimService — scope & assignee security', () => {
       service.create(
         { subCategoryId: scA, claimId: 'C-OOS' },
         teamLeadB,
-        { userTypeId: utB, projectTypeId: ptB }
+        { subCategoryIds: [scB] }
       )
     ).rejects.toMatchObject({ code: 'OUT_OF_SCOPE' });
   });
@@ -142,7 +140,7 @@ describe('ClaimService — scope & assignee security', () => {
     const c = await service.create(
       { subCategoryId: scA, claimId: 'C-INS' },
       teamLeadA,
-      { userTypeId: utA, projectTypeId: ptA }
+      { subCategoryIds: [scA] }
     );
     expect(c.claimId).toBe('C-INS');
   });

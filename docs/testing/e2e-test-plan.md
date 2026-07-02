@@ -68,7 +68,7 @@ Rationale:
 don't depend on `db:seed` specifics:
 
 ```
-UserType + ProjectType ─ Category ─ SubCategory ─ (StatusMaster, Claims)
+UserType + Project ─ Category ─ SubCategory ─ (StatusMaster, Claims)
 (a second, disjoint pair) ─ … ─ SubCategory   ← used for OUT_OF_SCOPE
 Users: admin (scope ALL), teamLead + user (in-scope), otherTeamLead (disjoint)
 ```

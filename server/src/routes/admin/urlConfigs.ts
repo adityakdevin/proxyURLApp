@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient, ProxyMode, AuditLevel } from '@prisma/client';
-import { body, param, query, validationResult } from 'express-validator';
+import { body, param, query } from 'express-validator';
+import { validate, prismaOf, parsePagination, paginated } from '../../lib/routeHelpers.js';
 
 // Valid enum values for validation
 const PROXY_MODES = ['DIRECT', 'HEADLESS', 'NEW_WINDOW'];
@@ -8,25 +9,12 @@ const AUDIT_LEVELS = ['STANDARD', 'NAVIGATION', 'FULL'];
 
 const router = Router();
 
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
-
 // GET /api/admin/url-configs
 router.get(
   '/',
   [
     query('status').optional().isIn(['ACTIVE', 'INACTIVE']),
-    query('userTypeId').optional().isUUID(),
-    query('projectTypeId').optional().isUUID(),
+    query('projectId').optional().isUUID(),
     query('categoryId').optional().isUUID(),
     query('subCategoryId').optional().isUUID(),
     query('proxyMode').optional().isIn(PROXY_MODES),
@@ -39,37 +27,30 @@ router.get(
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const prisma = req.app.get('prisma') as PrismaClient;
+      const prisma = prismaOf(req);
       const {
         status,
-        userTypeId,
-        projectTypeId,
+        projectId,
         categoryId,
         subCategoryId,
         proxyMode,
         search,
-        page = '1',
-        limit = '10',
         sortBy = 'label',
         sortOrder = 'asc',
       } = req.query;
-
-      const pageNum = parseInt(page as string, 10);
-      const limitNum = parseInt(limit as string, 10);
-      const skip = (pageNum - 1) * limitNum;
+      const { page, limit, skip, take } = parsePagination(req.query);
 
       const where: Record<string, unknown> = {};
       if (status) where.status = status;
-      if (userTypeId) where.userTypeId = userTypeId;
-      if (projectTypeId) where.projectTypeId = projectTypeId;
+      if (projectId) where.projectId = projectId;
       if (categoryId) where.categoryId = categoryId;
       if (subCategoryId) where.subCategoryId = subCategoryId;
       if (proxyMode) where.proxyMode = proxyMode;
       if (search) {
         where.OR = [
-          { label: { contains: search as string, mode: 'insensitive' } },
-          { description: { contains: search as string, mode: 'insensitive' } },
-          { targetUrl: { contains: search as string, mode: 'insensitive' } },
+          { label: { contains: search as string } },
+          { description: { contains: search as string } },
+          { targetUrl: { contains: search as string } },
         ];
       }
 
@@ -77,11 +58,10 @@ router.get(
         prisma.urlConfiguration.findMany({
           where,
           skip,
-          take: limitNum,
+          take,
           orderBy: { [sortBy as string]: sortOrder },
           include: {
-            userType: { select: { id: true, name: true } },
-            projectType: { select: { id: true, name: true } },
+            project: { select: { id: true, name: true } },
             category: { select: { id: true, name: true } },
             subCategory: { select: { id: true, name: true } },
           },
@@ -89,15 +69,7 @@ router.get(
         prisma.urlConfiguration.count({ where }),
       ]);
 
-      res.json({
-        data: urlConfigs,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          totalPages: Math.ceil(total / limitNum),
-        },
-      });
+      res.json(paginated(urlConfigs, total, page, limit));
     } catch (error) {
       next(error);
     }
@@ -110,8 +82,7 @@ router.post(
   [
     body('label').trim().notEmpty().withMessage('Label is required'),
     body('targetUrl').isURL().withMessage('Valid URL is required'),
-    body('userTypeId').isUUID().withMessage('Valid User Type is required'),
-    body('projectTypeId').isUUID().withMessage('Valid Project Type is required'),
+    body('projectId').isUUID().withMessage('Valid Project is required'),
     body('categoryId').isUUID().withMessage('Valid Category is required'),
     body('subCategoryId').isUUID().withMessage('Valid Sub-Category is required'),
     body('description').optional().isString(),
@@ -129,8 +100,7 @@ router.post(
       const {
         label,
         targetUrl,
-        userTypeId,
-        projectTypeId,
+        projectId,
         categoryId,
         subCategoryId,
         description,
@@ -143,18 +113,17 @@ router.post(
       } = req.body;
 
       // Validate cascading references
-      // 1. Category must belong to User Type + Project Type
+      // 1. Category must belong to Project
       const category = await prisma.category.findFirst({
         where: {
           id: categoryId,
-          userTypeId,
-          projectTypeId,
+          projectId,
         },
       });
 
       if (!category) {
         return res.status(400).json({
-          error: 'Category does not belong to the selected User Type and Project Type',
+          error: 'Category does not belong to the selected Project',
           code: 'INVALID_CATEGORY',
         });
       }
@@ -178,8 +147,7 @@ router.post(
         data: {
           label,
           targetUrl,
-          userTypeId,
-          projectTypeId,
+          projectId,
           categoryId,
           subCategoryId,
           description,
@@ -192,8 +160,7 @@ router.post(
           updatedBy: req.session!.userId,
         },
         include: {
-          userType: { select: { id: true, name: true } },
-          projectType: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } },
           category: { select: { id: true, name: true } },
           subCategory: { select: { id: true, name: true } },
         },
@@ -219,8 +186,7 @@ router.get(
       const urlConfig = await prisma.urlConfiguration.findUnique({
         where: { id },
         include: {
-          userType: { select: { id: true, name: true } },
-          projectType: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } },
           category: { select: { id: true, name: true } },
           subCategory: { select: { id: true, name: true } },
         },
@@ -249,8 +215,7 @@ router.put(
     body('targetUrl').optional().isURL(),
     body('description').optional().isString(),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
-    body('userTypeId').optional().isUUID(),
-    body('projectTypeId').optional().isUUID(),
+    body('projectId').optional().isUUID(),
     body('categoryId').optional().isUUID(),
     body('subCategoryId').optional().isUUID(),
     // New proxy mode fields
@@ -269,8 +234,7 @@ router.put(
         targetUrl,
         description,
         status,
-        userTypeId,
-        projectTypeId,
+        projectId,
         categoryId,
         subCategoryId,
         // New proxy mode fields
@@ -290,24 +254,22 @@ router.put(
       }
 
       // If any reference is being changed, validate cascading
-      if (userTypeId || projectTypeId || categoryId || subCategoryId) {
-        const finalUserTypeId = userTypeId || existing.userTypeId;
-        const finalProjectTypeId = projectTypeId || existing.projectTypeId;
+      if (projectId || categoryId || subCategoryId) {
+        const finalProjectId = projectId || existing.projectId;
         const finalCategoryId = categoryId || existing.categoryId;
         const finalSubCategoryId = subCategoryId || existing.subCategoryId;
 
-        // Validate Category belongs to User Type + Project Type
+        // Validate Category belongs to Project
         const category = await prisma.category.findFirst({
           where: {
             id: finalCategoryId,
-            userTypeId: finalUserTypeId,
-            projectTypeId: finalProjectTypeId,
+            projectId: finalProjectId,
           },
         });
 
         if (!category) {
           return res.status(400).json({
-            error: 'Category does not belong to the selected User Type and Project Type',
+            error: 'Category does not belong to the selected Project',
             code: 'INVALID_CATEGORY',
           });
         }
@@ -335,8 +297,7 @@ router.put(
           ...(targetUrl && { targetUrl }),
           ...(description !== undefined && { description }),
           ...(status && { status }),
-          ...(userTypeId && { userTypeId }),
-          ...(projectTypeId && { projectTypeId }),
+          ...(projectId && { projectId }),
           ...(categoryId && { categoryId }),
           ...(subCategoryId && { subCategoryId }),
           // New proxy mode fields
@@ -347,8 +308,7 @@ router.put(
           updatedBy: req.session!.userId,
         },
         include: {
-          userType: { select: { id: true, name: true } },
-          projectType: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } },
           category: { select: { id: true, name: true } },
           subCategory: { select: { id: true, name: true } },
         },

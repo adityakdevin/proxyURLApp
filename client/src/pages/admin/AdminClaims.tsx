@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { ColumnDef } from '@tanstack/react-table';
 import { Upload, Download } from 'lucide-react';
 import { api, DataResponse, PaginatedResponse } from '@/lib/api';
-import { DataTable } from '@/components/shared/DataTable';
+import { DataTable, ServerSort, nextSort } from '@/components/shared/DataTable';
+import { TableToolbar } from '@/components/shared/TableToolbar';
+import { FilterSelect } from '@/components/shared/FilterSelect';
 import { Badge } from '@/components/ui/badge';
 import { ValidationBadge } from '@/components/ValidationBadge';
 import { Button } from '@/components/ui/button';
@@ -36,6 +38,21 @@ interface ClaimRow {
   createdAt: string;
 }
 
+const CHECK_FILTERS = [
+  { key: 'spellCheckStatus', label: 'Spell' },
+  { key: 'qrStatus', label: 'QR' },
+  { key: 'metaExtractionStatus', label: 'Meta' },
+  { key: 'intraClaimStatus', label: 'Intra' },
+  { key: 'fullScanStatus', label: 'Full' },
+] as const;
+const CHECK_STATUS_OPTIONS = [
+  { value: 'PENDING', label: 'Pending' },
+  { value: 'IN_PROGRESS', label: 'In Progress' },
+  { value: 'PASSED', label: 'Passed' },
+  { value: 'FAILED', label: 'Failed' },
+  { value: 'DOCS_NOT_AVAILABLE', label: 'Docs N/A' },
+];
+
 interface ImportReport {
   subCategoryId: string;
   parsed: number;
@@ -52,6 +69,8 @@ export default function AdminClaims() {
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<ServerSort>({ field: 'createdAt', order: 'desc' });
+  const [checks, setChecks] = useState<Record<string, string>>({});
 
   // Forged-document observation import/export dialog.
   const [obsOpen, setObsOpen] = useState(false);
@@ -60,13 +79,20 @@ export default function AdminClaims() {
   const [report, setReport] = useState<ImportReport | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const fetchData = async (page = 1, limit = 10) => {
+  const fetchData = async (page = pagination.page, limit = pagination.limit) => {
     setIsLoading(true);
     try {
-      const url = search
-        ? `/admin/claims?page=${page}&limit=${limit}&search=${encodeURIComponent(search)}`
-        : `/admin/claims?page=${page}&limit=${limit}`;
-      const r = await api.get<PaginatedResponse<ClaimRow>>(url);
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+        sortBy: sort.field,
+        sortOrder: sort.order,
+      });
+      if (search.trim()) params.set('search', search.trim());
+      for (const cf of CHECK_FILTERS) {
+        if (checks[cf.key]) params.set(cf.key, checks[cf.key]);
+      }
+      const r = await api.get<PaginatedResponse<ClaimRow>>(`/admin/claims?${params}`);
       setData(r.data);
       setPagination(r.pagination);
     } catch (e) {
@@ -80,9 +106,11 @@ export default function AdminClaims() {
     }
   };
 
+  // Refetch (from page 1) whenever search, check filters, or sort change — including on mount.
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchData(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, sort, checks]);
 
   // Clear the picker / file / report when the dialog closes so a stale selection
   // can't carry into the next open (and a wrong-sub-category upload).
@@ -143,6 +171,7 @@ export default function AdminClaims() {
     {
       accessorKey: 'claimId',
       header: 'Claim ID',
+      meta: { sortField: 'claimId' },
       cell: ({ row }) => (
         <button
           className="text-primary underline-offset-2 hover:underline"
@@ -177,26 +206,31 @@ export default function AdminClaims() {
     {
       id: 'spell',
       header: 'Spell',
+      meta: { sortField: 'spellCheckStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.spellCheckStatus} />,
     },
     {
       id: 'qr',
       header: 'QR',
+      meta: { sortField: 'qrStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} />,
     },
     {
       id: 'meta',
       header: 'Meta',
+      meta: { sortField: 'metaExtractionStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.metaExtractionStatus} />,
     },
     {
       id: 'intra',
       header: 'Intra-Claim',
+      meta: { sortField: 'intraClaimStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.intraClaimStatus} />,
     },
     {
       id: 'full',
       header: 'Full Scan',
+      meta: { sortField: 'fullScanStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.fullScanStatus} />,
     },
   ];
@@ -206,14 +240,6 @@ export default function AdminClaims() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Claims (All)</h1>
         <div className="flex gap-2">
-          <Input
-            placeholder="Search claim id..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && fetchData(1, pagination.limit)}
-            className="w-64"
-          />
-          <Button onClick={() => fetchData(1, pagination.limit)}>Search</Button>
           <Button variant="outline" onClick={() => setObsOpen(true)}>
             <Upload className="mr-2 h-4 w-4" />
             Upload Observations
@@ -234,6 +260,21 @@ export default function AdminClaims() {
           </Button>
         </div>
       </div>
+      <div className="mb-4">
+        <TableToolbar search={search} onSearchChange={setSearch} placeholder="Search claim id…">
+          {CHECK_FILTERS.map((cf) => (
+            <FilterSelect
+              key={cf.key}
+              value={checks[cf.key] ?? ''}
+              onChange={(v) => setChecks((prev) => ({ ...prev, [cf.key]: v }))}
+              allLabel="All"
+              prefix={cf.label}
+              options={CHECK_STATUS_OPTIONS}
+              className="w-[130px]"
+            />
+          ))}
+        </TableToolbar>
+      </div>
       <DataTable
         columns={columns}
         data={data}
@@ -241,6 +282,8 @@ export default function AdminClaims() {
         onPageChange={(p) => fetchData(p, pagination.limit)}
         onPageSizeChange={(l) => fetchData(1, l)}
         isLoading={isLoading}
+        sort={sort}
+        onSortChange={(f) => setSort((p) => nextSort(p, f))}
       />
 
       <Dialog open={obsOpen} onOpenChange={handleObsOpenChange}>

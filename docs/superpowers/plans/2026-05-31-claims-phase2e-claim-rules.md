@@ -261,9 +261,9 @@ describe('ClaimRuleService', () => {
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
     adminId = admin!.id;
     const ut = await prisma.userType.create({ data: { name: `cr-ut-${SUF}` } });
-    const pt = await prisma.projectType.create({ data: { name: `cr-pt-${SUF}` } });
+    const pt = await prisma.project.create({ data: { name: `cr-pt-${SUF}` } });
     utId = ut.id; ptId = pt.id;
-    const cat = await prisma.category.create({ data: { name: `cr-cat-${SUF}`, userTypeId: utId, projectTypeId: ptId } });
+    const cat = await prisma.category.create({ data: { name: `cr-cat-${SUF}`, userTypeId: utId, projectId: ptId } });
     catId = cat.id;
     const sc = await prisma.subCategory.create({ data: { name: `cr-sc-${SUF}`, categoryId: catId } });
     subCategoryId = sc.id;
@@ -283,7 +283,7 @@ describe('ClaimRuleService', () => {
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
     await prisma.userType.deleteMany({ where: { id: utId } });
-    await prisma.projectType.deleteMany({ where: { id: ptId } });
+    await prisma.project.deleteMany({ where: { id: ptId } });
     await disconnectTestPrisma();
   });
 

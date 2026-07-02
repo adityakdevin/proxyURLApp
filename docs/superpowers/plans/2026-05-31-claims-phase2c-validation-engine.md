@@ -331,9 +331,9 @@ describe('FULL + INTRA validators', () => {
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
     adminId = admin!.id;
     const ut = await prisma.userType.create({ data: { name: `val-ut-${SUF}` } });
-    const pt = await prisma.projectType.create({ data: { name: `val-pt-${SUF}` } });
+    const pt = await prisma.project.create({ data: { name: `val-pt-${SUF}` } });
     utId = ut.id; ptId = pt.id;
-    const cat = await prisma.category.create({ data: { name: `val-cat-${SUF}`, userTypeId: utId, projectTypeId: ptId } });
+    const cat = await prisma.category.create({ data: { name: `val-cat-${SUF}`, userTypeId: utId, projectId: ptId } });
     catId = cat.id;
     const sc = await prisma.subCategory.create({ data: { name: `val-sc-${SUF}`, categoryId: catId } });
     subCategoryId = sc.id;
@@ -351,7 +351,7 @@ describe('FULL + INTRA validators', () => {
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
     await prisma.userType.deleteMany({ where: { id: utId } });
-    await prisma.projectType.deleteMany({ where: { id: ptId } });
+    await prisma.project.deleteMany({ where: { id: ptId } });
     await disconnectTestPrisma();
   });
 
@@ -461,9 +461,9 @@ describe('ValidationService + drainer', () => {
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
     adminId = admin!.id;
     const ut = await prisma.userType.create({ data: { name: `vs-ut-${SUF}` } });
-    const pt = await prisma.projectType.create({ data: { name: `vs-pt-${SUF}` } });
+    const pt = await prisma.project.create({ data: { name: `vs-pt-${SUF}` } });
     utId = ut.id; ptId = pt.id;
-    const cat = await prisma.category.create({ data: { name: `vs-cat-${SUF}`, userTypeId: utId, projectTypeId: ptId } });
+    const cat = await prisma.category.create({ data: { name: `vs-cat-${SUF}`, userTypeId: utId, projectId: ptId } });
     catId = cat.id;
     const sc = await prisma.subCategory.create({ data: { name: `vs-sc-${SUF}`, categoryId: catId } });
     subCategoryId = sc.id;
@@ -482,7 +482,7 @@ describe('ValidationService + drainer', () => {
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
     await prisma.userType.deleteMany({ where: { id: utId } });
-    await prisma.projectType.deleteMany({ where: { id: ptId } });
+    await prisma.project.deleteMany({ where: { id: ptId } });
     await disconnectTestPrisma();
   });
 

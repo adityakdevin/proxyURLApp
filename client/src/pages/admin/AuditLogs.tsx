@@ -18,8 +18,7 @@ import { useToast } from '@/components/ui/use-toast';
 interface AuditLog {
   id: string;
   user: { id: string; username: string; fullName: string };
-  userType: { id: string; name: string };
-  projectType: { id: string; name: string };
+  project: { id: string; name: string };
   urlConfig: { id: string; label: string };
   targetUrl: string;
   requestMethod: string;
@@ -38,12 +37,10 @@ export default function AuditLogs() {
   const [isLoading, setIsLoading] = useState(true);
   const [pagination, setPagination] = useState({ page: 1, limit: 25, total: 0, totalPages: 0 });
 
-  const [userTypes, setUserTypes] = useState<SelectOption[]>([]);
-  const [projectTypes, setProjectTypes] = useState<SelectOption[]>([]);
+  const [projects, setProjects] = useState<SelectOption[]>([]);
 
   const [filters, setFilters] = useState({
-    userTypeId: '',
-    projectTypeId: '',
+    projectId: '',
     startDate: '',
     endDate: '',
     responseStatus: '',
@@ -53,8 +50,7 @@ export default function AuditLogs() {
     setIsLoading(true);
     try {
       let url = `/admin/audit-logs?page=${page}&limit=${limit}`;
-      if (filters.userTypeId) url += `&userTypeId=${filters.userTypeId}`;
-      if (filters.projectTypeId) url += `&projectTypeId=${filters.projectTypeId}`;
+      if (filters.projectId) url += `&projectId=${filters.projectId}`;
       if (filters.startDate) url += `&startDate=${filters.startDate}`;
       if (filters.endDate) url += `&endDate=${filters.endDate}`;
       if (filters.responseStatus) url += `&responseStatus=${filters.responseStatus}`;
@@ -71,12 +67,8 @@ export default function AuditLogs() {
 
   const fetchSelectOptions = async () => {
     try {
-      const [ut, pt] = await Promise.all([
-        api.get<PaginatedResponse<SelectOption>>('/admin/user-types?limit=100'),
-        api.get<PaginatedResponse<SelectOption>>('/admin/project-types?limit=100'),
-      ]);
-      setUserTypes(ut.data || []);
-      setProjectTypes(pt.data || []);
+      const pt = await api.get<PaginatedResponse<SelectOption>>('/admin/projects?limit=100');
+      setProjects(pt.data || []);
     } catch (error) {
       console.error('Failed to fetch options:', error);
     }
@@ -92,7 +84,7 @@ export default function AuditLogs() {
   };
 
   const handleClearFilters = () => {
-    setFilters({ userTypeId: '', projectTypeId: '', startDate: '', endDate: '', responseStatus: '' });
+    setFilters({ projectId: '', startDate: '', endDate: '', responseStatus: '' });
     fetchData(1, pagination.limit);
   };
 
@@ -125,7 +117,7 @@ export default function AuditLogs() {
       id: 'scope',
       header: 'Scope',
       cell: ({ row }) => (
-        <span className="text-sm">{row.original.userType.name} / {row.original.projectType.name}</span>
+        <span className="text-sm">{row.original.project.name}</span>
       ),
     },
     {
@@ -166,24 +158,14 @@ export default function AuditLogs() {
       </div>
 
       <div className="bg-white p-4 rounded-lg border mb-4">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="space-y-2">
-            <Label>User Type</Label>
-            <Select value={filters.userTypeId || "all"} onValueChange={(v) => setFilters({ ...filters, userTypeId: v === "all" ? "" : v })}>
+            <Label>Project</Label>
+            <Select value={filters.projectId || "all"} onValueChange={(v) => setFilters({ ...filters, projectId: v === "all" ? "" : v })}>
               <SelectTrigger><SelectValue placeholder="All" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All</SelectItem>
-                {userTypes.map((ut) => <SelectItem key={ut.id} value={ut.id}>{ut.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Project Type</Label>
-            <Select value={filters.projectTypeId || "all"} onValueChange={(v) => setFilters({ ...filters, projectTypeId: v === "all" ? "" : v })}>
-              <SelectTrigger><SelectValue placeholder="All" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                {projectTypes.map((pt) => <SelectItem key={pt.id} value={pt.id}>{pt.name}</SelectItem>)}
+                {projects.map((pt) => <SelectItem key={pt.id} value={pt.id}>{pt.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

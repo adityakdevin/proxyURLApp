@@ -1,8 +1,10 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import path from 'path';
-import { Validator, ValidatorContext, ValidatorDoc } from '../validators/types.js';
+import { Validator, ValidatorContext, ValidatorDoc, FindingInput } from '../validators/types.js';
+
+/** Bound the rows written per check so a noisy OCR page can't flood the table. */
+const MAX_FINDINGS_PER_RESULT = 200;
 import { resolveScanRoot } from '../lib/directoryReader.js';
-import { FsFileSystemPort } from './fsFileSystemPort.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
 
 const COLUMNS = [
@@ -86,13 +88,19 @@ export class ValidationService {
         claim: { id: claim.id, claimId: claim.claimId, subCategoryId: claim.subCategoryId },
         documents,
         prisma: this.prisma,
-        fsPort: new FsFileSystemPort(),
         ocr,
         shared: new Map<string, string>(),
+        wordBoxes: new Map(),
       };
 
       // Run all validators first (failures captured as FAILED, never thrown).
-      const results: { v: Validator; status: 'PASSED' | 'FAILED'; summary: string; details?: unknown }[] = [];
+      const results: {
+        v: Validator;
+        status: 'PASSED' | 'FAILED';
+        summary: string;
+        details?: unknown;
+        findings?: FindingInput[];
+      }[] = [];
       for (const v of this.validators) {
         try {
           const outcome = await v.run(ctx);
@@ -110,7 +118,7 @@ export class ValidationService {
       // leaves no partial state (sweepStaleRuns recovers it).
       await this.prisma.$transaction(async (tx) => {
         for (const r of results) {
-          await tx.validationResult.create({
+          const created = await tx.validationResult.create({
             data: {
               runId,
               claimId: claim.id,
@@ -119,7 +127,30 @@ export class ValidationService {
               summary: r.summary.slice(0, 500),
               details: (r.details ?? Prisma.JsonNull) as Prisma.InputJsonValue,
             },
+            select: { id: true },
           });
+          if (r.findings && r.findings.length > MAX_FINDINGS_PER_RESULT) {
+            console.warn(
+              `[validation] ${r.v.key} on claim ${claim.id}: capping ${r.findings.length} findings to ${MAX_FINDINGS_PER_RESULT}`
+            );
+          }
+          if (r.findings && r.findings.length > 0) {
+            await tx.validationFinding.createMany({
+              data: r.findings.slice(0, MAX_FINDINGS_PER_RESULT).map((f) => ({
+                resultId: created.id,
+                claimId: claim.id,
+                validatorKey: r.v.key,
+                documentId: f.documentId ?? null,
+                code: f.code,
+                severity: f.severity ?? 'WARNING',
+                message: f.message.slice(0, 500),
+                page: f.page ?? null,
+                // Prisma's InputJsonValue rejects named interfaces (no index signature); cast via unknown.
+                bbox: f.bbox ? (f.bbox as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+                data: f.data ? (f.data as Prisma.InputJsonValue) : Prisma.JsonNull,
+              })),
+            });
+          }
         }
         await tx.claim.update({
           where: { id: claim.id },

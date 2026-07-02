@@ -1,7 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { body, validationResult } from 'express-validator';
+import { body } from 'express-validator';
 import { AuthService } from '../services/authService.js';
+import { validate } from '../lib/routeHelpers.js';
 import {
   authMiddleware,
   setSessionCookie,
@@ -9,19 +10,6 @@ import {
 } from '../middleware/auth.js';
 
 const router = Router();
-
-// Validation middleware helper
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
 
 // POST /api/auth/login
 router.post(

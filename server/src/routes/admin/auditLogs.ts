@@ -1,27 +1,15 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { query, validationResult } from 'express-validator';
+import { query } from 'express-validator';
+import { validate, prismaOf, parsePagination, paginated } from '../../lib/routeHelpers.js';
 
 const router = Router();
-
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-    });
-  }
-  next();
-};
 
 // GET /api/admin/audit-logs - Get audit logs with filters
 router.get(
   '/',
   [
     query('userId').optional().isUUID(),
-    query('userTypeId').optional().isUUID(),
-    query('projectTypeId').optional().isUUID(),
+    query('projectId').optional().isUUID(),
     query('urlConfigId').optional().isUUID(),
     query('responseStatus').optional().isInt(),
     query('startDate').optional().isISO8601(),
@@ -34,29 +22,22 @@ router.get(
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const prisma = req.app.get('prisma') as PrismaClient;
+      const prisma = prismaOf(req);
       const {
         userId,
-        userTypeId,
-        projectTypeId,
+        projectId,
         urlConfigId,
         responseStatus,
         startDate,
         endDate,
-        page = '1',
-        limit = '25',
         sortBy = 'accessedAt',
         sortOrder = 'desc',
       } = req.query;
-
-      const pageNum = parseInt(page as string, 10);
-      const limitNum = parseInt(limit as string, 10);
-      const skip = (pageNum - 1) * limitNum;
+      const { page, limit, skip, take } = parsePagination(req.query, 25);
 
       const where: Record<string, unknown> = {};
       if (userId) where.userId = userId;
-      if (userTypeId) where.userTypeId = userTypeId;
-      if (projectTypeId) where.projectTypeId = projectTypeId;
+      if (projectId) where.projectId = projectId;
       if (urlConfigId) where.urlConfigId = urlConfigId;
       if (responseStatus) where.responseStatus = parseInt(responseStatus as string, 10);
 
@@ -74,40 +55,37 @@ router.get(
         prisma.auditLog.findMany({
           where,
           skip,
-          take: limitNum,
+          take,
           orderBy: { [sortBy as string]: sortOrder },
           include: {
             user: { select: { id: true, username: true, fullName: true } },
-            userType: { select: { id: true, name: true } },
-            projectType: { select: { id: true, name: true } },
+            project: { select: { id: true, name: true } },
             urlConfig: { select: { id: true, label: true } },
           },
         }),
         prisma.auditLog.count({ where }),
       ]);
 
-      res.json({
-        data: logs.map((log) => ({
-          id: log.id,
-          user: log.user,
-          userType: log.userType,
-          projectType: log.projectType,
-          urlConfig: log.urlConfig,
-          targetUrl: log.targetUrl,
-          requestMethod: log.requestMethod,
-          responseStatus: log.responseStatus,
-          durationMs: log.durationMs,
-          ipAddress: log.ipAddress,
-          userAgent: log.userAgent,
-          accessedAt: log.accessedAt,
-        })),
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
+      res.json(
+        paginated(
+          logs.map((log) => ({
+            id: log.id,
+            user: log.user,
+            project: log.project,
+            urlConfig: log.urlConfig,
+            targetUrl: log.targetUrl,
+            requestMethod: log.requestMethod,
+            responseStatus: log.responseStatus,
+            durationMs: log.durationMs,
+            ipAddress: log.ipAddress,
+            userAgent: log.userAgent,
+            accessedAt: log.accessedAt,
+          })),
           total,
-          totalPages: Math.ceil(total / limitNum),
-        },
-      });
+          page,
+          limit
+        )
+      );
     } catch (error) {
       next(error);
     }

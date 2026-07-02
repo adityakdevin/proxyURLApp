@@ -30,7 +30,7 @@ Phase 1 explicitly does **not** include: filesystem scanning, OCR, spell-check, 
 
 This Phase 1 is a brand-new module living alongside the existing URL proxy. The two modules share:
 
-1. The same `User`, `Session`, `UserType`, `ProjectType`, `Category`, `SubCategory` tables (Claims hang off `SubCategory`).
+1. The same `User`, `Session`, `UserType`, `Project`, `Category`, `SubCategory` tables (Claims hang off `SubCategory`).
 2. The same auth middleware + cookie session.
 3. The same admin layout + sidebar (new entries appended).
 
@@ -309,7 +309,7 @@ model User {
 USER < TEAM_LEAD < ADMIN
 ```
 
-All three roles can hold a `UserAssignment` (a single (UserType, ProjectType) pair). Admin's assignment is optional and not used for scoping — Admin sees everything.
+All three roles can hold a `UserAssignment` (a single (UserType, Project) pair). Admin's assignment is optional and not used for scoping — Admin sees everything.
 
 ### 3.2 Permission matrix — Phase 1 Claims module
 
@@ -325,7 +325,7 @@ All three roles can hold a `UserAssignment` (a single (UserType, ProjectType) pa
 | Edit Claim (status, remarks, reassign)              | Only if assigned to caller    | Own pair         | All    |
 | Reassign Claim                                      | —                             | Own pair         | All    |
 | Soft-delete Claim                                   | —                             | —                | Yes    |
-| Manage Users / UserTypes / ProjectTypes / etc.      | —                             | —                | Yes    |
+| Manage Users / UserTypes / Projects / etc.      | —                             | —                | Yes    |
 | Use URL proxy (existing feature)                    | Yes                           | Yes              | Yes    |
 
 Phase 1 UI never surfaces DocumentTypeMaster or ClaimIdRule data to non-admins. Those records exist only to be consumed by the (Phase 2) document-validation pipeline.
@@ -334,10 +334,10 @@ Phase 1 UI never surfaces DocumentTypeMaster or ClaimIdRule data to non-admins. 
 
 - **`adminMiddleware`** (existing) — kept. Checks `role === 'ADMIN'`.
 - **`teamLeadOrAdminMiddleware`** (new) — checks `role IN ('TEAM_LEAD', 'ADMIN')`.
-- **`scopedMiddleware`** (new) — for Team Lead routes, resolves the user's `UserAssignment` and attaches `(userTypeId, projectTypeId)` to `req` so route handlers filter by it. Admin bypasses scoping.
+- **`scopedMiddleware`** (new) — for Team Lead routes, resolves the user's `UserAssignment` and attaches `(userTypeId, projectId)` to `req` so route handlers filter by it. Admin bypasses scoping.
 - **Per-claim guard** (`canEditClaim`) — service-layer check, returns true iff:
   - `role === 'ADMIN'`, OR
-  - `role === 'TEAM_LEAD'` AND claim's `subCategory.userTypeId/projectTypeId` matches user's assignment, OR
+  - `role === 'TEAM_LEAD'` AND claim's `subCategory.userTypeId/projectId` matches user's assignment, OR
   - `role === 'USER'` AND `claim.assignedToUserId === user.id`.
 
 ### 3.4 Session payload change
@@ -409,7 +409,7 @@ DELETE /admin/claims/:id            (soft delete)
 ### 4.2 Claim endpoints used by Users + Team Leads (`authMiddleware`, scoped)
 
 ```
-GET    /claims                              List claims in caller's (UserType, ProjectType) pair.
+GET    /claims                              List claims in caller's (UserType, Project) pair.
                                             Query: subCategoryId, workflowStatusId, assignedToUserId
                                                    (TL/Admin only), assignedToMe (USER convenience),
                                                    search, page, limit.
@@ -496,7 +496,7 @@ The existing `Users.tsx`, `Categories.tsx`, etc. follow a consistent shape: `Dat
 - Add button → opens form dialog.
 - Row actions (kebab menu): Edit, Activate/Deactivate, Delete (with usage checks).
 
-**StatusMasters page form fields:** SubCategory (cascading from UserType + ProjectType selectors) · Name · Order · IsDefault (checkbox) · IsTerminal (checkbox).
+**StatusMasters page form fields:** SubCategory (cascading from UserType + Project selectors) · Name · Order · IsDefault (checkbox) · IsTerminal (checkbox).
 
 **DocumentTypeMasters page form fields:** SubCategory · Category (radio: GOVT / CUSTOM) · if GOVT → GovtCode dropdown (Aadhar/PAN/DL/Passport/Voter ID/Ration Card) — the dropdown filters out codes already used by an ACTIVE record on the same SubCategory; Name pre-fills from the selection (e.g., AADHAR → "Aadhar Card") and is editable for display purposes · if CUSTOM → Name free text · Order.
 
@@ -506,7 +506,7 @@ The existing `Users.tsx`, `Categories.tsx`, etc. follow a consistent shape: `Dat
 
 ### 5.3 Cascading SubCategory selector
 
-A reusable component `<SubCategoryPicker>` is created in `client/src/components/shared/`. It renders three dependent dropdowns: UserType → ProjectType → SubCategory. Used by all three master-data forms and the Add Claim form. Filters out inactive entries.
+A reusable component `<SubCategoryPicker>` is created in `client/src/components/shared/`. It renders three dependent dropdowns: UserType → Project → SubCategory. Used by all three master-data forms and the Add Claim form. Filters out inactive entries.
 
 ---
 
@@ -606,7 +606,7 @@ If the caller doesn't pass the `canEditClaim` check (regular User on an unassign
 ### 6.5 Empty / inactive states
 
 - If the user has no `UserAssignment`: Claim Dashboard shows the existing "Limited Access" amber banner pattern, no table.
-- If their UserType / ProjectType is inactive: same banner, no table.
+- If their UserType / Project is inactive: same banner, no table.
 - If no claims in scope: friendly empty state with the Add Claim CTA (TL/Admin) or "No claims assigned yet" (User).
 
 ---
@@ -676,7 +676,7 @@ CLAUDE.md says: for UI changes, start the dev server, exercise the golden path a
 
 - Admin can log in and create one of each: StatusMaster, DocumentTypeMaster, ClaimIdRule, Claim.
 - Admin can deactivate a StatusMaster; if it's referenced by a Claim, deletion is rejected.
-- Team Lead can log in, see only their (UserType, ProjectType) scope, create a Claim, update its status, and add remarks.
+- Team Lead can log in, see only their (UserType, Project) scope, create a Claim, update its status, and add remarks.
 - Regular User can log in, see all claims in their pair but can only open + edit the ones assigned to them.
 - Switching between My URLs and Claims in the sidebar works; the existing URL proxy flow is unchanged.
 - The `/dashboard` page is untouched and still shows URL stats.

@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, Copy } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
+import { useCrudResource } from '@/hooks/useCrudResource';
 import { DataTable } from '@/components/shared/DataTable';
+import { TableToolbar } from '@/components/shared/TableToolbar';
+import { FilterSelect, STATUS_OPTIONS } from '@/components/shared/FilterSelect';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,8 +46,7 @@ interface UrlConfig {
   proxyMode: ProxyMode;
   headlessTimeout: number;
   sessionTtl: number;
-  userType: { id: string; name: string };
-  projectType: { id: string; name: string };
+  project: { id: string; name: string };
   category: { id: string; name: string };
   subCategory: { id: string; name: string };
 }
@@ -56,35 +58,55 @@ const PROXY_MODE_LABELS: Record<ProxyMode, { label: string; description: string;
 };
 
 interface SelectOption { id: string; name: string; }
-interface Category { id: string; name: string; userTypeId: string; projectTypeId: string; }
+interface Category { id: string; name: string; projectId: string; }
 interface SubCategory { id: string; name: string; categoryId: string; }
 
 export default function UrlConfigs() {
   const { toast } = useToast();
-  const [data, setData] = useState<UrlConfig[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
-
-  const [userTypes, setUserTypes] = useState<SelectOption[]>([]);
-  const [projectTypes, setProjectTypes] = useState<SelectOption[]>([]);
+  const [projects, setProjects] = useState<SelectOption[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [subCategories, setSubCategories] = useState<SubCategory[]>([]);
 
-  const [filterUserType, setFilterUserType] = useState('');
-  const [filterProjectType, setFilterProjectType] = useState('');
+  const [filterProject, setFilterProject] = useState('');
+  const [mode, setMode] = useState<'' | 'DIRECT' | 'HEADLESS' | 'NEW_WINDOW'>('');
 
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-  const [isStatusOpen, setIsStatusOpen] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<UrlConfig | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const {
+    data,
+    isLoading,
+    pagination,
+    fetchData,
+    search,
+    setSearch,
+    status,
+    setStatus,
+    sort,
+    onSortChange,
+    selectedItem,
+    setSelectedItem,
+    isFormOpen,
+    setIsFormOpen,
+    isDeleteOpen,
+    setIsDeleteOpen,
+    isStatusOpen,
+    setIsStatusOpen,
+    isSubmitting,
+    askDelete,
+    askStatus,
+    submit,
+    remove,
+    toggleStatus,
+  } = useCrudResource<UrlConfig>({
+    endpoint: '/admin/url-configs',
+    entityName: 'URL configuration',
+    defaultSort: { field: 'label', order: 'asc' },
+    filters: { projectId: filterProject, proxyMode: mode },
+  });
 
   const [formData, setFormData] = useState({
     label: '',
     description: '',
     targetUrl: '',
-    userTypeId: '',
-    projectTypeId: '',
+    projectId: '',
     categoryId: '',
     subCategoryId: '',
     proxyMode: 'DIRECT' as ProxyMode,
@@ -92,32 +114,14 @@ export default function UrlConfigs() {
     sessionTtl: 30000,
   });
 
-  const fetchData = async (page = 1, limit = 10) => {
-    setIsLoading(true);
-    try {
-      let url = `/admin/url-configs?page=${page}&limit=${limit}`;
-      if (filterUserType) url += `&userTypeId=${filterUserType}`;
-      if (filterProjectType) url += `&projectTypeId=${filterProjectType}`;
-      const response = await api.get<PaginatedResponse<UrlConfig>>(url);
-      setData(response.data);
-      setPagination(response.pagination);
-    } catch (error) {
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to fetch data', variant: 'destructive' });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const fetchSelectOptions = async () => {
     try {
-      const [ut, pt, cat, subCat] = await Promise.all([
-        api.get<PaginatedResponse<SelectOption>>('/admin/user-types?limit=100'),
-        api.get<PaginatedResponse<SelectOption>>('/admin/project-types?limit=100'),
+      const [pt, cat, subCat] = await Promise.all([
+        api.get<PaginatedResponse<SelectOption>>('/admin/projects?limit=100'),
         api.get<PaginatedResponse<Category>>('/admin/categories?limit=100'),
         api.get<PaginatedResponse<SubCategory>>('/admin/sub-categories?limit=100'),
       ]);
-      setUserTypes(ut.data || []);
-      setProjectTypes(pt.data || []);
+      setProjects(pt.data || []);
       setCategories(cat.data || []);
       setSubCategories(subCat.data || []);
     } catch (error) {
@@ -129,19 +133,15 @@ export default function UrlConfigs() {
     fetchSelectOptions();
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [filterUserType, filterProjectType]);
-
   const filteredCategories = categories.filter(
-    (c) => c.userTypeId === formData.userTypeId && c.projectTypeId === formData.projectTypeId
+    (c) => c.projectId === formData.projectId
   );
 
   const filteredSubCategories = subCategories.filter((sc) => sc.categoryId === formData.categoryId);
 
   const handleCreate = () => {
     setSelectedItem(null);
-    setFormData({ label: '', description: '', targetUrl: '', userTypeId: '', projectTypeId: '', categoryId: '', subCategoryId: '', proxyMode: 'DIRECT', headlessTimeout: 60000, sessionTtl: 30000 });
+    setFormData({ label: '', description: '', targetUrl: '', projectId: '', categoryId: '', subCategoryId: '', proxyMode: 'DIRECT', headlessTimeout: 60000, sessionTtl: 30000 });
     setIsFormOpen(true);
   };
 
@@ -151,8 +151,7 @@ export default function UrlConfigs() {
       label: item.label,
       description: item.description || '',
       targetUrl: item.targetUrl,
-      userTypeId: item.userType.id,
-      projectTypeId: item.projectType.id,
+      projectId: item.project.id,
       categoryId: item.category.id,
       subCategoryId: item.subCategory.id,
       proxyMode: item.proxyMode || 'DIRECT',
@@ -162,58 +161,12 @@ export default function UrlConfigs() {
     setIsFormOpen(true);
   };
 
-  const handleSubmit = async () => {
-    if (!formData.label.trim() || !formData.targetUrl.trim() || !formData.userTypeId || !formData.projectTypeId || !formData.categoryId || !formData.subCategoryId) {
+  const handleSubmit = () => {
+    if (!formData.label.trim() || !formData.targetUrl.trim() || !formData.projectId || !formData.categoryId || !formData.subCategoryId) {
       toast({ title: 'Validation Error', description: 'All fields are required', variant: 'destructive' });
       return;
     }
-    setIsSubmitting(true);
-    try {
-      if (selectedItem) {
-        await api.put(`/admin/url-configs/${selectedItem.id}`, formData);
-        toast({ title: 'Success', description: 'URL configuration updated successfully' });
-      } else {
-        await api.post('/admin/url-configs', formData);
-        toast({ title: 'Success', description: 'URL configuration created successfully' });
-      }
-      setIsFormOpen(false);
-      fetchData(pagination.page, pagination.limit);
-    } catch (error) {
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Operation failed', variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!selectedItem) return;
-    setIsSubmitting(true);
-    try {
-      await api.delete(`/admin/url-configs/${selectedItem.id}`);
-      toast({ title: 'Success', description: 'URL configuration deleted successfully' });
-      setIsDeleteOpen(false);
-      fetchData(pagination.page, pagination.limit);
-    } catch (error) {
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Delete failed', variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleStatusChange = async () => {
-    if (!selectedItem) return;
-    setIsSubmitting(true);
-    try {
-      const newStatus = selectedItem.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-      await api.patch(`/admin/url-configs/${selectedItem.id}/status`, { status: newStatus });
-      toast({ title: 'Success', description: `URL ${newStatus === 'ACTIVE' ? 'activated' : 'deactivated'} successfully` });
-      setIsStatusOpen(false);
-      fetchData(pagination.page, pagination.limit);
-    } catch (error) {
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Status change failed', variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-    }
+    submit(formData);
   };
 
   const copyProxyUrl = (opaqueId: string) => {
@@ -222,12 +175,12 @@ export default function UrlConfigs() {
   };
 
   const columns: ColumnDef<UrlConfig>[] = [
-    { accessorKey: 'label', header: 'Label' },
+    { accessorKey: 'label', header: 'Label', meta: { sortField: 'label' } },
     {
       id: 'scope',
       header: 'Scope',
       cell: ({ row }) => (
-        <span className="text-sm">{row.original.userType.name} / {row.original.projectType.name}</span>
+        <span className="text-sm">{row.original.project.name}</span>
       ),
     },
     {
@@ -240,9 +193,10 @@ export default function UrlConfigs() {
     {
       accessorKey: 'proxyMode',
       header: 'Mode',
+      meta: { sortField: 'proxyMode' },
       cell: ({ row }) => {
-        const mode = row.original.proxyMode || 'DIRECT';
-        const config = PROXY_MODE_LABELS[mode];
+        const m = row.original.proxyMode || 'DIRECT';
+        const config = PROXY_MODE_LABELS[m];
         return (
           <Badge className={`${config.color} text-white`}>{config.label}</Badge>
         );
@@ -251,6 +205,7 @@ export default function UrlConfigs() {
     {
       accessorKey: 'status',
       header: 'Status',
+      meta: { sortField: 'status' },
       cell: ({ row }) => <Badge variant={row.original.status === 'ACTIVE' ? 'success' : 'secondary'}>{row.original.status}</Badge>,
     },
     {
@@ -265,10 +220,10 @@ export default function UrlConfigs() {
               <Copy className="mr-2 h-4 w-4" />Copy Proxy URL
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleEdit(row.original)}><Pencil className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setSelectedItem(row.original); setIsStatusOpen(true); }}>
+            <DropdownMenuItem onClick={() => askStatus(row.original)}>
               {row.original.status === 'ACTIVE' ? <><PowerOff className="mr-2 h-4 w-4" />Deactivate</> : <><Power className="mr-2 h-4 w-4" />Activate</>}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setSelectedItem(row.original); setIsDeleteOpen(true); }} className="text-destructive">
+            <DropdownMenuItem onClick={() => askDelete(row.original)} className="text-destructive">
               <Trash2 className="mr-2 h-4 w-4" />Delete
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -284,24 +239,30 @@ export default function UrlConfigs() {
         <Button onClick={handleCreate}><Plus className="mr-2 h-4 w-4" />Add URL Config</Button>
       </div>
 
-      <div className="flex gap-4 mb-4">
-        <Select value={filterUserType || "all"} onValueChange={(v) => setFilterUserType(v === "all" ? "" : v)}>
-          <SelectTrigger className="w-[200px]"><SelectValue placeholder="All User Types" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All User Types</SelectItem>
-            {userTypes.map((ut) => <SelectItem key={ut.id} value={ut.id}>{ut.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={filterProjectType || "all"} onValueChange={(v) => setFilterProjectType(v === "all" ? "" : v)}>
-          <SelectTrigger className="w-[200px]"><SelectValue placeholder="All Project Types" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Project Types</SelectItem>
-            {projectTypes.map((pt) => <SelectItem key={pt.id} value={pt.id}>{pt.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+      <div className="mb-4">
+        <TableToolbar search={search} onSearchChange={setSearch} placeholder="Search label or URL…">
+          <Select value={filterProject || "all"} onValueChange={(v) => setFilterProject(v === "all" ? "" : v)}>
+            <SelectTrigger className="w-[170px]"><SelectValue placeholder="All Projects" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Projects</SelectItem>
+              {projects.map((pt) => <SelectItem key={pt.id} value={pt.id}>{pt.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <FilterSelect
+            value={mode}
+            onChange={(v) => setMode(v as '' | 'DIRECT' | 'HEADLESS' | 'NEW_WINDOW')}
+            allLabel="All modes"
+            options={[
+              { value: 'DIRECT', label: 'Direct' },
+              { value: 'HEADLESS', label: 'Headless' },
+              { value: 'NEW_WINDOW', label: 'New Window' },
+            ]}
+          />
+          <FilterSelect value={status} onChange={(v) => setStatus(v as '' | 'ACTIVE' | 'INACTIVE')} allLabel="All statuses" options={STATUS_OPTIONS} />
+        </TableToolbar>
       </div>
 
-      <DataTable columns={columns} data={data} pagination={pagination} onPageChange={(page) => fetchData(page, pagination.limit)} onPageSizeChange={(limit) => fetchData(1, limit)} isLoading={isLoading} />
+      <DataTable columns={columns} data={data} pagination={pagination} onPageChange={(page) => fetchData(page, pagination.limit)} onPageSizeChange={(limit) => fetchData(1, limit)} isLoading={isLoading} sort={sort} onSortChange={onSortChange} />
 
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
         <DialogContent className="max-w-lg">
@@ -367,24 +328,15 @@ export default function UrlConfigs() {
             )}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>User Type <span className="text-destructive">*</span></Label>
-                <Select value={formData.userTypeId} onValueChange={(v) => setFormData({ ...formData, userTypeId: v, categoryId: '', subCategoryId: '' })}>
+                <Label>Project <span className="text-destructive">*</span></Label>
+                <Select value={formData.projectId} onValueChange={(v) => setFormData({ ...formData, projectId: v, categoryId: '', subCategoryId: '' })}>
                   <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                  <SelectContent>{userTypes.map((ut) => <SelectItem key={ut.id} value={ut.id}>{ut.name}</SelectItem>)}</SelectContent>
+                  <SelectContent>{projects.map((pt) => <SelectItem key={pt.id} value={pt.id}>{pt.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label>Project Type <span className="text-destructive">*</span></Label>
-                <Select value={formData.projectTypeId} onValueChange={(v) => setFormData({ ...formData, projectTypeId: v, categoryId: '', subCategoryId: '' })}>
-                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                  <SelectContent>{projectTypes.map((pt) => <SelectItem key={pt.id} value={pt.id}>{pt.name}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Category <span className="text-destructive">*</span></Label>
-                <Select value={formData.categoryId} onValueChange={(v) => setFormData({ ...formData, categoryId: v, subCategoryId: '' })} disabled={!formData.userTypeId || !formData.projectTypeId}>
+                <Select value={formData.categoryId} onValueChange={(v) => setFormData({ ...formData, categoryId: v, subCategoryId: '' })} disabled={!formData.projectId}>
                   <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                   <SelectContent>{filteredCategories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                 </Select>
@@ -405,8 +357,8 @@ export default function UrlConfigs() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen} title="Delete URL Configuration" description={`Delete "${selectedItem?.label}"?`} confirmText="Delete" onConfirm={handleDelete} variant="destructive" isLoading={isSubmitting} />
-      <ConfirmDialog open={isStatusOpen} onOpenChange={setIsStatusOpen} title={selectedItem?.status === 'ACTIVE' ? 'Deactivate URL' : 'Activate URL'} description={`${selectedItem?.status === 'ACTIVE' ? 'Deactivate' : 'Activate'} "${selectedItem?.label}"?`} confirmText={selectedItem?.status === 'ACTIVE' ? 'Deactivate' : 'Activate'} onConfirm={handleStatusChange} variant={selectedItem?.status === 'ACTIVE' ? 'destructive' : 'default'} isLoading={isSubmitting} />
+      <ConfirmDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen} title="Delete URL Configuration" description={`Delete "${selectedItem?.label}"?`} confirmText="Delete" onConfirm={remove} variant="destructive" isLoading={isSubmitting} />
+      <ConfirmDialog open={isStatusOpen} onOpenChange={setIsStatusOpen} title={selectedItem?.status === 'ACTIVE' ? 'Deactivate URL' : 'Activate URL'} description={`${selectedItem?.status === 'ACTIVE' ? 'Deactivate' : 'Activate'} "${selectedItem?.label}"?`} confirmText={selectedItem?.status === 'ACTIVE' ? 'Deactivate' : 'Activate'} onConfirm={toggleStatus} variant={selectedItem?.status === 'ACTIVE' ? 'destructive' : 'default'} isLoading={isSubmitting} />
     </div>
   );
 }

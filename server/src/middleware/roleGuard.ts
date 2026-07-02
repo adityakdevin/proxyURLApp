@@ -18,7 +18,7 @@ export const teamLeadOrAdminMiddleware = (
 };
 
 export interface ScopedRequest extends Request {
-  scope?: { userTypeId: string; projectTypeId: string } | 'ALL';
+  scope?: { projectId: string; subCategoryIds: string[] } | 'ALL';
 }
 
 export const scopedMiddleware = async (
@@ -40,6 +40,14 @@ export const scopedMiddleware = async (
   if (!assignment) {
     return res.status(403).json({ error: 'No assignment found', code: 'NO_ASSIGNMENT' });
   }
-  req.scope = { userTypeId: assignment.userTypeId, projectTypeId: assignment.projectTypeId };
+  // Access is restricted to the specific sub-categories granted to this user.
+  const access = await prisma.userSubCategory.findMany({
+    where: { userId: req.session.userId },
+    select: { subCategoryId: true },
+  });
+  req.scope = {
+    projectId: assignment.projectId,
+    subCategoryIds: access.map((a) => a.subCategoryId),
+  };
   next();
 };

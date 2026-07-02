@@ -69,8 +69,13 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-// Mirror of the server folderPath rule (drive letter, not C:).
-const FOLDER_PATH_RE = /^[A-Za-z]:\\.+/;
+// Client-side mirror of the server folderPath rule. The server is authoritative and
+// OS-aware (it enforces the absolute drive-letter form on Windows/production); the
+// browser can't know the server's OS, so here we only block the clearly-invalid cases —
+// the C:\ drive and ".." segments — and let a valid dev path (e.g. "Claims/Daily/<VIN>")
+// through for the server to accept.
+const isInvalidFolderPath = (fp: string): boolean =>
+  /^[Cc]:\\/.test(fp) || fp.split(/[\\/]/).includes('..');
 
 export default function ClaimDashboard() {
   const { toast } = useToast();
@@ -90,7 +95,7 @@ export default function ClaimDashboard() {
     assignedToMe: boolean;
     search: string;
   }>({ assignedToMe: false, search: '' });
-  const noAssignment = role !== 'ADMIN' && !user?.userTypeId;
+  const noAssignment = role !== 'ADMIN' && !user?.projectId;
   const [filterStatuses, setFilterStatuses] = useState<Status[]>([]);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -159,11 +164,11 @@ export default function ClaimDashboard() {
     if (!addForm.claimId.trim())
       return toast({ title: 'Claim ID required', variant: 'destructive' });
     const fp = addForm.folderPath.trim();
-    if (fp && (!FOLDER_PATH_RE.test(fp) || /^[Cc]:\\/.test(fp))) {
+    if (fp && isInvalidFolderPath(fp)) {
       return toast({
         title: 'Invalid folder path',
         variant: 'destructive',
-        description: 'Use an absolute drive-letter path (e.g. D:\\Claims\\Daily). C:\\ is not allowed.',
+        description: 'The C:\\ drive and ".." path segments are not allowed.',
       });
     }
     setIsSubmitting(true);
@@ -310,7 +315,7 @@ export default function ClaimDashboard() {
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-md text-amber-800">
           <p className="font-medium">Limited Access</p>
           <p className="text-sm">
-            You don't have an active User Type / Project Type assignment, so there are no
+            You don't have an active Project assignment, so there are no
             claims to show. Please contact an administrator.
           </p>
         </div>

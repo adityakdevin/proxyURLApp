@@ -407,7 +407,7 @@ git commit -m "feat(claims): FileSystemPort + FsFileSystemPort + upload paths"
 - Create: `server/src/services/documentService.ts`
 - Test: `server/src/services/__tests__/documentService.test.ts`
 
-- [ ] **Step 1: Write the failing test** `server/src/services/__tests__/documentService.test.ts`. Self-contained fixtures (UserType/ProjectType/Category/SubCategory + doc types + claim), fake `FileSystemPort`.
+- [ ] **Step 1: Write the failing test** `server/src/services/__tests__/documentService.test.ts`. Self-contained fixtures (UserType/Project/Category/SubCategory + doc types + claim), fake `FileSystemPort`.
 
 ```ts
 import { PrismaClient } from '@prisma/client';
@@ -452,9 +452,9 @@ describe('DocumentService', () => {
     if (!admin) throw new Error('Need an ADMIN user seeded');
     adminId = admin.id;
     const ut = await prisma.userType.create({ data: { name: `doc-ut-${SUF}` } });
-    const pt = await prisma.projectType.create({ data: { name: `doc-pt-${SUF}` } });
+    const pt = await prisma.project.create({ data: { name: `doc-pt-${SUF}` } });
     utId = ut.id; ptId = pt.id;
-    const cat = await prisma.category.create({ data: { name: `doc-cat-${SUF}`, userTypeId: utId, projectTypeId: ptId } });
+    const cat = await prisma.category.create({ data: { name: `doc-cat-${SUF}`, userTypeId: utId, projectId: ptId } });
     catId = cat.id;
     const sc = await prisma.subCategory.create({ data: { name: `doc-sc-${SUF}`, categoryId: catId } });
     subCategoryId = sc.id;
@@ -476,7 +476,7 @@ describe('DocumentService', () => {
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
     await prisma.userType.deleteMany({ where: { id: utId } });
-    await prisma.projectType.deleteMany({ where: { id: ptId } });
+    await prisma.project.deleteMany({ where: { id: ptId } });
     await disconnectTestPrisma();
   });
 

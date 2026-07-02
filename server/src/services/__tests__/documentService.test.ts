@@ -27,7 +27,6 @@ describe('DocumentService', () => {
   let subCategoryId: string;
   let adminId: string;
   const SUF = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-  let utId: string;
   let ptId: string;
   let catId: string;
   let workflowStatusId: string;
@@ -43,12 +42,10 @@ describe('DocumentService', () => {
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
     if (!admin) throw new Error('Need an ADMIN user seeded');
     adminId = admin.id;
-    const ut = await prisma.userType.create({ data: { name: `doc-ut-${SUF}` } });
-    const pt = await prisma.projectType.create({ data: { name: `doc-pt-${SUF}` } });
-    utId = ut.id;
+    const pt = await prisma.project.create({ data: { name: `doc-pt-${SUF}` } });
     ptId = pt.id;
     const cat = await prisma.category.create({
-      data: { name: `doc-cat-${SUF}`, userTypeId: utId, projectTypeId: ptId },
+      data: { name: `doc-cat-${SUF}`, projectId: ptId },
     });
     catId = cat.id;
     const sc = await prisma.subCategory.create({ data: { name: `doc-sc-${SUF}`, categoryId: catId } });
@@ -78,8 +75,7 @@ describe('DocumentService', () => {
     await truncateClaimsTables(prisma);
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
-    await prisma.userType.deleteMany({ where: { id: utId } });
-    await prisma.projectType.deleteMany({ where: { id: ptId } });
+    await prisma.project.deleteMany({ where: { id: ptId } });
     await disconnectTestPrisma();
   });
 

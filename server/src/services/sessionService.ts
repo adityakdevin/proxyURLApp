@@ -12,8 +12,7 @@ export interface SessionData {
   fullName: string;
   role: Role;
   forcePasswordChange: boolean;
-  userTypeId?: string;
-  projectTypeId?: string;
+  projectId?: string;
   impersonatedBy?: string;
 }
 
@@ -86,17 +85,14 @@ export class SessionService {
       return null;
     }
 
-    // Check if User Type and Project Type are active (if user has assignment)
+    // Check if Project is active (if user has assignment)
     const assignment = session.user.assignments[0];
     if (assignment) {
-      const userType = await this.prisma.userType.findUnique({
-        where: { id: assignment.userTypeId },
-      });
-      const projectType = await this.prisma.projectType.findUnique({
-        where: { id: assignment.projectTypeId },
+      const project = await this.prisma.project.findUnique({
+        where: { id: assignment.projectId },
       });
 
-      if (userType?.status !== 'ACTIVE' || projectType?.status !== 'ACTIVE') {
+      if (project?.status !== 'ACTIVE') {
         await this.prisma.session.delete({ where: { id: session.id } });
         return null;
       }
@@ -114,8 +110,7 @@ export class SessionService {
       fullName: session.user.fullName,
       role: session.user.role,
       forcePasswordChange: session.user.forcePasswordChange,
-      userTypeId: assignment?.userTypeId,
-      projectTypeId: assignment?.projectTypeId,
+      projectId: assignment?.projectId,
       impersonatedBy: session.impersonatedBy || undefined,
     };
   }
@@ -134,29 +129,12 @@ export class SessionService {
     });
   }
 
-  // Delete sessions for all users with a specific User Type
-  async deleteSessionsByUserType(userTypeId: string): Promise<void> {
+  // Delete sessions for all users with a specific Project
+  async deleteSessionsByProject(projectId: string): Promise<void> {
     const users = await this.prisma.user.findMany({
       where: {
         assignments: {
-          some: { userTypeId },
-        },
-      },
-      select: { id: true },
-    });
-
-    const userIds = users.map((u) => u.id);
-    await this.prisma.session.deleteMany({
-      where: { userId: { in: userIds } },
-    });
-  }
-
-  // Delete sessions for all users with a specific Project Type
-  async deleteSessionsByProjectType(projectTypeId: string): Promise<void> {
-    const users = await this.prisma.user.findMany({
-      where: {
-        assignments: {
-          some: { projectTypeId },
+          some: { projectId },
         },
       },
       select: { id: true },

@@ -1,21 +1,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { body, validationResult } from 'express-validator';
+import { body } from 'express-validator';
 import { hashPassword, verifyPassword, validatePasswordPolicy } from '../../utils/password.js';
 import { SessionService } from '../../services/sessionService.js';
+import { validate } from '../../lib/routeHelpers.js';
 
 const router = Router();
-
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-    });
-  }
-  next();
-};
 
 // GET /api/admin/profile - Get current admin's profile
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {

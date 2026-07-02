@@ -5,8 +5,7 @@ import { Users, Briefcase, Link2, FolderTree, Folder, Zap } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
 interface Stats {
-  userTypes: number;
-  projectTypes: number;
+  projects: number;
   users: number;
   urlConfigs: number;
   categories: number;
@@ -16,8 +15,7 @@ interface Stats {
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [stats, setStats] = useState<Stats>({
-    userTypes: 0,
-    projectTypes: 0,
+    projects: 0,
     users: 0,
     urlConfigs: 0,
     categories: 0,
@@ -28,9 +26,8 @@ export default function AdminDashboard() {
   const fetchStats = async () => {
     setIsLoading(true);
     try {
-      const [userTypes, projectTypes, users, urlConfigs, categories, subCategories] = await Promise.all([
-        api.get<PaginatedResponse<unknown>>('/admin/user-types?limit=1'),
-        api.get<PaginatedResponse<unknown>>('/admin/project-types?limit=1'),
+      const [projects, users, urlConfigs, categories, subCategories] = await Promise.all([
+        api.get<PaginatedResponse<unknown>>('/admin/projects?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/users?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/url-configs?limit=1'),
         api.get<PaginatedResponse<unknown>>('/admin/categories?limit=1'),
@@ -38,8 +35,7 @@ export default function AdminDashboard() {
       ]);
 
       setStats({
-        userTypes: userTypes.pagination.total,
-        projectTypes: projectTypes.pagination.total,
+        projects: projects.pagination.total,
         users: users.pagination.total,
         urlConfigs: urlConfigs.pagination.total,
         categories: categories.pagination.total,
@@ -57,8 +53,7 @@ export default function AdminDashboard() {
   }, []);
 
   const statCards = [
-    { label: 'User Types', value: stats.userTypes, icon: Users, link: '/admin/user-types', color: 'text-blue-600' },
-    { label: 'Project Types', value: stats.projectTypes, icon: Briefcase, link: '/admin/project-types', color: 'text-green-600' },
+    { label: 'Projects', value: stats.projects, icon: Briefcase, link: '/admin/projects', color: 'text-green-600' },
     { label: 'Users', value: stats.users, icon: Users, link: '/admin/users', color: 'text-purple-600' },
     { label: 'Categories', value: stats.categories, icon: FolderTree, link: '/admin/categories', color: 'text-orange-600' },
     { label: 'Sub-Categories', value: stats.subCategories, icon: Folder, link: '/admin/sub-categories', color: 'text-cyan-600' },
@@ -118,10 +113,6 @@ export default function AdminDashboard() {
             <Link to="/admin/categories" className="p-3 border rounded-lg hover:bg-gray-50 text-center">
               <FolderTree className="h-5 w-5 mx-auto mb-1" />
               <span className="text-sm">Categories</span>
-            </Link>
-            <Link to="/admin/user-types" className="p-3 border rounded-lg hover:bg-gray-50 text-center">
-              <Users className="h-5 w-5 mx-auto mb-1" />
-              <span className="text-sm">User Types</span>
             </Link>
           </div>
         </div>
