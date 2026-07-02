@@ -24,41 +24,39 @@ router.get('/menu', async (req: Request, res: Response, next: NextFunction) => {
       return res.json({
         data: {
           menu: [],
-          userType: null,
-          projectType: null,
+          project: null,
         },
       });
     }
 
-    // Get user type and project type names
-    const [userType, projectType] = await Promise.all([
-      prisma.userType.findUnique({
-        where: { id: assignment.userTypeId },
-        select: { id: true, name: true, status: true },
-      }),
-      prisma.projectType.findUnique({
-        where: { id: assignment.projectTypeId },
-        select: { id: true, name: true, status: true },
-      }),
-    ]);
+    // Get project name
+    const project = await prisma.project.findUnique({
+      where: { id: assignment.projectId },
+      select: { id: true, name: true, status: true },
+    });
 
-    // Check if user type or project type is inactive
-    if (!userType || userType.status !== 'ACTIVE' || !projectType || projectType.status !== 'ACTIVE') {
+    // Check if project is inactive
+    if (!project || project.status !== 'ACTIVE') {
       return res.json({
         data: {
           menu: [],
-          userType: userType ? { id: userType.id, name: userType.name } : null,
-          projectType: projectType ? { id: projectType.id, name: projectType.name } : null,
-          message: 'Your assigned user type or project type is currently inactive.',
+          project: project ? { id: project.id, name: project.name } : null,
+          message: 'Your assigned project is currently inactive.',
         },
       });
     }
 
-    // Get all active categories for this user type and project type
+    // The specific sub-categories this user is granted (access is restricted to these).
+    const access = await prisma.userSubCategory.findMany({
+      where: { userId },
+      select: { subCategoryId: true },
+    });
+    const assignedSubCategoryIds = access.map((a) => a.subCategoryId);
+
+    // Get all active categories for this project
     const categories = await prisma.category.findMany({
       where: {
-        userTypeId: assignment.userTypeId,
-        projectTypeId: assignment.projectTypeId,
+        projectId: assignment.projectId,
         status: 'ACTIVE',
       },
       orderBy: { name: 'asc' },
@@ -69,11 +67,12 @@ router.get('/menu', async (req: Request, res: Response, next: NextFunction) => {
       },
     });
 
-    // Get all active sub-categories for these categories
+    // Get active sub-categories the user is granted within these categories
     const categoryIds = categories.map((c) => c.id);
     const subCategories = await prisma.subCategory.findMany({
       where: {
         categoryId: { in: categoryIds },
+        id: { in: assignedSubCategoryIds },
         status: 'ACTIVE',
       },
       orderBy: { name: 'asc' },
@@ -90,8 +89,7 @@ router.get('/menu', async (req: Request, res: Response, next: NextFunction) => {
     const urlConfigs = await prisma.urlConfiguration.findMany({
       where: {
         subCategoryId: { in: subCategoryIds },
-        userTypeId: assignment.userTypeId,
-        projectTypeId: assignment.projectTypeId,
+        projectId: assignment.projectId,
         status: 'ACTIVE',
       },
       orderBy: { label: 'asc' },
@@ -133,8 +131,7 @@ router.get('/menu', async (req: Request, res: Response, next: NextFunction) => {
     res.json({
       data: {
         menu,
-        userType: { id: userType.id, name: userType.name },
-        projectType: { id: projectType.id, name: projectType.name },
+        project: { id: project.id, name: project.name },
       },
     });
   } catch (error) {
@@ -153,8 +150,7 @@ router.get('/dashboard', async (req: Request, res: Response, next: NextFunction)
     const assignment = await prisma.userAssignment.findUnique({
       where: { userId },
       include: {
-        userType: { select: { id: true, name: true, status: true } },
-        projectType: { select: { id: true, name: true, status: true } },
+        project: { select: { id: true, name: true, status: true } },
       },
     });
 
@@ -163,8 +159,7 @@ router.get('/dashboard', async (req: Request, res: Response, next: NextFunction)
         data: {
           stats: {
             totalUrls: 0,
-            userType: null,
-            projectType: null,
+            project: null,
           },
           frequentUrls: [],
           recentActivity: [],
@@ -172,15 +167,19 @@ router.get('/dashboard', async (req: Request, res: Response, next: NextFunction)
       });
     }
 
-    // Check if user type and project type are active
-    const isActive =
-      assignment.userType.status === 'ACTIVE' && assignment.projectType.status === 'ACTIVE';
+    // Check if project is active
+    const isActive = assignment.project.status === 'ACTIVE';
+
+    // The sub-categories this user is granted (access is restricted to these).
+    const access = await prisma.userSubCategory.findMany({
+      where: { userId },
+      select: { subCategoryId: true },
+    });
+    const assignedSubCategoryIds = access.map((a) => a.subCategoryId);
 
     // Get dashboard data in parallel
     const [totalUrls, frequentUrls, recentActivity] = await Promise.all([
-      isActive
-        ? auditLogService.getAccessibleUrlCount(assignment.userTypeId, assignment.projectTypeId)
-        : 0,
+      isActive ? auditLogService.getAccessibleUrlCount(assignedSubCategoryIds) : 0,
       auditLogService.getFrequentUrls(userId, 5),
       auditLogService.getRecentActivity(userId, 5),
     ]);
@@ -189,13 +188,9 @@ router.get('/dashboard', async (req: Request, res: Response, next: NextFunction)
       data: {
         stats: {
           totalUrls,
-          userType: {
-            id: assignment.userType.id,
-            name: assignment.userType.name,
-          },
-          projectType: {
-            id: assignment.projectType.id,
-            name: assignment.projectType.name,
+          project: {
+            id: assignment.project.id,
+            name: assignment.project.name,
           },
         },
         frequentUrls,
@@ -235,8 +230,7 @@ router.get('/subcategory/:id', async (req: Request, res: Response, next: NextFun
           select: {
             id: true,
             name: true,
-            userTypeId: true,
-            projectTypeId: true,
+            projectId: true,
             status: true,
           },
         },
@@ -250,11 +244,12 @@ router.get('/subcategory/:id', async (req: Request, res: Response, next: NextFun
       });
     }
 
-    // Verify the sub-category belongs to user's assigned userType and projectType
-    if (
-      subCategory.category.userTypeId !== assignment.userTypeId ||
-      subCategory.category.projectTypeId !== assignment.projectTypeId
-    ) {
+    // Verify the user is granted access to this specific sub-category
+    const access = await prisma.userSubCategory.findUnique({
+      where: { userId_subCategoryId: { userId, subCategoryId } },
+      select: { id: true },
+    });
+    if (!access) {
       return res.status(403).json({
         error: 'Access denied',
         code: 'ACCESS_DENIED',
@@ -273,8 +268,7 @@ router.get('/subcategory/:id', async (req: Request, res: Response, next: NextFun
     const urls = await prisma.urlConfiguration.findMany({
       where: {
         subCategoryId: subCategoryId,
-        userTypeId: assignment.userTypeId,
-        projectTypeId: assignment.projectTypeId,
+        projectId: assignment.projectId,
         status: 'ACTIVE',
       },
       orderBy: { label: 'asc' },
@@ -321,8 +315,7 @@ router.get('/profile', async (req: Request, res: Response, next: NextFunction) =
         createdAt: true,
         assignments: {
           include: {
-            userType: { select: { id: true, name: true } },
-            projectType: { select: { id: true, name: true } },
+            project: { select: { id: true, name: true } },
           },
         },
       },
@@ -346,8 +339,7 @@ router.get('/profile', async (req: Request, res: Response, next: NextFunction) =
         createdAt: user.createdAt,
         assignment: assignment
           ? {
-              userType: assignment.userType,
-              projectType: assignment.projectType,
+              project: assignment.project,
             }
           : null,
       },
@@ -368,24 +360,26 @@ router.get('/sub-categories', async (req, res, next) => {
       const all = await prisma.subCategory.findMany({
         where: { status: 'ACTIVE' },
         include: {
-          category: { select: { id: true, name: true, userTypeId: true, projectTypeId: true } },
+          category: { select: { id: true, name: true, projectId: true } },
         },
         orderBy: { name: 'asc' },
       });
       return res.json({ data: all });
     }
 
-    const assignment = await prisma.userAssignment.findUnique({ where: { userId } });
-    if (!assignment) return res.json({ data: [] });
+    // Non-admins see only the sub-categories they have been granted.
+    const access = await prisma.userSubCategory.findMany({
+      where: { userId },
+      select: { subCategoryId: true },
+    });
+    const assignedSubCategoryIds = access.map((a) => a.subCategoryId);
+    if (assignedSubCategoryIds.length === 0) return res.json({ data: [] });
 
     const list = await prisma.subCategory.findMany({
       where: {
+        id: { in: assignedSubCategoryIds },
         status: 'ACTIVE',
-        category: {
-          userTypeId: assignment.userTypeId,
-          projectTypeId: assignment.projectTypeId,
-          status: 'ACTIVE',
-        },
+        category: { status: 'ACTIVE' },
       },
       include: { category: { select: { id: true, name: true } } },
       orderBy: { name: 'asc' },
@@ -406,23 +400,13 @@ router.get('/status-masters', async (req, res, next) => {
         .status(400)
         .json({ error: 'subCategoryId required', code: 'VALIDATION_ERROR' });
     }
-    // Non-admins may only read statuses for a SubCategory in their own scope.
+    // Non-admins may only read statuses for a SubCategory they are granted.
     if (req.session!.role !== 'ADMIN') {
-      const assignment = await prisma.userAssignment.findUnique({
-        where: { userId: req.session!.userId },
+      const access = await prisma.userSubCategory.findUnique({
+        where: { userId_subCategoryId: { userId: req.session!.userId, subCategoryId } },
+        select: { id: true },
       });
-      if (!assignment) {
-        return res.status(403).json({ error: 'No assignment found', code: 'NO_ASSIGNMENT' });
-      }
-      const sub = await prisma.subCategory.findUnique({
-        where: { id: subCategoryId },
-        include: { category: { select: { userTypeId: true, projectTypeId: true } } },
-      });
-      if (
-        !sub ||
-        sub.category.userTypeId !== assignment.userTypeId ||
-        sub.category.projectTypeId !== assignment.projectTypeId
-      ) {
+      if (!access) {
         return res.status(403).json({ error: 'Access denied', code: 'ACCESS_DENIED' });
       }
     }
@@ -452,19 +436,20 @@ router.get('/users-in-scope', async (req, res, next) => {
       });
       return res.json({ data: all });
     }
-    const assignment = await prisma.userAssignment.findUnique({
+    // A Team Lead sees active non-admin users who share at least one of the
+    // sub-categories they are granted.
+    const access = await prisma.userSubCategory.findMany({
       where: { userId: req.session!.userId },
+      select: { subCategoryId: true },
     });
-    if (!assignment) return res.json({ data: [] });
+    const tlSubCategoryIds = access.map((a) => a.subCategoryId);
+    if (tlSubCategoryIds.length === 0) return res.json({ data: [] });
     const list = await prisma.user.findMany({
       where: {
         status: 'ACTIVE',
         role: { not: 'ADMIN' },
-        assignments: {
-          some: {
-            userTypeId: assignment.userTypeId,
-            projectTypeId: assignment.projectTypeId,
-          },
+        subCategoryAccess: {
+          some: { subCategoryId: { in: tlSubCategoryIds } },
         },
       },
       select: { id: true, fullName: true, username: true },

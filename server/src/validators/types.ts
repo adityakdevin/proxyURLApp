@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { FileSystemPort } from '../lib/fileSystemPort.js';
+import { BBox } from '../lib/bbox.js';
 
 export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL';
 export type ClaimColumn =
@@ -9,9 +9,22 @@ export type ClaimColumn =
   | 'intraClaimStatus'
   | 'fullScanStatus';
 
+/** A normalized ([0..1], top-left origin) bounding box for a recognized word. */
+export interface WordBox {
+  text: string;
+  page: number; // 1-based (1 for single images)
+  bbox: BBox;
+  conf?: number;
+}
+
 export interface OcrPort {
   /** Extract text from an image file. Returns '' on failure. */
   extractImageText(absolutePath: string): Promise<string>;
+  /**
+   * Image OCR returning both text and per-word normalized boxes. Optional — when
+   * absent (e.g. test mocks) callers fall back to extractImageText (text only).
+   */
+  extractImage?(absolutePath: string): Promise<{ text: string; words: WordBox[] }>;
   /** Release any underlying resources (e.g. a reused OCR worker). Optional. */
   close?(): Promise<void>;
 }
@@ -30,15 +43,31 @@ export interface ValidatorContext {
   claim: { id: string; claimId: string; subCategoryId: string };
   documents: ValidatorDoc[];
   prisma: PrismaClient;
-  fsPort: FileSystemPort;
   ocr: OcrPort;
   shared: Map<string, string>; // documentId → extracted text (META fills; SPELL/INTRA read)
+  /** documentId → per-word boxes (META fills for images; SPELL/INTRA read to anchor highlights). */
+  wordBoxes: Map<string, WordBox[]>;
+}
+
+/**
+ * A single piece of evidence for a check, attributed to a Document when possible.
+ * page/bbox are reserved for the coordinate-capture phases and stay undefined for now.
+ */
+export interface FindingInput {
+  documentId?: string | null;
+  code: string;
+  severity?: 'INFO' | 'WARNING' | 'ERROR';
+  message: string;
+  page?: number | null;
+  bbox?: BBox | null;
+  data?: Record<string, unknown>;
 }
 
 export interface ValidatorOutcome {
   status: 'PASSED' | 'FAILED';
   summary: string;
   details?: unknown;
+  findings?: FindingInput[];
 }
 
 export interface Validator {

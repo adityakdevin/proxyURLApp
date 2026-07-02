@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ProxyURLApp is a full-stack web application providing controlled access to external/internal URLs through a proxy mechanism with role-based access control. Users are assigned a single UserType + ProjectType pair that determines which URLs they can access via a hierarchical menu (Category → SubCategory → URL).
+ProxyURLApp is a full-stack web application providing controlled access to external/internal URLs through a proxy mechanism with role-based access control. Users are assigned a single Project that determines which URLs they can access via a hierarchical menu (Category → SubCategory → URL).
 
 ## Tech Stack
 
@@ -60,16 +60,16 @@ npm run start            # Run production server
 
 ### Data Model Hierarchy
 ```
-UserType (standalone) + ProjectType (standalone)
+Project (standalone)
     ↓
-Category (scoped to UserType + ProjectType pair)
+Category (scoped to Project)
     ↓
 SubCategory (inherits scope from parent Category)
     ↓
-UrlConfiguration (explicit refs to all four, uses UUID opaqueId for masking)
+UrlConfiguration (explicit refs to Project/Category/SubCategory, uses UUID opaqueId for masking)
 ```
 
-User → UserAssignment (single pair) → determines menu/URL access
+User → UserAssignment (single Project) → determines menu/URL access
 
 ### Auth Flow
 1. Login creates server-side Session with 64-char token
@@ -86,7 +86,7 @@ User → UserAssignment (single pair) → determines menu/URL access
 ## API Routes
 
 - `/api/auth/*` - Login, logout, change-password, impersonation
-- `/api/admin/*` - CRUD for Users, UserTypes, ProjectTypes, Categories, SubCategories, UrlConfigs
+- `/api/admin/*` - CRUD for Users, Projects, Categories, SubCategories, UrlConfigs
 - `/api/user/*` - Menu, dashboard endpoints
 - `/proxy/:opaqueId/*` - Proxy handler (all HTTP methods)
 

@@ -95,3 +95,55 @@ export function matchesClaimId(text: string, claimId: string): boolean {
 export function tokenizeWords(s: string): string[] {
   return s.toLowerCase().match(/[a-z]{3,}/g) ?? [];
 }
+
+// ── Intra-claim cross-document field extraction (Phase 4) ──────────────────────
+
+/** Extract distinct VIN-shaped tokens (17 chars, excluding I/O/Q per the VIN standard). */
+export function extractVins(text: string): string[] {
+  const found = text.toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/g) ?? [];
+  return [...new Set(found)];
+}
+
+/** Extract distinct label-anchored customer names ("Customer Name: X" / "Name: X"). */
+export function extractLabeledNames(text: string): string[] {
+  const re = /(?:customer\s*name|name)\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = m[1].trim().replace(/\s+/g, ' ').toLowerCase();
+    if (name) out.push(name);
+  }
+  return [...new Set(out)];
+}
+
+export type IntraField = 'VIN' | 'NAME';
+
+export interface FieldMismatch {
+  field: IntraField;
+  /** Every (document, value) pair observed for this field across the claim. */
+  values: { documentId: string; value: string }[];
+}
+
+const FIELD_EXTRACTORS: { field: IntraField; fn: (t: string) => string[] }[] = [
+  { field: 'VIN', fn: extractVins },
+  { field: 'NAME', fn: extractLabeledNames },
+];
+
+/**
+ * Detect fields whose value disagrees ACROSS a claim's documents — the classic
+ * "customer/vehicle details pasted, but they don't match" fraud signal. A field is a
+ * mismatch when the documents that carry it yield 2+ distinct values. (Dates are
+ * deliberately excluded — too noisy to compare reliably.)
+ */
+export function crossDocMismatches(
+  perDoc: { documentId: string; text: string }[]
+): FieldMismatch[] {
+  const out: FieldMismatch[] = [];
+  for (const { field, fn } of FIELD_EXTRACTORS) {
+    const pairs: { documentId: string; value: string }[] = [];
+    for (const d of perDoc) for (const v of fn(d.text)) pairs.push({ documentId: d.documentId, value: v });
+    const distinct = new Set(pairs.map((p) => p.value));
+    if (distinct.size > 1) out.push({ field, values: pairs });
+  }
+  return out;
+}

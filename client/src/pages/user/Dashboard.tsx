@@ -21,8 +21,7 @@ interface RecentActivity {
 interface DashboardData {
   stats: {
     totalUrls: number;
-    userType: { id: string; name: string } | null;
-    projectType: { id: string; name: string } | null;
+    project: { id: string; name: string } | null;
   };
   frequentUrls: FrequentUrl[];
   recentActivity: RecentActivity[];
@@ -92,7 +91,7 @@ export default function UserDashboard() {
           <div>
             <h3 className="font-medium text-amber-800">Limited Access</h3>
             <p className="text-sm text-amber-700">
-              Your assigned user type or project type is currently inactive. Contact an administrator for assistance.
+              Your assigned project is currently inactive. Contact an administrator for assistance.
             </p>
           </div>
         </div>
@@ -108,9 +107,9 @@ export default function UserDashboard() {
             <h3 className="text-sm text-gray-500 font-medium">Accessible URLs</h3>
           </div>
           <p className="text-3xl font-bold">{data?.stats.totalUrls ?? 0}</p>
-          {data?.stats.userType && data?.stats.projectType && (
+          {data?.stats.project && (
             <p className="text-sm text-gray-500 mt-2">
-              {data.stats.userType.name} / {data.stats.projectType.name}
+              {data.stats.project.name}
             </p>
           )}
         </div>

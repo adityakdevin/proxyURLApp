@@ -264,7 +264,7 @@ Change the signature line:
   async create(
     input: CreateClaimInput,
     actorId: string,
-    scope?: { userTypeId: string; projectTypeId: string } | 'ALL'
+    scope?: { userTypeId: string; projectId: string } | 'ALL'
   ): Promise<Claim> {
 ```
 
@@ -274,7 +274,7 @@ to:
   async create(
     input: CreateClaimInput,
     actorId: string,
-    scope?: { userTypeId: string; projectTypeId: string } | 'ALL',
+    scope?: { userTypeId: string; projectId: string } | 'ALL',
     opts?: { trustedFolderPath?: boolean }
   ): Promise<Claim> {
 ```
@@ -366,11 +366,11 @@ describe('ScanService', () => {
     if (!admin) throw new Error('Need an ADMIN user seeded');
     adminId = admin.id;
     const ut = await prisma.userType.create({ data: { name: `scan-ut-${SUF}` } });
-    const pt = await prisma.projectType.create({ data: { name: `scan-pt-${SUF}` } });
+    const pt = await prisma.project.create({ data: { name: `scan-pt-${SUF}` } });
     utId = ut.id;
     ptId = pt.id;
     const cat = await prisma.category.create({
-      data: { name: `scan-cat-${SUF}`, userTypeId: utId, projectTypeId: ptId },
+      data: { name: `scan-cat-${SUF}`, userTypeId: utId, projectId: ptId },
     });
     catId = cat.id;
     const sc = await prisma.subCategory.create({
@@ -391,7 +391,7 @@ describe('ScanService', () => {
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
     await prisma.userType.deleteMany({ where: { id: utId } });
-    await prisma.projectType.deleteMany({ where: { id: ptId } });
+    await prisma.project.deleteMany({ where: { id: ptId } });
     await disconnectTestPrisma();
   });
 

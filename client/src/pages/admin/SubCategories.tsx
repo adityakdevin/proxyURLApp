@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
+import { useCrudResource } from '@/hooks/useCrudResource';
 import { DataTable } from '@/components/shared/DataTable';
+import { TableToolbar } from '@/components/shared/TableToolbar';
+import { FilterSelect, STATUS_OPTIONS } from '@/components/shared/FilterSelect';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,52 +39,57 @@ interface SubCategory {
   name: string;
   description: string | null;
   status: 'ACTIVE' | 'INACTIVE';
-  category: { id: string; name: string; userType: { name: string }; projectType: { name: string } };
+  category: { id: string; name: string; project: { name: string } };
   _count?: { urlConfigurations: number };
 }
 
 interface Category {
   id: string;
   name: string;
-  userType: { name: string };
-  projectType: { name: string };
+  project: { name: string };
 }
 
 export default function SubCategories() {
   const { toast } = useToast();
-  const [data, setData] = useState<SubCategory[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
-
   const [categories, setCategories] = useState<Category[]>([]);
   const [filterCategory, setFilterCategory] = useState('');
-
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-  const [isStatusOpen, setIsStatusOpen] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<SubCategory | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const crud = useCrudResource<SubCategory>({
+    endpoint: '/admin/sub-categories',
+    entityName: 'Sub-category',
+    filters: { categoryId: filterCategory },
+  });
+  const {
+    data,
+    isLoading,
+    pagination,
+    fetchData,
+    search,
+    setSearch,
+    status,
+    setStatus,
+    sort,
+    onSortChange,
+    selectedItem,
+    setSelectedItem,
+    isFormOpen,
+    setIsFormOpen,
+    isDeleteOpen,
+    setIsDeleteOpen,
+    isStatusOpen,
+    setIsStatusOpen,
+    isSubmitting,
+    askDelete,
+    askStatus,
+    submit,
+    remove,
+    toggleStatus,
+  } = crud;
 
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     categoryId: '',
   });
-
-  const fetchData = async (page = 1, limit = 10) => {
-    setIsLoading(true);
-    try {
-      let url = `/admin/sub-categories?page=${page}&limit=${limit}`;
-      if (filterCategory) url += `&categoryId=${filterCategory}`;
-      const response = await api.get<PaginatedResponse<SubCategory>>(url);
-      setData(response.data);
-      setPagination(response.pagination);
-    } catch (error) {
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to fetch data', variant: 'destructive' });
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const fetchCategories = async () => {
     try {
@@ -96,10 +104,6 @@ export default function SubCategories() {
     fetchCategories();
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [filterCategory]);
-
   const handleCreate = () => {
     setSelectedItem(null);
     setFormData({ name: '', description: '', categoryId: '' });
@@ -112,62 +116,16 @@ export default function SubCategories() {
     setIsFormOpen(true);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!formData.name.trim() || !formData.categoryId) {
       toast({ title: 'Validation Error', description: 'Name and Category are required', variant: 'destructive' });
       return;
     }
-    setIsSubmitting(true);
-    try {
-      if (selectedItem) {
-        await api.put(`/admin/sub-categories/${selectedItem.id}`, formData);
-        toast({ title: 'Success', description: 'Sub-category updated successfully' });
-      } else {
-        await api.post('/admin/sub-categories', formData);
-        toast({ title: 'Success', description: 'Sub-category created successfully' });
-      }
-      setIsFormOpen(false);
-      fetchData(pagination.page, pagination.limit);
-    } catch (error) {
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Operation failed', variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!selectedItem) return;
-    setIsSubmitting(true);
-    try {
-      await api.delete(`/admin/sub-categories/${selectedItem.id}`);
-      toast({ title: 'Success', description: 'Sub-category deleted successfully' });
-      setIsDeleteOpen(false);
-      fetchData(pagination.page, pagination.limit);
-    } catch (error) {
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Delete failed', variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleStatusChange = async () => {
-    if (!selectedItem) return;
-    setIsSubmitting(true);
-    try {
-      const newStatus = selectedItem.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-      await api.patch(`/admin/sub-categories/${selectedItem.id}/status`, { status: newStatus });
-      toast({ title: 'Success', description: `Sub-category ${newStatus === 'ACTIVE' ? 'activated' : 'deactivated'} successfully` });
-      setIsStatusOpen(false);
-      fetchData(pagination.page, pagination.limit);
-    } catch (error) {
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Status change failed', variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-    }
+    submit(formData);
   };
 
   const columns: ColumnDef<SubCategory>[] = [
-    { accessorKey: 'name', header: 'Name' },
+    { accessorKey: 'name', header: 'Name', meta: { sortField: 'name' } },
     { accessorKey: 'description', header: 'Description', cell: ({ row }) => row.original.description || '-' },
     { id: 'category', header: 'Category', cell: ({ row }) => row.original.category.name },
     {
@@ -175,13 +133,14 @@ export default function SubCategories() {
       header: 'Scope',
       cell: ({ row }) => (
         <span className="text-sm text-muted-foreground">
-          {row.original.category.userType.name} / {row.original.category.projectType.name}
+          {row.original.category.project.name}
         </span>
       ),
     },
     {
       accessorKey: 'status',
       header: 'Status',
+      meta: { sortField: 'status' },
       cell: ({ row }) => <Badge variant={row.original.status === 'ACTIVE' ? 'success' : 'secondary'}>{row.original.status}</Badge>,
     },
     {
@@ -198,10 +157,10 @@ export default function SubCategories() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => handleEdit(row.original)}><Pencil className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setSelectedItem(row.original); setIsStatusOpen(true); }}>
+            <DropdownMenuItem onClick={() => askStatus(row.original)}>
               {row.original.status === 'ACTIVE' ? <><PowerOff className="mr-2 h-4 w-4" />Deactivate</> : <><Power className="mr-2 h-4 w-4" />Activate</>}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setSelectedItem(row.original); setIsDeleteOpen(true); }} className="text-destructive">
+            <DropdownMenuItem onClick={() => askDelete(row.original)} className="text-destructive">
               <Trash2 className="mr-2 h-4 w-4" />Delete
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -217,19 +176,22 @@ export default function SubCategories() {
         <Button onClick={handleCreate}><Plus className="mr-2 h-4 w-4" />Add Sub-Category</Button>
       </div>
 
-      <div className="flex gap-4 mb-4">
-        <Select value={filterCategory || "all"} onValueChange={(v) => setFilterCategory(v === "all" ? "" : v)}>
-          <SelectTrigger className="w-[300px]"><SelectValue placeholder="All Categories" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Categories</SelectItem>
-            {categories.map((c) => (
-              <SelectItem key={c.id} value={c.id}>{c.name} ({c.userType.name}/{c.projectType.name})</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="mb-4">
+        <TableToolbar search={search} onSearchChange={setSearch} placeholder="Search sub-categories…">
+          <Select value={filterCategory || "all"} onValueChange={(v) => setFilterCategory(v === "all" ? "" : v)}>
+            <SelectTrigger className="w-[240px]"><SelectValue placeholder="All Categories" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {categories.map((c) => (
+                <SelectItem key={c.id} value={c.id}>{c.name} ({c.project.name})</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <FilterSelect value={status} onChange={(v) => setStatus(v as '' | 'ACTIVE' | 'INACTIVE')} allLabel="All statuses" options={STATUS_OPTIONS} />
+        </TableToolbar>
       </div>
 
-      <DataTable columns={columns} data={data} pagination={pagination} onPageChange={(page) => fetchData(page, pagination.limit)} onPageSizeChange={(limit) => fetchData(1, limit)} isLoading={isLoading} />
+      <DataTable columns={columns} data={data} pagination={pagination} onPageChange={(page) => fetchData(page, pagination.limit)} onPageSizeChange={(limit) => fetchData(1, limit)} isLoading={isLoading} sort={sort} onSortChange={onSortChange} />
 
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
         <DialogContent>
@@ -249,7 +211,7 @@ export default function SubCategories() {
                 <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
                 <SelectContent>
                   {categories.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.name} ({c.userType.name}/{c.projectType.name})</SelectItem>
+                    <SelectItem key={c.id} value={c.id}>{c.name} ({c.project.name})</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -262,8 +224,8 @@ export default function SubCategories() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen} title="Delete Sub-Category" description={`Are you sure you want to delete "${selectedItem?.name}"?`} confirmText="Delete" onConfirm={handleDelete} variant="destructive" isLoading={isSubmitting} />
-      <ConfirmDialog open={isStatusOpen} onOpenChange={setIsStatusOpen} title={selectedItem?.status === 'ACTIVE' ? 'Deactivate Sub-Category' : 'Activate Sub-Category'} description={selectedItem?.status === 'ACTIVE' ? `Deactivate "${selectedItem?.name}"?` : `Activate "${selectedItem?.name}"?`} confirmText={selectedItem?.status === 'ACTIVE' ? 'Deactivate' : 'Activate'} onConfirm={handleStatusChange} variant={selectedItem?.status === 'ACTIVE' ? 'destructive' : 'default'} isLoading={isSubmitting} />
+      <ConfirmDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen} title="Delete Sub-Category" description={`Are you sure you want to delete "${selectedItem?.name}"?`} confirmText="Delete" onConfirm={remove} variant="destructive" isLoading={isSubmitting} />
+      <ConfirmDialog open={isStatusOpen} onOpenChange={setIsStatusOpen} title={selectedItem?.status === 'ACTIVE' ? 'Deactivate Sub-Category' : 'Activate Sub-Category'} description={selectedItem?.status === 'ACTIVE' ? `Deactivate "${selectedItem?.name}"?` : `Activate "${selectedItem?.name}"?`} confirmText={selectedItem?.status === 'ACTIVE' ? 'Deactivate' : 'Activate'} onConfirm={toggleStatus} variant={selectedItem?.status === 'ACTIVE' ? 'destructive' : 'default'} isLoading={isSubmitting} />
     </div>
   );
 }

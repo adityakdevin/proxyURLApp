@@ -11,8 +11,8 @@ Plain-English definitions and answers to common questions.
 | Term | What it means |
 |---|---|
 | **User Type** | A label for a kind of user (e.g. _Claims Officer_). Half of a user's "scope." |
-| **Project Type** | A label for a project, region, or year (e.g. _FY2025_). The other half of the scope. |
-| **Scope** | A **User Type + Project Type** pair. It decides what a user can see. Each user has exactly one. |
+| **Project** | A label for a project, region, or year (e.g. _FY2025_). The other half of the scope. |
+| **Scope** | A **User Type + Project** pair. It decides what a user can see. Each user has exactly one. |
 | **Assignment** | The link between a user and their scope. |
 | **Category** | A top-level grouping, built for one scope (e.g. _Vehicle Claims_). |
 | **Sub-Category** | A section inside a category (e.g. _Warranty Claims_). Claims and website links live here. |
@@ -59,7 +59,7 @@ You only see claims **assigned to you**. Ask your Team Lead to assign one, or â€
 you're a Team Lead/Admin â€” untick "Assigned to Me" on the dashboard.
 
 **Q: I can't see my menu / it's empty.**
-Your scope (User Type + Project Type) may be set to Inactive, or there are no links in
+Your scope (User Type + Project) may be set to Inactive, or there are no links in
 it yet. Ask an administrator to check your assignment.
 
 **Q: Why can't I change a claim's status?**

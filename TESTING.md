@@ -47,7 +47,7 @@ upload, sync, and delete.
 | Trigger a **folder scan job**   | ❌                    | ❌                    | ✅ only|
 | Soft-delete / restore claim     | ❌                    | ❌                    | ✅ only|
 
-**Scope:** every non-admin user has exactly one `(UserType, ProjectType)` assignment and
+**Scope:** every non-admin user has exactly one `(UserType, Project)` assignment and
 can only see/act on claims under that pair. Admin is unrestricted.
 
 ### Where things live (routes)
@@ -66,7 +66,7 @@ can only see/act on claims under that pair. Admin is unrestricted.
 
 2. **A fresh seed creates ZERO sample claims.** `seed.ts` only adds sample claim data
    *if an ACTIVE SubCategory already exists*. On a brand-new DB there is no
-   UserType / ProjectType / Category / SubCategory, so the seed prints
+   UserType / Project / Category / SubCategory, so the seed prints
    *"No active SubCategory found. Skipping..."*. You must **build the hierarchy in the
    admin UI first**, then **re-run the seed** (it is idempotent) to get the sample
    statuses, document types, scan rule, and claims.
@@ -112,8 +112,8 @@ Log in as admin, go to `http://localhost:5173/admin`.
 
 ### A. Build the hierarchy (required before any claim can exist)
 1. **User Types** → create one (e.g. `Insurance`).
-2. **Project Types** → create one (e.g. `Health`).
-3. **Categories** → create one scoped to that UserType + ProjectType.
+2. **Projects** → create one (e.g. `Health`).
+3. **Categories** → create one scoped to that UserType + Project.
 4. **Sub Categories** → create one under that Category. ← this unblocks the seed.
 
 ### B. Generate sample claim data
@@ -175,7 +175,7 @@ document types (`Aadhar Card`, `PAN Card`, `Bill`), a ClaimIdRule
 
 ### A. Create the Team Lead account (as admin)
 Admin → **Users** → New user → **role = TEAM_LEAD**, assign the **same UserType +
-ProjectType** from §4.A (a TL is confined to that pair). Save.
+Project** from §4.A (a TL is confined to that pair). Save.
 *(Optionally also create a plain USER on the same pair, to test the assignee path.)*
 
 ### B. Log in as the Team Lead
@@ -184,7 +184,7 @@ elsewhere would kill the admin session). The TL lands on `/claims` with **no** `
 access.
 
 ### C. Scope check
-The TL sees **only** claims under their UserType + ProjectType. Confirm claims outside
+The TL sees **only** claims under their UserType + Project. Confirm claims outside
 that scope are not visible.
 
 ### D. Create a claim (TL can; USER cannot)

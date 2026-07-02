@@ -15,8 +15,7 @@ interface Option {
 }
 
 export interface SubCategoryPickerValue {
-  userTypeId: string;
-  projectTypeId: string;
+  projectId: string;
   categoryId: string;
   subCategoryId: string;
 }
@@ -28,35 +27,31 @@ interface Props {
 }
 
 export function SubCategoryPicker({ value, onChange, disabled }: Props) {
-  const [userTypes, setUserTypes] = useState<Option[]>([]);
-  const [projectTypes, setProjectTypes] = useState<Option[]>([]);
+  const [projects, setProjects] = useState<Option[]>([]);
   const [categories, setCategories] = useState<Option[]>([]);
   const [subCategories, setSubCategories] = useState<Option[]>([]);
 
   useEffect(() => {
-    Promise.all([
-      api.get<{ data: Option[] }>('/admin/user-types?limit=100&status=ACTIVE'),
-      api.get<{ data: Option[] }>('/admin/project-types?limit=100&status=ACTIVE'),
-    ])
-      .then(([ut, pt]) => {
-        setUserTypes(ut.data);
-        setProjectTypes(pt.data);
+    api
+      .get<{ data: Option[] }>('/admin/projects?limit=100&status=ACTIVE')
+      .then((pt) => {
+        setProjects(pt.data);
       })
-      .catch((e) => console.error('SubCategoryPicker: load user/project types failed', e));
+      .catch((e) => console.error('SubCategoryPicker: load projects failed', e));
   }, []);
 
   useEffect(() => {
-    if (value.userTypeId && value.projectTypeId) {
+    if (value.projectId) {
       api
         .get<{ data: Option[] }>(
-          `/admin/categories?userTypeId=${value.userTypeId}&projectTypeId=${value.projectTypeId}&limit=100&status=ACTIVE`
+          `/admin/categories?projectId=${value.projectId}&limit=100&status=ACTIVE`
         )
         .then((r) => setCategories(r.data))
         .catch((e) => console.error('SubCategoryPicker: load categories failed', e));
     } else {
       setCategories([]);
     }
-  }, [value.userTypeId, value.projectTypeId]);
+  }, [value.projectId]);
 
   useEffect(() => {
     if (value.categoryId) {
@@ -72,15 +67,14 @@ export function SubCategoryPicker({ value, onChange, disabled }: Props) {
   }, [value.categoryId]);
 
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-3 gap-3">
       <div className="space-y-1">
-        <Label>User Type</Label>
+        <Label>Project</Label>
         <Select
-          value={value.userTypeId ?? ''}
+          value={value.projectId ?? ''}
           onValueChange={(v) =>
             onChange({
-              userTypeId: v,
-              projectTypeId: undefined,
+              projectId: v,
               categoryId: undefined,
               subCategoryId: undefined,
             })
@@ -88,36 +82,10 @@ export function SubCategoryPicker({ value, onChange, disabled }: Props) {
           disabled={disabled}
         >
           <SelectTrigger>
-            <SelectValue placeholder="Select user type" />
+            <SelectValue placeholder="Select project" />
           </SelectTrigger>
           <SelectContent>
-            {userTypes.map((u) => (
-              <SelectItem key={u.id} value={u.id}>
-                {u.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <Label>Project Type</Label>
-        <Select
-          value={value.projectTypeId ?? ''}
-          onValueChange={(v) =>
-            onChange({
-              ...value,
-              projectTypeId: v,
-              categoryId: undefined,
-              subCategoryId: undefined,
-            })
-          }
-          disabled={disabled || !value.userTypeId}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select project type" />
-          </SelectTrigger>
-          <SelectContent>
-            {projectTypes.map((p) => (
+            {projects.map((p) => (
               <SelectItem key={p.id} value={p.id}>
                 {p.name}
               </SelectItem>
@@ -132,7 +100,7 @@ export function SubCategoryPicker({ value, onChange, disabled }: Props) {
           onValueChange={(v) =>
             onChange({ ...value, categoryId: v, subCategoryId: undefined })
           }
-          disabled={disabled || !value.projectTypeId}
+          disabled={disabled || !value.projectId}
         >
           <SelectTrigger>
             <SelectValue placeholder="Select category" />

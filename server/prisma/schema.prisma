@@ -65,7 +65,7 @@ enum ScanJobStatus {
   FAILED
 }
 
-model UserType {
+model Project {
   id          String   @id @default(uuid()) @db.VarChar(36)
   name        String   @unique @db.VarChar(100)
   description String?  @db.VarChar(500)
@@ -80,25 +80,7 @@ model UserType {
   userAssignments   UserAssignment[]
   auditLogs         AuditLog[]
 
-  @@map("user_types")
-}
-
-model ProjectType {
-  id          String   @id @default(uuid()) @db.VarChar(36)
-  name        String   @unique @db.VarChar(100)
-  description String?  @db.VarChar(500)
-  status      Status   @default(ACTIVE)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  createdBy   String?  @map("created_by") @db.VarChar(36)
-  updatedBy   String?  @map("updated_by") @db.VarChar(36)
-
-  categories        Category[]
-  urlConfigurations UrlConfiguration[]
-  userAssignments   UserAssignment[]
-  auditLogs         AuditLog[]
-
-  @@map("project_types")
+  @@map("projects")
 }
 
 model User {
@@ -116,12 +98,13 @@ model User {
   createdBy           String?   @map("created_by") @db.VarChar(36)
   updatedBy           String?   @map("updated_by") @db.VarChar(36)
 
-  assignments     UserAssignment[]
-  sessions        Session[]
-  auditLogs       AuditLog[]
-  proxyMetrics    ProxyMetric[]
-  assignedClaims  Claim[]          @relation("ClaimAssignee")
-  authoredRemarks ClaimRemark[]    @relation("ClaimRemarkAuthor")
+  assignments      UserAssignment[]
+  subCategoryAccess UserSubCategory[]
+  sessions         Session[]
+  auditLogs        AuditLog[]
+  proxyMetrics     ProxyMetric[]
+  assignedClaims   Claim[]          @relation("ClaimAssignee")
+  authoredRemarks  ClaimRemark[]    @relation("ClaimRemarkAuthor")
 
   @@map("users")
 }
@@ -129,22 +112,35 @@ model User {
 model UserAssignment {
   id            String @id @default(uuid()) @db.VarChar(36)
   userId        String @map("user_id") @db.VarChar(36)
-  userTypeId    String @map("user_type_id") @db.VarChar(36)
-  projectTypeId String @map("project_type_id") @db.VarChar(36)
+  projectId String @map("project_id") @db.VarChar(36)
 
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userType    UserType    @relation(fields: [userTypeId], references: [id])
-  projectType ProjectType @relation(fields: [projectTypeId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
 
   @@unique([userId])
   @@map("user_assignments")
 }
 
+// Granular per-user access: the specific SubCategories a user may see within
+// their assigned Project. Drives proxy menu/URL access AND Claims scope.
+model UserSubCategory {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  userId        String   @map("user_id") @db.VarChar(36)
+  subCategoryId String   @map("sub_category_id") @db.VarChar(36)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, subCategoryId])
+  @@index([subCategoryId])
+  @@map("user_sub_categories")
+}
+
 model Category {
   id            String   @id @default(uuid()) @db.VarChar(36)
   name          String   @db.VarChar(100)
-  userTypeId    String   @map("user_type_id") @db.VarChar(36)
-  projectTypeId String   @map("project_type_id") @db.VarChar(36)
+  projectId String   @map("project_id") @db.VarChar(36)
   description   String?  @db.VarChar(500)
   status        Status   @default(ACTIVE)
   createdAt     DateTime @default(now()) @map("created_at")
@@ -152,12 +148,11 @@ model Category {
   createdBy     String?  @map("created_by") @db.VarChar(36)
   updatedBy     String?  @map("updated_by") @db.VarChar(36)
 
-  userType          UserType           @relation(fields: [userTypeId], references: [id])
-  projectType       ProjectType        @relation(fields: [projectTypeId], references: [id])
+  project       Project        @relation(fields: [projectId], references: [id])
   subCategories     SubCategory[]
   urlConfigurations UrlConfiguration[]
 
-  @@unique([name, userTypeId, projectTypeId])
+  @@unique([name, projectId])
   @@map("categories")
 }
 
@@ -180,6 +175,7 @@ model SubCategory {
   claims              Claim[]
   scanJobs            ScanJob[]
   claimRules          ClaimRule[]
+  userAccess          UserSubCategory[]
 
   @@unique([name, categoryId])
   @@map("sub_categories")
@@ -191,8 +187,7 @@ model UrlConfiguration {
   description   String?  @db.VarChar(500)
   targetUrl     String   @map("target_url") @db.VarChar(2000)
   opaqueId      String   @unique @default(uuid()) @map("opaque_id") @db.VarChar(36)
-  userTypeId    String   @map("user_type_id") @db.VarChar(36)
-  projectTypeId String   @map("project_type_id") @db.VarChar(36)
+  projectId String   @map("project_id") @db.VarChar(36)
   categoryId    String   @map("category_id") @db.VarChar(36)
   subCategoryId String   @map("sub_category_id") @db.VarChar(36)
   status        Status   @default(ACTIVE)
@@ -207,8 +202,7 @@ model UrlConfiguration {
   sessionTtl      Int        @default(30000) @map("session_ttl") // ms, default 30s idle
   auditLevel      AuditLevel @default(STANDARD) @map("audit_level")
 
-  userType     UserType      @relation(fields: [userTypeId], references: [id])
-  projectType  ProjectType   @relation(fields: [projectTypeId], references: [id])
+  project  Project   @relation(fields: [projectId], references: [id])
   category     Category      @relation(fields: [categoryId], references: [id])
   subCategory  SubCategory   @relation(fields: [subCategoryId], references: [id])
   auditLogs    AuditLog[]
@@ -237,8 +231,7 @@ model Session {
 model AuditLog {
   id             String   @id @default(uuid()) @db.VarChar(36)
   userId         String   @map("user_id") @db.VarChar(36)
-  userTypeId     String   @map("user_type_id") @db.VarChar(36)
-  projectTypeId  String   @map("project_type_id") @db.VarChar(36)
+  projectId  String   @map("project_id") @db.VarChar(36)
   urlConfigId    String   @map("url_config_id") @db.VarChar(36)
   targetUrl      String   @map("target_url") @db.VarChar(2000)
   requestMethod  String   @map("request_method") @db.VarChar(10)
@@ -249,14 +242,12 @@ model AuditLog {
   accessedAt     DateTime @default(now()) @map("accessed_at")
 
   user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userType    UserType         @relation(fields: [userTypeId], references: [id])
-  projectType ProjectType      @relation(fields: [projectTypeId], references: [id])
+  project Project      @relation(fields: [projectId], references: [id])
   urlConfig   UrlConfiguration @relation(fields: [urlConfigId], references: [id])
 
   @@index([userId])
   @@index([accessedAt])
-  @@index([userTypeId])
-  @@index([projectTypeId])
+  @@index([projectId])
   @@map("audit_logs")
 }
 
@@ -526,6 +517,7 @@ model Document {
 
   claim        Claim               @relation(fields: [claimId], references: [id], onDelete: Cascade)
   documentType DocumentTypeMaster? @relation(fields: [documentTypeId], references: [id])
+  findings     ValidationFinding[]
 
   @@unique([claimId, storagePath])
   @@index([claimId])
@@ -562,12 +554,45 @@ model ValidationResult {
   details      Json?
   createdAt    DateTime         @default(now()) @map("created_at")
 
-  run   ValidationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
-  claim Claim         @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  run      ValidationRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  claim    Claim              @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  findings ValidationFinding[]
 
   @@index([claimId])
   @@index([runId])
   @@map("validation_results")
+}
+
+enum FindingSeverity {
+  INFO
+  WARNING
+  ERROR
+}
+
+/// One row per evidence occurrence for a failed (or noteworthy) validation check,
+/// attributed to a specific Document when possible. page/bbox stay null until the
+/// coordinate-capture phases; the viewer uses them to draw highlight overlays.
+model ValidationFinding {
+  id           String          @id @default(uuid()) @db.VarChar(36)
+  resultId     String          @map("result_id") @db.VarChar(36)
+  claimId      String          @map("claim_id") @db.VarChar(36)
+  validatorKey String          @map("validator_key") @db.VarChar(20)
+  documentId   String?         @map("document_id") @db.VarChar(36)
+  code         String          @db.VarChar(40)
+  severity     FindingSeverity @default(WARNING)
+  message      String          @db.VarChar(500)
+  page         Int?
+  bbox         Json?
+  data         Json?
+  createdAt    DateTime        @default(now()) @map("created_at")
+
+  result   ValidationResult @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  document Document?        @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([resultId])
+  @@index([claimId])
+  @@index([documentId, page])
+  @@map("validation_findings")
 }
 
 model ClaimRule {

@@ -13,10 +13,8 @@ describe('ClaimService.exportRows', () => {
   let statusService: StatusMasterService;
   let adminId: string;
   const SUF = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-  let utA: string;
   let ptA: string;
   let scA: string;
-  let utB: string;
   let ptB: string;
   let scB: string;
 
@@ -26,18 +24,14 @@ describe('ClaimService.exportRows', () => {
     statusService = new StatusMasterService(prisma);
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
     adminId = admin!.id;
-    const [a, b, pa, pb] = await Promise.all([
-      prisma.userType.create({ data: { name: `ex-utA-${SUF}` } }),
-      prisma.userType.create({ data: { name: `ex-utB-${SUF}` } }),
-      prisma.projectType.create({ data: { name: `ex-ptA-${SUF}` } }),
-      prisma.projectType.create({ data: { name: `ex-ptB-${SUF}` } }),
+    const [pa, pb] = await Promise.all([
+      prisma.project.create({ data: { name: `ex-ptA-${SUF}` } }),
+      prisma.project.create({ data: { name: `ex-ptB-${SUF}` } }),
     ]);
-    utA = a.id;
-    utB = b.id;
     ptA = pa.id;
     ptB = pb.id;
-    const catA = await prisma.category.create({ data: { name: `ex-catA-${SUF}`, userTypeId: utA, projectTypeId: ptA } });
-    const catB = await prisma.category.create({ data: { name: `ex-catB-${SUF}`, userTypeId: utB, projectTypeId: ptB } });
+    const catA = await prisma.category.create({ data: { name: `ex-catA-${SUF}`, projectId: ptA } });
+    const catB = await prisma.category.create({ data: { name: `ex-catB-${SUF}`, projectId: ptB } });
     scA = (await prisma.subCategory.create({ data: { name: `ex-scA-${SUF}`, categoryId: catA.id } })).id;
     scB = (await prisma.subCategory.create({ data: { name: `ex-scB-${SUF}`, categoryId: catB.id } })).id;
   });
@@ -53,9 +47,8 @@ describe('ClaimService.exportRows', () => {
   afterAll(async () => {
     await truncateClaimsTables(prisma);
     await prisma.subCategory.deleteMany({ where: { id: { in: [scA, scB] } } });
-    await prisma.category.deleteMany({ where: { userTypeId: { in: [utA, utB] } } });
-    await prisma.userType.deleteMany({ where: { id: { in: [utA, utB] } } });
-    await prisma.projectType.deleteMany({ where: { id: { in: [ptA, ptB] } } });
+    await prisma.category.deleteMany({ where: { projectId: { in: [ptA, ptB] } } });
+    await prisma.project.deleteMany({ where: { id: { in: [ptA, ptB] } } });
     await disconnectTestPrisma();
   });
 
@@ -72,7 +65,7 @@ describe('ClaimService.exportRows', () => {
   });
 
   it('TEAM_LEAD scope returns only in-scope claims', async () => {
-    const rows = await service.exportRows({ scope: { userTypeId: utA, projectTypeId: ptA } });
+    const rows = await service.exportRows({ scope: { subCategoryIds: [scA] } });
     const ids = rows.map((r) => r.claimId);
     expect(ids).toContain('EX-A1');
     expect(ids).not.toContain('EX-B1');

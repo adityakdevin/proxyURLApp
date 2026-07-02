@@ -2,8 +2,7 @@ import { PrismaClient } from '@prisma/client';
 
 export interface AuditLogEntry {
   userId: string;
-  userTypeId: string;
-  projectTypeId: string;
+  projectId: string;
   urlConfigId: string;
   targetUrl: string;
   requestMethod: string;
@@ -23,8 +22,7 @@ export class AuditLogService {
       .create({
         data: {
           userId: entry.userId,
-          userTypeId: entry.userTypeId,
-          projectTypeId: entry.projectTypeId,
+          projectId: entry.projectId,
           urlConfigId: entry.urlConfigId,
           targetUrl: entry.targetUrl,
           requestMethod: entry.requestMethod,
@@ -122,16 +120,15 @@ export class AuditLogService {
   }
 
   // Get total accessible URL count for user
-  async getAccessibleUrlCount(userTypeId: string, projectTypeId: string): Promise<number> {
+  async getAccessibleUrlCount(subCategoryIds: string[]): Promise<number> {
+    if (subCategoryIds.length === 0) return 0;
     return this.prisma.urlConfiguration.count({
       where: {
-        userTypeId,
-        projectTypeId,
+        subCategoryId: { in: subCategoryIds },
         status: 'ACTIVE',
         category: { status: 'ACTIVE' },
         subCategory: { status: 'ACTIVE' },
-        userType: { status: 'ACTIVE' },
-        projectType: { status: 'ACTIVE' },
+        project: { status: 'ACTIVE' },
       },
     });
   }

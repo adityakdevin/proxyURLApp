@@ -57,7 +57,7 @@ ignore the rest.
 Think of the system as a set of nested boxes. Access flows from the top down:
 
 ```
-User Type  +  Project Type            ← your "scope" (what you're allowed to see)
+User Type  +  Project            ← your "scope" (what you're allowed to see)
         │
         ▼
      Category                          ← a top-level grouping (e.g. "Vehicle Claims")
@@ -70,7 +70,7 @@ User Type  +  Project Type            ← your "scope" (what you're allowed to s
         └──────────────► Website links ← the menu items you can open
 ```
 
-- Every user is given **one scope**: a **User Type** + **Project Type** pair.
+- Every user is given **one scope**: a **User Type** + **Project** pair.
 - A **Category** is created for a scope; a **Sub-Category** sits inside a Category.
 - **Claims** and **website links** live under Sub-Categories.
 - Because of this, you automatically see only the claims and links that belong to

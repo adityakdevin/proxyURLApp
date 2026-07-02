@@ -11,8 +11,7 @@ export interface UrlAccessResult {
     sessionTtl: number;
     auditLevel: AuditLevel;
   };
-  userTypeId?: string;
-  projectTypeId?: string;
+  projectId?: string;
   error?: string;
   errorCode?: string;
 }
@@ -24,17 +23,16 @@ export class ProxyService {
    * Validate user's access to a URL configuration by opaque ID
    * Checks:
    * 1. URL config exists and is active
-   * 2. User has assignment matching URL's user type and project type
+   * 2. User has assignment matching URL's project
    * 3. Category and SubCategory are active
-   * 4. User Type and Project Type are active
+   * 4. Project is active
    */
   async validateAccess(userId: string, opaqueId: string): Promise<UrlAccessResult> {
     // Get user's assignment
     const assignment = await this.prisma.userAssignment.findUnique({
       where: { userId },
       include: {
-        userType: { select: { id: true, status: true } },
-        projectType: { select: { id: true, status: true } },
+        project: { select: { id: true, status: true } },
       },
     });
 
@@ -46,21 +44,12 @@ export class ProxyService {
       };
     }
 
-    // Check if user type is active
-    if (assignment.userType.status !== 'ACTIVE') {
+    // Check if project is active
+    if (assignment.project.status !== 'ACTIVE') {
       return {
         authorized: false,
-        error: 'User type is inactive',
-        errorCode: 'INACTIVE_USER_TYPE',
-      };
-    }
-
-    // Check if project type is active
-    if (assignment.projectType.status !== 'ACTIVE') {
-      return {
-        authorized: false,
-        error: 'Project type is inactive',
-        errorCode: 'INACTIVE_PROJECT_TYPE',
+        error: 'Project is inactive',
+        errorCode: 'INACTIVE_PROJECT',
       };
     }
 
@@ -70,8 +59,7 @@ export class ProxyService {
       include: {
         category: { select: { id: true, status: true } },
         subCategory: { select: { id: true, status: true } },
-        userType: { select: { id: true, status: true } },
-        projectType: { select: { id: true, status: true } },
+        project: { select: { id: true, status: true } },
       },
     });
 
@@ -110,8 +98,8 @@ export class ProxyService {
       };
     }
 
-    // Check if URL's user type and project type match user's assignment
-    if (urlConfig.userTypeId !== assignment.userTypeId) {
+    // Check if URL's project matches user's assignment
+    if (urlConfig.projectId !== assignment.projectId) {
       return {
         authorized: false,
         error: 'Access denied',
@@ -119,7 +107,14 @@ export class ProxyService {
       };
     }
 
-    if (urlConfig.projectTypeId !== assignment.projectTypeId) {
+    // Access is restricted to the specific sub-categories granted to the user.
+    const access = await this.prisma.userSubCategory.findUnique({
+      where: {
+        userId_subCategoryId: { userId, subCategoryId: urlConfig.subCategoryId },
+      },
+      select: { id: true },
+    });
+    if (!access) {
       return {
         authorized: false,
         error: 'Access denied',
@@ -138,8 +133,7 @@ export class ProxyService {
         sessionTtl: urlConfig.sessionTtl,
         auditLevel: urlConfig.auditLevel,
       },
-      userTypeId: assignment.userTypeId,
-      projectTypeId: assignment.projectTypeId,
+      projectId: assignment.projectId,
     };
   }
 }

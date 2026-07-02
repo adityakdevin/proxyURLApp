@@ -45,8 +45,7 @@ interface Category {
 
 interface MenuData {
   menu: Category[];
-  userType: { id: string; name: string } | null;
-  projectType: { id: string; name: string } | null;
+  project: { id: string; name: string } | null;
   message?: string;
 }
 
@@ -167,9 +166,9 @@ export default function UserLayout() {
           <div className="flex items-center justify-between px-6 py-3">
             <div className="flex items-center gap-4">
               <h1 className="text-xl font-bold">Proxy URL App</h1>
-              {menuData?.userType && menuData?.projectType && (
+              {menuData?.project && (
                 <span className="text-sm text-gray-500">
-                  {menuData.userType.name} / {menuData.projectType.name}
+                  {menuData.project.name}
                 </span>
               )}
             </div>

@@ -474,7 +474,7 @@ export const teamLeadOrAdminMiddleware = (
 };
 
 export interface ScopedRequest extends Request {
-  scope?: { userTypeId: string; projectTypeId: string } | 'ALL';
+  scope?: { userTypeId: string; projectId: string } | 'ALL';
 }
 
 export const scopedMiddleware = async (
@@ -496,7 +496,7 @@ export const scopedMiddleware = async (
   if (!assignment) {
     return res.status(403).json({ error: 'No assignment found', code: 'NO_ASSIGNMENT' });
   }
-  req.scope = { userTypeId: assignment.userTypeId, projectTypeId: assignment.projectTypeId };
+  req.scope = { userTypeId: assignment.userTypeId, projectId: assignment.projectId };
   next();
 };
 ```
@@ -618,11 +618,11 @@ In the dialog form, replace the existing "Admin User" checkbox with a Select. Ad
 </div>
 ```
 
-Also update the conditional that hides UserType/ProjectType pickers. Previously it was `{!formData.isAdmin && (...)}`. Change to:
+Also update the conditional that hides UserType/Project pickers. Previously it was `{!formData.isAdmin && (...)}`. Change to:
 
 ```tsx
 {formData.role !== 'ADMIN' && (
-  /* the existing UserType + ProjectType picker block */
+  /* the existing UserType + Project picker block */
 )}
 ```
 
@@ -705,7 +705,7 @@ git commit -m "refactor(client): ProtectedRoute role-based + role wiring"
 **Files:**
 - Create: `server/src/services/__tests__/statusMasterService.test.ts`
 
-These tests use a real test DB. Ensure a `DATABASE_URL` is set to a throwaway DB (or the dev DB if you're OK with data being wiped before each test). The helper truncates the new tables only — existing UserType / ProjectType / Category / SubCategory rows are left alone so tests can attach to them.
+These tests use a real test DB. Ensure a `DATABASE_URL` is set to a throwaway DB (or the dev DB if you're OK with data being wiped before each test). The helper truncates the new tables only — existing UserType / Project / Category / SubCategory rows are left alone so tests can attach to them.
 
 - [ ] **Step 1: Write the test file**
 
@@ -1891,7 +1891,7 @@ export interface ListClaimsFilters {
   assignedToUserId?: string;
   assignedToMe?: boolean;
   search?: string;
-  scope?: { userTypeId: string; projectTypeId: string } | 'ALL';
+  scope?: { userTypeId: string; projectId: string } | 'ALL';
   callerId?: string;
   page?: number;
   limit?: number;
@@ -1998,7 +1998,7 @@ export class ClaimService {
       const assignment = await this.prisma.userAssignment.findUnique({ where: { userId: callerId } });
       if (!assignment) return false;
       return claim.subCategory.category.userTypeId === assignment.userTypeId
-          && claim.subCategory.category.projectTypeId === assignment.projectTypeId;
+          && claim.subCategory.category.projectId === assignment.projectId;
     }
     return claim.assignedToUserId === callerId;
   }
@@ -2026,7 +2026,7 @@ export class ClaimService {
       const assignment = await this.prisma.userAssignment.findUnique({ where: { userId: callerId } });
       if (!assignment) return null;
       if (claim.subCategory.category.userTypeId !== assignment.userTypeId
-          || claim.subCategory.category.projectTypeId !== assignment.projectTypeId) {
+          || claim.subCategory.category.projectId !== assignment.projectId) {
         return null;
       }
     }
@@ -2043,7 +2043,7 @@ export class ClaimService {
     if (filters.assignedToMe && filters.callerId) where.assignedToUserId = filters.callerId;
     if (filters.search) where.claimId = { contains: filters.search };
     if (filters.scope && filters.scope !== 'ALL') {
-      where.subCategory = { category: { userTypeId: filters.scope.userTypeId, projectTypeId: filters.scope.projectTypeId } };
+      where.subCategory = { category: { userTypeId: filters.scope.userTypeId, projectId: filters.scope.projectId } };
     }
     const [data, total] = await Promise.all([
       this.prisma.claim.findMany({
@@ -2351,7 +2351,7 @@ router.get('/sub-categories', async (req, res, next) => {
     if (role === 'ADMIN') {
       const all = await prisma.subCategory.findMany({
         where: { status: 'ACTIVE' },
-        include: { category: { select: { id: true, name: true, userTypeId: true, projectTypeId: true } } },
+        include: { category: { select: { id: true, name: true, userTypeId: true, projectId: true } } },
         orderBy: { name: 'asc' },
       });
       return res.json({ data: all });
@@ -2363,7 +2363,7 @@ router.get('/sub-categories', async (req, res, next) => {
     const list = await prisma.subCategory.findMany({
       where: {
         status: 'ACTIVE',
-        category: { userTypeId: assignment.userTypeId, projectTypeId: assignment.projectTypeId, status: 'ACTIVE' },
+        category: { userTypeId: assignment.userTypeId, projectId: assignment.projectId, status: 'ACTIVE' },
       },
       include: { category: { select: { id: true, name: true } } },
       orderBy: { name: 'asc' },
@@ -2414,7 +2414,7 @@ router.get('/users-in-scope', async (req, res, next) => {
       where: {
         status: 'ACTIVE',
         role: { not: 'ADMIN' },
-        assignments: { some: { userTypeId: assignment.userTypeId, projectTypeId: assignment.projectTypeId } },
+        assignments: { some: { userTypeId: assignment.userTypeId, projectId: assignment.projectId } },
       },
       select: { id: true, fullName: true, username: true },
       orderBy: { fullName: 'asc' },
@@ -2454,11 +2454,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface Option { id: string; name: string; }
-interface SubCategoryOption extends Option { category: { id: string; userTypeId: string; projectTypeId: string; name: string } }
+interface SubCategoryOption extends Option { category: { id: string; userTypeId: string; projectId: string; name: string } }
 
 export interface SubCategoryPickerValue {
   userTypeId: string;
-  projectTypeId: string;
+  projectId: string;
   categoryId: string;
   subCategoryId: string;
 }
@@ -2471,27 +2471,27 @@ interface Props {
 
 export function SubCategoryPicker({ value, onChange, disabled }: Props) {
   const [userTypes, setUserTypes] = useState<Option[]>([]);
-  const [projectTypes, setProjectTypes] = useState<Option[]>([]);
+  const [projects, setProjects] = useState<Option[]>([]);
   const [categories, setCategories] = useState<Option[]>([]);
   const [subCategories, setSubCategories] = useState<SubCategoryOption[]>([]);
 
   useEffect(() => {
     Promise.all([
       api.get<{ data: Option[] }>('/admin/user-types?limit=100&status=ACTIVE'),
-      api.get<{ data: Option[] }>('/admin/project-types?limit=100&status=ACTIVE'),
+      api.get<{ data: Option[] }>('/admin/projects?limit=100&status=ACTIVE'),
     ]).then(([ut, pt]) => {
-      setUserTypes(ut.data); setProjectTypes(pt.data);
+      setUserTypes(ut.data); setProjects(pt.data);
     });
   }, []);
 
   useEffect(() => {
-    if (value.userTypeId && value.projectTypeId) {
-      api.get<{ data: Option[] }>(`/admin/categories?userTypeId=${value.userTypeId}&projectTypeId=${value.projectTypeId}&limit=200&status=ACTIVE`)
+    if (value.userTypeId && value.projectId) {
+      api.get<{ data: Option[] }>(`/admin/categories?userTypeId=${value.userTypeId}&projectId=${value.projectId}&limit=200&status=ACTIVE`)
         .then((r) => setCategories(r.data));
     } else {
       setCategories([]);
     }
-  }, [value.userTypeId, value.projectTypeId]);
+  }, [value.userTypeId, value.projectId]);
 
   useEffect(() => {
     if (value.categoryId) {
@@ -2506,21 +2506,21 @@ export function SubCategoryPicker({ value, onChange, disabled }: Props) {
     <div className="grid grid-cols-2 gap-3">
       <div className="space-y-1">
         <Label>User Type</Label>
-        <Select value={value.userTypeId ?? ''} onValueChange={(v) => onChange({ userTypeId: v, projectTypeId: undefined, categoryId: undefined, subCategoryId: undefined })} disabled={disabled}>
+        <Select value={value.userTypeId ?? ''} onValueChange={(v) => onChange({ userTypeId: v, projectId: undefined, categoryId: undefined, subCategoryId: undefined })} disabled={disabled}>
           <SelectTrigger><SelectValue placeholder="Select user type" /></SelectTrigger>
           <SelectContent>{userTypes.map((u) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
       <div className="space-y-1">
-        <Label>Project Type</Label>
-        <Select value={value.projectTypeId ?? ''} onValueChange={(v) => onChange({ ...value, projectTypeId: v, categoryId: undefined, subCategoryId: undefined })} disabled={disabled || !value.userTypeId}>
-          <SelectTrigger><SelectValue placeholder="Select project type" /></SelectTrigger>
-          <SelectContent>{projectTypes.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+        <Label>Project</Label>
+        <Select value={value.projectId ?? ''} onValueChange={(v) => onChange({ ...value, projectId: v, categoryId: undefined, subCategoryId: undefined })} disabled={disabled || !value.userTypeId}>
+          <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+          <SelectContent>{projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
       <div className="space-y-1">
         <Label>Category</Label>
-        <Select value={value.categoryId ?? ''} onValueChange={(v) => onChange({ ...value, categoryId: v, subCategoryId: undefined })} disabled={disabled || !value.projectTypeId}>
+        <Select value={value.categoryId ?? ''} onValueChange={(v) => onChange({ ...value, categoryId: v, subCategoryId: undefined })} disabled={disabled || !value.projectId}>
           <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
           <SelectContent>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
         </Select>
@@ -3492,7 +3492,7 @@ interface ClaimDetail {
   id: string;
   claimId: string;
   workflowStatus: Status;
-  subCategory: { id: string; name: string; category: { id: string; name: string; userTypeId: string; projectTypeId: string } };
+  subCategory: { id: string; name: string; category: { id: string; name: string; userTypeId: string; projectId: string } };
   assignedTo: Assignee | null;
   folderPath: string | null;
   spellCheckStatus: string; qrStatus: string; metaExtractionStatus: string; intraClaimStatus: string; fullScanStatus: string;
@@ -3738,7 +3738,7 @@ In browser:
 
 In the admin Users page, change one non-admin user's role to `TEAM_LEAD`. Log in as that user (use impersonate or a fresh login):
 1. Sidebar shows the new Claims section.
-2. Claim Dashboard lists claims in their (UserType, ProjectType) pair only.
+2. Claim Dashboard lists claims in their (UserType, Project) pair only.
 3. "Add Claim" button is visible. Create a new claim.
 4. Update status + add remark — works.
 5. Reassign claim to another user in scope — works.

@@ -1,4 +1,4 @@
-import { Validator } from './types.js';
+import { Validator, FindingInput } from './types.js';
 import { completenessOutcome } from './logic.js';
 
 export const fullValidator: Validator = {
@@ -14,9 +14,22 @@ export const fullValidator: Validator = {
       ctx.documents.map((d) => d.documentTypeId).filter((x): x is string => !!x)
     );
     const presentNames = types.filter((t) => presentIds.has(t.id)).map((t) => t.name);
-    return completenessOutcome(
+    const outcome = completenessOutcome(
       presentNames,
       types.map((t) => t.name)
     );
+    // Completeness is claim-level (a missing type isn't tied to any one file).
+    if (outcome.status === 'FAILED') {
+      const missing = (outcome.details as { missing: string[] } | undefined)?.missing ?? [];
+      outcome.findings = missing.map(
+        (name): FindingInput => ({
+          documentId: null,
+          code: 'FULL_MISSING_TYPE',
+          message: `Required document type missing: ${name}.`,
+          data: { documentType: name },
+        })
+      );
+    }
+    return outcome;
   },
 };

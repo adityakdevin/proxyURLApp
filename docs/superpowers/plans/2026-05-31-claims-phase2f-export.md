@@ -54,12 +54,12 @@ describe('ClaimService.exportRows', () => {
     const [a, b, pa, pb] = await Promise.all([
       prisma.userType.create({ data: { name: `ex-utA-${SUF}` } }),
       prisma.userType.create({ data: { name: `ex-utB-${SUF}` } }),
-      prisma.projectType.create({ data: { name: `ex-ptA-${SUF}` } }),
-      prisma.projectType.create({ data: { name: `ex-ptB-${SUF}` } }),
+      prisma.project.create({ data: { name: `ex-ptA-${SUF}` } }),
+      prisma.project.create({ data: { name: `ex-ptB-${SUF}` } }),
     ]);
     utA = a.id; utB = b.id; ptA = pa.id; ptB = pb.id;
-    const catA = await prisma.category.create({ data: { name: `ex-catA-${SUF}`, userTypeId: utA, projectTypeId: ptA } });
-    const catB = await prisma.category.create({ data: { name: `ex-catB-${SUF}`, userTypeId: utB, projectTypeId: ptB } });
+    const catA = await prisma.category.create({ data: { name: `ex-catA-${SUF}`, userTypeId: utA, projectId: ptA } });
+    const catB = await prisma.category.create({ data: { name: `ex-catB-${SUF}`, userTypeId: utB, projectId: ptB } });
     scA = (await prisma.subCategory.create({ data: { name: `ex-scA-${SUF}`, categoryId: catA.id } })).id;
     scB = (await prisma.subCategory.create({ data: { name: `ex-scB-${SUF}`, categoryId: catB.id } })).id;
   });
@@ -77,7 +77,7 @@ describe('ClaimService.exportRows', () => {
     await prisma.subCategory.deleteMany({ where: { id: { in: [scA, scB] } } });
     await prisma.category.deleteMany({ where: { userTypeId: { in: [utA, utB] } } });
     await prisma.userType.deleteMany({ where: { id: { in: [utA, utB] } } });
-    await prisma.projectType.deleteMany({ where: { id: { in: [ptA, ptB] } } });
+    await prisma.project.deleteMany({ where: { id: { in: [ptA, ptB] } } });
     await disconnectTestPrisma();
   });
 
@@ -94,7 +94,7 @@ describe('ClaimService.exportRows', () => {
   });
 
   it('TEAM_LEAD scope returns only in-scope claims', async () => {
-    const rows = await service.exportRows({ scope: { userTypeId: utA, projectTypeId: ptA } });
+    const rows = await service.exportRows({ scope: { userTypeId: utA, projectId: ptA } });
     const ids = rows.map((r) => r.claimId);
     expect(ids).toContain('EX-A1');
     expect(ids).not.toContain('EX-B1');
@@ -146,7 +146,7 @@ In the `list` method, replace its inline `where` construction:
       where.subCategory = {
         category: {
           userTypeId: filters.scope.userTypeId,
-          projectTypeId: filters.scope.projectTypeId,
+          projectId: filters.scope.projectId,
         },
       };
     }
@@ -172,7 +172,7 @@ Add the `buildWhere` private method and `exportRows` (place after `list`):
       where.subCategory = {
         category: {
           userTypeId: filters.scope.userTypeId,
-          projectTypeId: filters.scope.projectTypeId,
+          projectId: filters.scope.projectId,
         },
       };
     }

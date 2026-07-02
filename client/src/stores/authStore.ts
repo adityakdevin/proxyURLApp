@@ -9,8 +9,7 @@ export interface User {
   fullName: string;
   role: Role;
   forcePasswordChange: boolean;
-  userTypeId?: string;
-  projectTypeId?: string;
+  projectId?: string;
   impersonatedBy?: string;
 }
 

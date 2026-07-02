@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { ValidationStatus } from '@prisma/client';
 import multer from 'multer';
 import { body, param, query } from 'express-validator';
 import { ClaimService, ClaimServiceError } from '../../services/claimService.js';
@@ -8,6 +9,9 @@ import {
 } from '../../services/observationImportService.js';
 import { buildObservationWorkbook } from '../../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
+
+/** The five validation-check result values a claim can be filtered by. */
+const CHECK_STATUSES = ['PENDING', 'IN_PROGRESS', 'PASSED', 'FAILED', 'DOCS_NOT_AVAILABLE'];
 
 const router = Router();
 const getService = (req: Request) => new ClaimService(prismaOf(req));
@@ -57,18 +61,31 @@ router.get(
     query('assignedToUserId').optional().isUUID(),
     query('search').optional().isString(),
     query('status').optional().isIn(['ACTIVE', 'INACTIVE']),
+    query(['spellCheckStatus', 'qrStatus', 'metaExtractionStatus', 'intraClaimStatus', 'fullScanStatus'])
+      .optional()
+      .isIn(CHECK_STATUSES),
+    query('sortBy').optional().isString(),
+    query('sortOrder').optional().isIn(['asc', 'desc']),
     query('page').optional().isInt({ min: 1 }).toInt(),
     query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const q = req.query as Record<string, string | undefined>;
       const r = await getService(req).list({
-        subCategoryId: req.query.subCategoryId as string | undefined,
-        workflowStatusId: req.query.workflowStatusId as string | undefined,
-        assignedToUserId: req.query.assignedToUserId as string | undefined,
-        search: req.query.search as string | undefined,
-        status: req.query.status as 'ACTIVE' | 'INACTIVE' | undefined,
+        subCategoryId: q.subCategoryId,
+        workflowStatusId: q.workflowStatusId,
+        assignedToUserId: q.assignedToUserId,
+        search: q.search,
+        status: q.status as 'ACTIVE' | 'INACTIVE' | undefined,
+        spellCheckStatus: q.spellCheckStatus as ValidationStatus | undefined,
+        qrStatus: q.qrStatus as ValidationStatus | undefined,
+        metaExtractionStatus: q.metaExtractionStatus as ValidationStatus | undefined,
+        intraClaimStatus: q.intraClaimStatus as ValidationStatus | undefined,
+        fullScanStatus: q.fullScanStatus as ValidationStatus | undefined,
+        sortBy: q.sortBy,
+        sortOrder: q.sortOrder as 'asc' | 'desc' | undefined,
         scope: 'ALL',
         callerId: req.session!.userId,
         page: req.query.page as unknown as number | undefined,

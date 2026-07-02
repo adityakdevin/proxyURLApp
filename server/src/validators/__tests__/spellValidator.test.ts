@@ -6,12 +6,9 @@ function ctx(text: string): ValidatorContext {
     claim: { id: 'c', claimId: 'C1', subCategoryId: 's' },
     documents: [],
     prisma: {} as never,
-    fsPort: {
-      stat: async () => ({ exists: false, isDirectory: false, isFile: false, sizeBytes: 0 }),
-      listFiles: async () => [],
-    },
     ocr: { extractImageText: async () => '' },
     shared: new Map(text ? [['d1', text]] : []),
+    wordBoxes: new Map(),
   };
 }
 

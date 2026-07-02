@@ -4,7 +4,7 @@ A full-stack web application that provides controlled access to external and int
 
 ## Features
 
-- **Role-Based Access Control** — Users are assigned UserType + ProjectType pairs that determine URL access
+- **Role-Based Access Control** — Users are assigned UserType + Project pairs that determine URL access
 - **Hierarchical Menu System** — Category → SubCategory → URL structure for organized navigation
 - **URL Masking** — Target URLs are hidden behind UUID-based opaque identifiers
 - **Session Management** — Server-side sessions with automatic timeout and single-session enforcement
@@ -121,7 +121,7 @@ proxyURLApp/
 - Impersonate end users for troubleshooting
 
 ### End User
-- Access URLs based on assigned UserType + ProjectType
+- Access URLs based on assigned UserType + Project
 - View personalized dashboard with recent activity
 - Navigate hierarchical menu of available URLs
 

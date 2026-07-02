@@ -2,7 +2,6 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { Button } from '@/components/ui/button';
 import {
-  Users,
   FolderTree,
   Folder,
   Link2,
@@ -19,8 +18,7 @@ import {
 
 const navItems = [
   { path: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-  { path: '/admin/user-types', label: 'User Types', icon: Users },
-  { path: '/admin/project-types', label: 'Project Types', icon: Briefcase },
+  { path: '/admin/projects', label: 'Projects', icon: Briefcase },
   { path: '/admin/users', label: 'Users', icon: User },
   { path: '/admin/categories', label: 'Categories', icon: FolderTree },
   { path: '/admin/sub-categories', label: 'Sub-Categories', icon: Folder },

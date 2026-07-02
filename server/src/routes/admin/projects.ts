@@ -1,23 +1,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { body, param, query, validationResult } from 'express-validator';
+import { body, param, query } from 'express-validator';
+import { validate, prismaOf, parsePagination, paginated } from '../../lib/routeHelpers.js';
 
 const router = Router();
 
-// Validation middleware helper
-const validate = (req: Request, res: Response, next: NextFunction) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: errors.array()[0]?.msg || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-      details: errors.array(),
-    });
-  }
-  next();
-};
-
-// GET /api/admin/user-types
+// GET /api/admin/projects
 router.get(
   '/',
   [
@@ -31,55 +19,37 @@ router.get(
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const prisma = req.app.get('prisma') as PrismaClient;
-      const {
-        status,
-        search,
-        page = '1',
-        limit = '10',
-        sortBy = 'name',
-        sortOrder = 'asc',
-      } = req.query;
-
-      const pageNum = parseInt(page as string, 10);
-      const limitNum = parseInt(limit as string, 10);
-      const skip = (pageNum - 1) * limitNum;
+      const prisma = prismaOf(req);
+      const { status, search, sortBy = 'name', sortOrder = 'asc' } = req.query;
+      const { page, limit, skip, take } = parsePagination(req.query);
 
       const where: Record<string, unknown> = {};
       if (status) where.status = status;
       if (search) {
         where.OR = [
-          { name: { contains: search as string, mode: 'insensitive' } },
-          { description: { contains: search as string, mode: 'insensitive' } },
+          { name: { contains: search as string } },
+          { description: { contains: search as string } },
         ];
       }
 
-      const [userTypes, total] = await Promise.all([
-        prisma.userType.findMany({
+      const [projects, total] = await Promise.all([
+        prisma.project.findMany({
           where,
           skip,
-          take: limitNum,
+          take,
           orderBy: { [sortBy as string]: sortOrder },
         }),
-        prisma.userType.count({ where }),
+        prisma.project.count({ where }),
       ]);
 
-      res.json({
-        data: userTypes,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          totalPages: Math.ceil(total / limitNum),
-        },
-      });
+      res.json(paginated(projects, total, page, limit));
     } catch (error) {
       next(error);
     }
   }
 );
 
-// POST /api/admin/user-types
+// POST /api/admin/projects
 router.post(
   '/',
   [
@@ -93,16 +63,15 @@ router.post(
       const prisma = req.app.get('prisma') as PrismaClient;
       const { name, description, status = 'ACTIVE' } = req.body;
 
-      // Check for duplicate name
-      const existing = await prisma.userType.findUnique({ where: { name } });
+      const existing = await prisma.project.findUnique({ where: { name } });
       if (existing) {
         return res.status(409).json({
-          error: 'A User Type with this name already exists',
+          error: 'A Project with this name already exists',
           code: 'DUPLICATE_NAME',
         });
       }
 
-      const userType = await prisma.userType.create({
+      const project = await prisma.project.create({
         data: {
           name,
           description,
@@ -112,14 +81,14 @@ router.post(
         },
       });
 
-      res.status(201).json(userType);
+      res.status(201).json(project);
     } catch (error) {
       next(error);
     }
   }
 );
 
-// GET /api/admin/user-types/:id
+// GET /api/admin/projects/:id
 router.get(
   '/:id',
   [param('id').isUUID()],
@@ -129,7 +98,7 @@ router.get(
       const prisma = req.app.get('prisma') as PrismaClient;
       const { id } = req.params;
 
-      const userType = await prisma.userType.findUnique({
+      const project = await prisma.project.findUnique({
         where: { id },
         include: {
           _count: {
@@ -141,21 +110,21 @@ router.get(
         },
       });
 
-      if (!userType) {
+      if (!project) {
         return res.status(404).json({
-          error: 'User Type not found',
+          error: 'Project not found',
           code: 'NOT_FOUND',
         });
       }
 
-      res.json(userType);
+      res.json(project);
     } catch (error) {
       next(error);
     }
   }
 );
 
-// PUT /api/admin/user-types/:id
+// PUT /api/admin/projects/:id
 router.put(
   '/:id',
   [
@@ -171,33 +140,32 @@ router.put(
       const { id } = req.params;
       const { name, description, status } = req.body;
 
-      const existing = await prisma.userType.findUnique({ where: { id } });
+      const existing = await prisma.project.findUnique({ where: { id } });
       if (!existing) {
         return res.status(404).json({
-          error: 'User Type not found',
+          error: 'Project not found',
           code: 'NOT_FOUND',
         });
       }
 
-      // Check for duplicate name if name is being changed
       if (name && name !== existing.name) {
-        const duplicate = await prisma.userType.findUnique({ where: { name } });
+        const duplicate = await prisma.project.findUnique({ where: { name } });
         if (duplicate) {
           return res.status(409).json({
-            error: 'A User Type with this name already exists',
+            error: 'A Project with this name already exists',
             code: 'DUPLICATE_NAME',
           });
         }
       }
 
-      // If deactivating, terminate all sessions for users with this User Type
+      // If deactivating, terminate all sessions for users with this Project
       if (status === 'INACTIVE' && existing.status === 'ACTIVE') {
         const { SessionService } = await import('../../services/sessionService.js');
         const sessionService = new SessionService(prisma);
-        await sessionService.deleteSessionsByUserType(id);
+        await sessionService.deleteSessionsByProject(id);
       }
 
-      const userType = await prisma.userType.update({
+      const project = await prisma.project.update({
         where: { id },
         data: {
           ...(name && { name }),
@@ -207,14 +175,14 @@ router.put(
         },
       });
 
-      res.json(userType);
+      res.json(project);
     } catch (error) {
       next(error);
     }
   }
 );
 
-// DELETE /api/admin/user-types/:id
+// DELETE /api/admin/projects/:id
 router.delete(
   '/:id',
   [param('id').isUUID()],
@@ -224,12 +192,13 @@ router.delete(
       const prisma = req.app.get('prisma') as PrismaClient;
       const { id } = req.params;
 
-      const existing = await prisma.userType.findUnique({
+      const existing = await prisma.project.findUnique({
         where: { id },
         include: {
           _count: {
             select: {
               userAssignments: true,
+              categories: true,
             },
           },
         },
@@ -237,22 +206,21 @@ router.delete(
 
       if (!existing) {
         return res.status(404).json({
-          error: 'User Type not found',
+          error: 'Project not found',
           code: 'NOT_FOUND',
         });
       }
 
-      // Check for dependencies
-      if (existing._count.userAssignments > 0) {
+      if (existing._count.userAssignments > 0 || existing._count.categories > 0) {
         return res.status(409).json({
-          error: 'Cannot delete User Type with assigned users',
+          error: 'Cannot delete Project with assigned users or categories',
           code: 'HAS_DEPENDENCIES',
         });
       }
 
-      await prisma.userType.delete({ where: { id } });
+      await prisma.project.delete({ where: { id } });
 
-      res.json({ message: 'User Type deleted successfully' });
+      res.json({ message: 'Project deleted successfully' });
     } catch (error) {
       next(error);
     }

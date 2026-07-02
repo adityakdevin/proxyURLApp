@@ -11,6 +11,8 @@ import {
 } from '@/lib/validationStatus';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { DocumentViewer } from '@/components/claims/DocumentViewer';
+import { Finding } from '@/lib/claimTypes';
 import {
   Select,
   SelectContent,
@@ -46,7 +48,7 @@ interface ClaimDetail {
   subCategory: {
     id: string;
     name: string;
-    category: { id: string; name: string; userTypeId: string; projectTypeId: string };
+    category: { id: string; name: string; projectId: string };
   };
   assignedTo: Assignee | null;
   folderPath: string | null;
@@ -79,6 +81,7 @@ interface ValResult {
   validatorKey: 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL';
   status: ValidationStatus;
   summary: string | null;
+  findings?: Finding[];
 }
 interface ValRun {
   id: string;
@@ -270,6 +273,11 @@ export default function ClaimUpdate() {
 
   const [valRun, setValRun] = useState<ValRun | null>(null);
   const [valResults, setValResults] = useState<ValResult[]>([]);
+  const [viewer, setViewer] = useState<{
+    documentId: string;
+    fileName: string;
+    findings: Finding[];
+  } | null>(null);
   const [isValidating, setIsValidating] = useState(false);
 
   const fetchValidation = async () => {
@@ -317,6 +325,23 @@ export default function ClaimUpdate() {
   };
 
   const resultFor = (key: ValResult['validatorKey']) => valResults.find((r) => r.validatorKey === key);
+
+  // Group findings per validator → per document once (null docId = claim-level), plus a
+  // docId→fileName lookup, instead of rebuilding them on every render inside the map.
+  const nameByDocId = useMemo(() => new Map(docs.map((d) => [d.id, d.fileName])), [docs]);
+  const findingsByValidator = useMemo(() => {
+    const byKey = new Map<string, Map<string | null, Finding[]>>();
+    for (const res of valResults) {
+      const groups = new Map<string | null, Finding[]>();
+      for (const f of res.findings ?? []) {
+        const list = groups.get(f.documentId);
+        if (list) list.push(f);
+        else groups.set(f.documentId, [f]);
+      }
+      byKey.set(res.validatorKey, groups);
+    }
+    return byKey;
+  }, [valResults]);
 
   const [rules, setRules] = useState<RuleEval[]>([]);
   const [rulesPassed, setRulesPassed] = useState({ passed: 0, total: 0 });
@@ -421,13 +446,45 @@ export default function ClaimUpdate() {
           )}
         </div>
         {valResults.length > 0 && (
-          <div className="mt-3 space-y-1 text-sm text-gray-600">
+          <div className="mt-3 space-y-2 text-sm text-gray-600">
             {VALIDATORS.map((v) => {
               const res = resultFor(v.key);
               if (!res) return null;
+              const findings = res.findings ?? [];
+              const groups = findingsByValidator.get(v.key) ?? new Map<string | null, Finding[]>();
               return (
                 <div key={v.key}>
-                  <span className="font-medium">{v.label}:</span> {res.summary}
+                  <div>
+                    <span className="font-medium">{v.label}:</span> {res.summary}
+                  </div>
+                  {findings.length > 0 && (
+                    <ul className="ml-4 mt-1 space-y-0.5 text-xs text-gray-500">
+                      {[...groups.entries()].map(([docId, fs]) => {
+                        const name = docId ? nameByDocId.get(docId) ?? 'Document' : 'Claim-level';
+                        const shown = fs.slice(0, 5).map((f) => f.message).join('; ');
+                        const more = fs.length > 5 ? ` …(+${fs.length - 5} more)` : '';
+                        return (
+                          <li key={docId ?? 'claim'}>
+                            {docId ? (
+                              <button
+                                type="button"
+                                className="text-blue-600 hover:underline"
+                                onClick={() =>
+                                  setViewer({ documentId: docId, fileName: name, findings: fs })
+                                }
+                              >
+                                {name}
+                              </button>
+                            ) : (
+                              <span className="font-medium">{name}</span>
+                            )}{' '}
+                            — {fs.length} finding{fs.length > 1 ? 's' : ''}: {shown}
+                            {more}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </div>
               );
             })}
@@ -631,6 +688,17 @@ export default function ClaimUpdate() {
           </div>
         )}
       </div>
+
+      {viewer && (
+        <DocumentViewer
+          open={!!viewer}
+          onOpenChange={(o) => !o && setViewer(null)}
+          claimId={id!}
+          documentId={viewer.documentId}
+          fileName={viewer.fileName}
+          findings={viewer.findings}
+        />
+      )}
     </div>
   );
 }

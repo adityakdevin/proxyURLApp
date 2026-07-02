@@ -6,12 +6,9 @@ function ctx(documents: ValidatorDoc[], ocrText: string): ValidatorContext {
     claim: { id: 'c', claimId: 'C1', subCategoryId: 's' },
     documents,
     prisma: {} as never,
-    fsPort: {
-      stat: async () => ({ exists: false, isDirectory: false, isFile: false, sizeBytes: 0 }),
-      listFiles: async () => [],
-    },
     ocr: { extractImageText: async () => ocrText },
     shared: new Map(),
+    wordBoxes: new Map(),
   };
 }
 const doc = (over: Partial<ValidatorDoc>): ValidatorDoc => ({

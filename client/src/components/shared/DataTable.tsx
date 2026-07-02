@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   ColumnDef,
+  RowData,
   flexRender,
   getCoreRowModel,
   useReactTable,
@@ -8,6 +9,26 @@ import {
   getSortedRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
+
+// Columns opt into server-side sorting by declaring the API sort key in `meta.sortField`.
+declare module '@tanstack/react-table' {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface ColumnMeta<TData extends RowData, TValue> {
+    sortField?: string;
+  }
+}
+
+export interface ServerSort {
+  field: string;
+  order: 'asc' | 'desc';
+}
+
+/** Toggle sort order when re-clicking the same field, else sort the new field ascending. */
+export function nextSort(prev: ServerSort, field: string): ServerSort {
+  return prev.field === field
+    ? { field, order: prev.order === 'asc' ? 'desc' : 'asc' }
+    : { field, order: 'asc' };
+}
 import {
   Table,
   TableBody,
@@ -24,7 +45,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+} from 'lucide-react';
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
@@ -38,6 +67,9 @@ interface DataTableProps<TData, TValue> {
   onPageChange?: (page: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
   isLoading?: boolean;
+  /** Current server-side sort; when provided with onSortChange, headers with meta.sortField become clickable. */
+  sort?: ServerSort;
+  onSortChange?: (field: string) => void;
 }
 
 export function DataTable<TData, TValue>({
@@ -47,6 +79,8 @@ export function DataTable<TData, TValue>({
   onPageChange,
   onPageSizeChange,
   isLoading,
+  sort,
+  onSortChange,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -73,13 +107,37 @@ export function DataTable<TData, TValue>({
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
+                {headerGroup.headers.map((header) => {
+                  const sortField = header.column.columnDef.meta?.sortField;
+                  const label = header.isPlaceholder
+                    ? null
+                    : flexRender(header.column.columnDef.header, header.getContext());
+                  const sortable = sortField && onSortChange;
+                  return (
+                    <TableHead key={header.id}>
+                      {sortable ? (
+                        <button
+                          type="button"
+                          className="-ml-1 inline-flex items-center gap-1 hover:text-foreground"
+                          onClick={() => onSortChange(sortField)}
+                        >
+                          {label}
+                          {sort?.field === sortField ? (
+                            sort.order === 'asc' ? (
+                              <ArrowUp className="h-3.5 w-3.5" />
+                            ) : (
+                              <ArrowDown className="h-3.5 w-3.5" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="h-3.5 w-3.5 opacity-40" />
+                          )}
+                        </button>
+                      ) : (
+                        label
+                      )}
+                    </TableHead>
+                  );
+                })}
               </TableRow>
             ))}
           </TableHeader>
@@ -216,15 +274,5 @@ export function DataTable<TData, TValue>({
         </div>
       )}
     </div>
-  );
-}
-
-// Helper component for sortable column headers
-export function SortableHeader({ children }: { children: React.ReactNode }) {
-  return (
-    <Button variant="ghost" className="-ml-4">
-      {children}
-      <ArrowUpDown className="ml-2 h-4 w-4" />
-    </Button>
   );
 }
