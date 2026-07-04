@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   ValidationStatus,
-  binaryValidationStatus,
   validationStatusLabel,
   validationStatusVariant,
 } from '@/lib/validationStatus';
@@ -426,7 +425,7 @@ export default function ClaimUpdate() {
         <div className="flex items-center justify-between mt-4">
           <div className="flex flex-wrap gap-2">
             {VALIDATORS.map((v) => {
-              const colVal = binaryValidationStatus(String(claim[v.column]));
+              const colVal = String(claim[v.column]);
               const res = resultFor(v.key);
               return (
                 <Badge key={v.key} variant={validationStatusVariant(colVal)} title={res?.summary ?? ''}>

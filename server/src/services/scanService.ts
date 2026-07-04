@@ -151,12 +151,22 @@ export class ScanService {
             } catch (e) {
               if (e instanceof ClaimServiceError && e.code === 'DUPLICATE_CLAIM_ID') {
                 skipped++;
-                claimForDocs = await this.prisma.claim.findUnique({
+                const existing = await this.prisma.claim.findUnique({
                   where: {
                     claimId_subCategoryId: { claimId, subCategoryId: job.subCategoryId },
                   },
                   select: { id: true, folderPath: true, subCategoryId: true },
                 });
+                // Claim pre-created without a folderPath (e.g. from the observation-sheet
+                // import) — backfill it from this scan so discovery has a path to read.
+                if (existing && !existing.folderPath?.trim()) {
+                  await this.prisma.claim.update({
+                    where: { id: existing.id },
+                    data: { folderPath },
+                  });
+                  existing.folderPath = folderPath;
+                }
+                claimForDocs = existing;
               } else {
                 pushError(name, e instanceof Error ? e.message : 'CREATE_FAILED');
               }
