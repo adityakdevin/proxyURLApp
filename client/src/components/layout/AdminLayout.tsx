@@ -26,7 +26,7 @@ const navItems = [
 const claimsNavItems = [
   { path: '/admin/doc-type-masters', label: 'Doc Type Masters', icon: FileText },
   { path: '/admin/claim-id-rules', label: 'Claim ID Rules', icon: Crosshair },
-  { path: '/admin/claims', label: 'Claims (All)', icon: ClipboardList },
+  { path: '/admin/claims', label: 'Claims Dashboard', icon: ClipboardList },
 ];
 
 export default function AdminLayout() {
