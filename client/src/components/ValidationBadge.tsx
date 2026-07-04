@@ -1,7 +1,13 @@
 import { Badge } from '@/components/ui/badge';
-import { validationStatusLabel, validationStatusVariant } from '@/lib/validationStatus';
+import {
+  binaryValidationStatus,
+  validationStatusLabel,
+  validationStatusVariant,
+} from '@/lib/validationStatus';
 
-/** One validation-check status (Spell / QR / Meta / …) as a coloured badge with a friendly label. */
+/** One validation-check status (Spell / QR / Meta / …) as a coloured badge.
+ *  Shown as binary PASSED/FAILED — only an explicit FAILED reads as failed. */
 export function ValidationBadge({ status }: { status: string }) {
-  return <Badge variant={validationStatusVariant(status)}>{validationStatusLabel(status)}</Badge>;
+  const s = binaryValidationStatus(status);
+  return <Badge variant={validationStatusVariant(s)}>{validationStatusLabel(s)}</Badge>;
 }

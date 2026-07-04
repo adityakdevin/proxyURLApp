@@ -60,7 +60,8 @@ describe('ClaimService.exportRows', () => {
     expect(a.workflowStatus).toBe('Pending');
     expect(a.assignedTo).toBe('Unassigned');
     expect(a.documents).toBe(0);
-    expect(a.spell).toBe('PENDING');
+    // Export shows binary status: a default PENDING check reads as PASSED (only FAILED → FAILED).
+    expect(a.spell).toBe('PASSED');
     expect(typeof a.created).toBe('string');
   });
 

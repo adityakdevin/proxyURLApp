@@ -19,6 +19,16 @@ export interface RuleEvaluation {
 
 const NUMERIC_FIELDS: RuleField[] = ['DOCUMENT_COUNT', 'REMARK_COUNT'];
 
+/**
+ * Collapse a validation-check status to a binary PASSED/FAILED for both display
+ * and rule evaluation: only an explicit FAILED counts as failed; every other
+ * state (PASSED / PENDING / IN_PROGRESS / DOCS_NOT_AVAILABLE) reads as PASSED.
+ * Shared by the claims xlsx export so the two agree.
+ */
+export function binaryValidationStatus(raw: string): 'PASSED' | 'FAILED' {
+  return raw === 'FAILED' ? 'FAILED' : 'PASSED';
+}
+
 export function validOperatorsFor(field: RuleField): RuleOperator[] {
   return NUMERIC_FIELDS.includes(field)
     ? ['EQ', 'NEQ', 'GTE', 'LTE', 'GT', 'LT']
@@ -40,6 +50,13 @@ function cmpStr(a: string, op: RuleOperator, b: string): boolean {
   if (op === 'EQ') return a === b;
   if (op === 'NEQ') return a !== b;
   return false; // numeric operators are invalid for string fields
+}
+
+/** A validation-status field: compare and report as binary PASSED/FAILED so the
+ *  displayed `actual` and the pass/fail outcome always agree. */
+function statusEval(status: string, op: RuleOperator, value: string): RuleEvaluation {
+  const actual = binaryValidationStatus(status);
+  return { passed: cmpStr(actual, op, binaryValidationStatus(value)), actual };
 }
 
 export function evaluateRule(
@@ -64,15 +81,15 @@ export function evaluateRule(
     case 'WORKFLOW_STATUS':
       return { passed: cmpStr(facts.workflowStatusName, rule.operator, rule.value), actual: facts.workflowStatusName };
     case 'SPELL_STATUS':
-      return { passed: cmpStr(facts.spellCheckStatus, rule.operator, rule.value), actual: facts.spellCheckStatus };
+      return statusEval(facts.spellCheckStatus, rule.operator, rule.value);
     case 'QR_STATUS':
-      return { passed: cmpStr(facts.qrStatus, rule.operator, rule.value), actual: facts.qrStatus };
+      return statusEval(facts.qrStatus, rule.operator, rule.value);
     case 'META_STATUS':
-      return { passed: cmpStr(facts.metaExtractionStatus, rule.operator, rule.value), actual: facts.metaExtractionStatus };
+      return statusEval(facts.metaExtractionStatus, rule.operator, rule.value);
     case 'INTRA_STATUS':
-      return { passed: cmpStr(facts.intraClaimStatus, rule.operator, rule.value), actual: facts.intraClaimStatus };
+      return statusEval(facts.intraClaimStatus, rule.operator, rule.value);
     case 'FULL_STATUS':
-      return { passed: cmpStr(facts.fullScanStatus, rule.operator, rule.value), actual: facts.fullScanStatus };
+      return statusEval(facts.fullScanStatus, rule.operator, rule.value);
     default:
       return { passed: false, actual: '' };
   }

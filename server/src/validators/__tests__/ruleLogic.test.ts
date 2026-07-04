@@ -40,4 +40,11 @@ describe('ruleLogic', () => {
   it('numeric operator on non-numeric field is false', () => {
     expect(evaluateRule({ field: 'QR_STATUS', operator: 'GTE', value: 'PASSED' }, facts).passed).toBe(false);
   });
+  it('validation status collapses to binary PASSED/FAILED', () => {
+    // Only an explicit FAILED reads as FAILED; every other state passes a "= PASSED" rule.
+    for (const s of ['PENDING', 'IN_PROGRESS', 'DOCS_NOT_AVAILABLE']) {
+      expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED' }, { ...facts, spellCheckStatus: s })).toEqual({ passed: true, actual: 'PASSED' });
+    }
+    expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED' }, { ...facts, spellCheckStatus: 'FAILED' })).toEqual({ passed: false, actual: 'FAILED' });
+  });
 });

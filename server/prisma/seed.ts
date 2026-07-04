@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, RuleField, RuleOperator } from '@prisma/client';
 import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -45,48 +45,70 @@ async function main() {
     create: { key: 'audit_retention_days', value: '90' },
   });
 
-  // Phase 1 Claims sample data — attach to first ACTIVE SubCategory. Each entity
-  // group is guarded independently so the seed is fully idempotent: re-running it
-  // (or running it over a partially-populated DB) never throws a unique-constraint
-  // error and never duplicates rows.
-  const sampleSub = await prisma.subCategory.findFirst({ where: { status: 'ACTIVE' } });
-  if (sampleSub) {
-    let pending = await prisma.statusMaster.findFirst({
-      where: { subCategoryId: sampleSub.id, isDefault: true },
+  const STANDARD_STATUSES = [
+    { name: 'New', displayOrder: 1, isDefault: true, isTerminal: false },
+    { name: 'In Progress', displayOrder: 2, isDefault: false, isTerminal: false },
+    { name: 'Verified', displayOrder: 3, isDefault: false, isTerminal: false },
+    { name: 'Closed', displayOrder: 4, isDefault: false, isTerminal: true },
+  ];
+  const activeSubs = await prisma.subCategory.findMany({ where: { status: 'ACTIVE' } });
+  for (const sub of activeSubs) {
+    const hasDefault = await prisma.statusMaster.findFirst({
+      where: { subCategoryId: sub.id, isDefault: true },
     });
-    if (!pending) {
-      pending = await prisma.statusMaster.create({
-        data: {
-          subCategoryId: sampleSub.id,
-          name: 'Pending',
-          displayOrder: 1,
-          isDefault: true,
-          isTerminal: false,
+    if (!hasDefault) {
+      await prisma.statusMaster.createMany({
+        data: STANDARD_STATUSES.map((s) => ({
+          ...s,
+          subCategoryId: sub.id,
           createdBy: admin.id,
           updatedBy: admin.id,
-        },
-      });
-      await prisma.statusMaster.create({
-        data: {
-          subCategoryId: sampleSub.id,
-          name: 'Approved',
-          displayOrder: 2,
-          isTerminal: true,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        },
-      });
-      await prisma.statusMaster.create({
-        data: {
-          subCategoryId: sampleSub.id,
-          name: 'Rejected',
-          displayOrder: 3,
-          isTerminal: true,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        },
+        })),
       });
     }
+  }
+
+  // Claim rules: the canonical set (one predicate per RuleField), dev-managed here
+  // and replicated onto EVERY active Sub-Category — admins don't edit these.
+  // Source of truth mirrors seedDemo.ts. ponytail: re-run db:seed after adding a
+  // Sub-Category to backfill its rules.
+  const CLAIM_RULES: {
+    name: string;
+    field: RuleField;
+    operator: RuleOperator;
+    value: string;
+    displayOrder: number;
+  }[] = [
+    { name: 'At least one document', field: 'DOCUMENT_COUNT', operator: 'GTE', value: '1', displayOrder: 1 },
+    { name: 'Has a remark logged', field: 'REMARK_COUNT', operator: 'GTE', value: '1', displayOrder: 2 },
+    { name: 'Must be assigned', field: 'ASSIGNED', operator: 'EQ', value: 'true', displayOrder: 3 },
+    { name: 'Invoice attached', field: 'HAS_DOCUMENT_TYPE', operator: 'EQ', value: 'Invoice', displayOrder: 4 },
+    { name: 'Work has started (not New)', field: 'WORKFLOW_STATUS', operator: 'NEQ', value: 'New', displayOrder: 5 },
+    { name: 'Spell check passed', field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED', displayOrder: 6 },
+    { name: 'QR check passed', field: 'QR_STATUS', operator: 'EQ', value: 'PASSED', displayOrder: 7 },
+    { name: 'Metadata check passed', field: 'META_STATUS', operator: 'EQ', value: 'PASSED', displayOrder: 8 },
+    { name: 'Intra-claim consistency passed', field: 'INTRA_STATUS', operator: 'EQ', value: 'PASSED', displayOrder: 9 },
+    { name: 'Full scan passed', field: 'FULL_STATUS', operator: 'EQ', value: 'PASSED', displayOrder: 10 },
+  ];
+  for (const sub of activeSubs) {
+    const hasRules = await prisma.claimRule.findFirst({ where: { subCategoryId: sub.id } });
+    if (!hasRules) {
+      await prisma.claimRule.createMany({
+        data: CLAIM_RULES.map((r) => ({
+          ...r,
+          subCategoryId: sub.id,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        })),
+      });
+    }
+  }
+
+  const sampleSub = activeSubs[0];
+  if (sampleSub) {
+    const defaultStatus = await prisma.statusMaster.findFirst({
+      where: { subCategoryId: sampleSub.id, isDefault: true },
+    });
 
     const docTypeExists = await prisma.documentTypeMaster.findFirst({
       where: { subCategoryId: sampleSub.id },
@@ -150,7 +172,7 @@ async function main() {
           data: {
             claimId,
             subCategoryId: sampleSub.id,
-            workflowStatusId: pending.id,
+            workflowStatusId: defaultStatus!.id,
             createdBy: admin.id,
             updatedBy: admin.id,
           },

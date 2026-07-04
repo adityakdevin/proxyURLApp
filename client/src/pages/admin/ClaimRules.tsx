@@ -6,7 +6,6 @@ import { DataTable } from '@/components/shared/DataTable';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { VALIDATION_STATUS_VALUES } from '@/lib/validationStatus';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -113,7 +112,8 @@ export default function ClaimRules() {
     if (form.field === 'ASSIGNED') return ['true', 'false'];
     if (form.field === 'HAS_DOCUMENT_TYPE') return docTypeNames;
     if (form.field === 'WORKFLOW_STATUS') return statusNames;
-    if (STATUS_FIELDS.includes(form.field)) return VALIDATION_STATUS_VALUES;
+    // Validation checks are binary in every view: only PASSED/FAILED are valid rule targets.
+    if (STATUS_FIELDS.includes(form.field)) return ['PASSED', 'FAILED'];
     return null;
   }, [form.field, docTypeNames, statusNames]);
 

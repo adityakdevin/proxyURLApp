@@ -171,6 +171,21 @@ router.get(
   }
 );
 
+router.get('/observation-template', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const wb = buildObservationWorkbook([]);
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', 'attachment; filename="claims-sheet-sample.xlsx"');
+    res.send(Buffer.from(buf));
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get(
   '/:id',
   [param('id').isUUID()],

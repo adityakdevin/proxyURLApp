@@ -24,8 +24,9 @@ export const OBSERVATION_HEADERS = [
   'Remarks',
 ] as const;
 
-/** The single Status value written to the export, collapsed from the 5 checks. */
-export type ForgeryStatus = 'Forged' | 'OK' | 'Pending';
+/** The single Status value written to the export, collapsed from the 5 checks.
+ *  Binary model: only an explicit FAILED flags forgery; everything else is clean. */
+export type ForgeryStatus = 'Forged' | 'OK';
 
 /** A row read off the uploaded sheet. `S. No`/`Status` are intentionally dropped
  *  (S.No is regenerated on export; Status is derived from validation). */
@@ -73,12 +74,9 @@ export interface ValidationStatuses {
 }
 
 /**
- * Collapse the 5 validation checks into one Status (decision #6):
- *  - any FAILED            -> 'Forged'
- *  - all PASSED            -> 'OK'
- *  - otherwise (PENDING /
- *    IN_PROGRESS /
- *    DOCS_NOT_AVAILABLE)   -> 'Pending'
+ * Collapse the 5 validation checks into one binary Status:
+ *  - any FAILED -> 'Forged'
+ *  - otherwise (PASSED / PENDING / IN_PROGRESS / DOCS_NOT_AVAILABLE) -> 'OK'
  */
 export function deriveForgeryStatus(v: ValidationStatuses): ForgeryStatus {
   const checks = [
@@ -88,7 +86,5 @@ export function deriveForgeryStatus(v: ValidationStatuses): ForgeryStatus {
     v.intraClaimStatus,
     v.fullScanStatus,
   ];
-  if (checks.some((s) => s === 'FAILED')) return 'Forged';
-  if (checks.every((s) => s === 'PASSED')) return 'OK';
-  return 'Pending';
+  return checks.some((s) => s === 'FAILED') ? 'Forged' : 'OK';
 }

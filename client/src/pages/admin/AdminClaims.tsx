@@ -72,12 +72,13 @@ export default function AdminClaims() {
   const [sort, setSort] = useState<ServerSort>({ field: 'createdAt', order: 'desc' });
   const [checks, setChecks] = useState<Record<string, string>>({});
 
-  // Forged-document observation import/export dialog.
   const [obsOpen, setObsOpen] = useState(false);
   const [picker, setPicker] = useState<Partial<SubCategoryPickerValue>>({});
   const [isUploading, setIsUploading] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportPicker, setExportPicker] = useState<Partial<SubCategoryPickerValue>>({});
 
   const fetchData = async (page = pagination.page, limit = pagination.limit) => {
     setIsLoading(true);
@@ -160,10 +161,10 @@ export default function AdminClaims() {
   };
 
   const handleObsExport = () => {
-    if (!picker.subCategoryId) {
+    if (!exportPicker.subCategoryId) {
       return toast({ title: 'Pick a Sub-Category', variant: 'destructive' });
     }
-    const params = new URLSearchParams({ subCategoryId: picker.subCategoryId });
+    const params = new URLSearchParams({ subCategoryId: exportPicker.subCategoryId });
     window.open(`/api/admin/claims/export-observations?${params.toString()}`, '_blank');
   };
 
@@ -188,7 +189,7 @@ export default function AdminClaims() {
     },
     {
       id: 'status',
-      header: 'Workflow',
+      header: 'Status',
       cell: ({ row }) => (
         <Badge variant={row.original.workflowStatus.isTerminal ? 'secondary' : 'default'}>
           {row.original.workflowStatus.name}
@@ -240,23 +241,20 @@ export default function AdminClaims() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Claims (All)</h1>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setObsOpen(true)}>
-            <Upload className="mr-2 h-4 w-4" />
-            Upload Observations
-          </Button>
-          <Button variant="outline" onClick={() => setObsOpen(true)}>
-            <Download className="mr-2 h-4 w-4" />
-            Export Observations
-          </Button>
           <Button
             variant="outline"
-            onClick={() => {
-              const params = new URLSearchParams();
-              if (search) params.set('search', search);
-              window.open(`/api/claims/export?${params.toString()}`, '_blank');
-            }}
+            onClick={() => window.open('/api/admin/claims/observation-template', '_blank')}
           >
-            Export
+            <Download className="mr-2 h-4 w-4" />
+            Download Sample Sheet
+          </Button>
+          <Button variant="outline" onClick={() => setObsOpen(true)}>
+            <Upload className="mr-2 h-4 w-4" />
+            Upload Claims Sheet
+          </Button>
+          <Button variant="outline" onClick={() => setExportOpen(true)}>
+            <Download className="mr-2 h-4 w-4" />
+            Export Observations
           </Button>
         </div>
       </div>
@@ -289,10 +287,9 @@ export default function AdminClaims() {
       <Dialog open={obsOpen} onOpenChange={handleObsOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Forged-Document Observations</DialogTitle>
+            <DialogTitle>Upload Claims Sheet</DialogTitle>
             <DialogDescription>
-              Upload the observations sheet into a Sub-Category, or export it with the Status
-              column filled from validation results.
+              Upload the observations sheet into a Sub-Category.
             </DialogDescription>
           </DialogHeader>
 
@@ -311,16 +308,6 @@ export default function AdminClaims() {
                   {isUploading ? 'Importing...' : 'Import'}
                 </Button>
               </div>
-            </div>
-
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <span className="text-sm text-muted-foreground">
-                Export the same 10 columns with Status filled in.
-              </span>
-              <Button variant="outline" onClick={handleObsExport} disabled={!picker.subCategoryId}>
-                <Download className="mr-2 h-4 w-4" />
-                Export
-              </Button>
             </div>
 
             {report && (
@@ -348,6 +335,34 @@ export default function AdminClaims() {
                 )}
               </div>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={exportOpen}
+        onOpenChange={(open) => {
+          if (!open) setExportPicker({});
+          setExportOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Export Claims Sheet</DialogTitle>
+            <DialogDescription>
+              Export the 10-column sheet for a Sub-Category with the Status column filled from
+              validation results.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <SubCategoryPicker value={exportPicker} onChange={setExportPicker} />
+            <div className="flex justify-end">
+              <Button onClick={handleObsExport} disabled={!exportPicker.subCategoryId}>
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
