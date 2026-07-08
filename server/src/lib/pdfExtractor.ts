@@ -121,3 +121,57 @@ export async function extractPdf(
     return null;
   }
 }
+
+/** One rendered page: PNG bytes plus the raster dimensions (for box normalization). */
+export interface RasterPage {
+  page: number;
+  png: Buffer;
+  width: number;
+  height: number;
+}
+
+/**
+ * Rasterize a PDF's pages to PNG buffers via pdfjs + @napi-rs/canvas. This is the
+ * bridge that lets scanned (image-only, no text layer) PDFs be OCR'd — pdfjs text
+ * extraction returns '' for them, and Tesseract can't read PDFs directly. `scale`
+ * ~2 keeps small print legible to OCR without ballooning render time. Returns [] on
+ * any failure so the caller degrades to no-text rather than throwing.
+ */
+export async function rasterizePdf(
+  absolutePath: string,
+  maxPages = MAX_PDF_PAGES,
+  scale = 2
+): Promise<RasterPage[]> {
+  try {
+    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    // @napi-rs/canvas ships prebuilt binaries (incl. Windows) — no node-gyp build.
+    const { createCanvas } = await import('@napi-rs/canvas');
+    const data = new Uint8Array(await fs.readFile(absolutePath));
+    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
+    const out: RasterPage[] = [];
+    try {
+      const pageCount = Math.min(doc.numPages, maxPages);
+      for (let p = 1; p <= pageCount; p++) {
+        const page = await doc.getPage(p);
+        const viewport = page.getViewport({ scale });
+        const canvas = createCanvas(viewport.width, viewport.height);
+        // @napi-rs/canvas's 2D context is API-compatible with what pdfjs renders into;
+        // cast through unknown since the DOM lib isn't in this project's tsconfig.
+        const canvasContext = canvas.getContext('2d') as unknown;
+        await page.render({ canvasContext, viewport } as never).promise;
+        out.push({
+          page: p,
+          png: canvas.toBuffer('image/png'),
+          width: Math.round(viewport.width),
+          height: Math.round(viewport.height),
+        });
+      }
+    } finally {
+      await doc.cleanup?.();
+      await doc.destroy?.();
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}

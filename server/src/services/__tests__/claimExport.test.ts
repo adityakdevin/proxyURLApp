@@ -38,10 +38,10 @@ describe('ClaimService.exportRows', () => {
 
   beforeEach(async () => {
     await truncateClaimsTables(prisma);
-    const defA = await statusService.create({ subCategoryId: scA, name: 'Pending', isDefault: true }, adminId);
-    const defB = await statusService.create({ subCategoryId: scB, name: 'Pending', isDefault: true }, adminId);
-    await prisma.claim.create({ data: { claimId: 'EX-A1', subCategoryId: scA, workflowStatusId: defA.id, createdBy: adminId, updatedBy: adminId } });
-    await prisma.claim.create({ data: { claimId: 'EX-B1', subCategoryId: scB, workflowStatusId: defB.id, createdBy: adminId, updatedBy: adminId } });
+    // Status masters are global now — one shared default serves claims in both subcategories.
+    const def = await statusService.create({ name: 'Pending', isDefault: true }, adminId);
+    await prisma.claim.create({ data: { claimId: 'EX-A1', subCategoryId: scA, workflowStatusId: def.id, createdBy: adminId, updatedBy: adminId } });
+    await prisma.claim.create({ data: { claimId: 'EX-B1', subCategoryId: scB, workflowStatusId: def.id, createdBy: adminId, updatedBy: adminId } });
   });
 
   afterAll(async () => {

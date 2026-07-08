@@ -355,12 +355,11 @@ export class ClaimService {
             'Claim is in a terminal status and cannot be changed'
           );
         }
+        // Status masters are global now — any existing status is valid for any claim
+        // (the old per-SubCategory ownership check referenced a removed column).
         const newStatus = await tx.statusMaster.findUnique({ where: { id: input.newStatusId } });
-        if (!newStatus || newStatus.subCategoryId !== claim.subCategoryId) {
-          throw new ClaimServiceError(
-            'INVALID_STATUS',
-            'New status does not belong to this SubCategory'
-          );
+        if (!newStatus) {
+          throw new ClaimServiceError('INVALID_STATUS', 'New status does not exist');
         }
         if (newStatus.status !== 'ACTIVE') {
           throw new ClaimServiceError('STATUS_INACTIVE', 'Cannot set claim to an inactive status');

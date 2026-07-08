@@ -117,7 +117,7 @@ describe('ClaimService — scope & assignee security', () => {
 
   async function defaultStatus(subCategoryId: string) {
     return statusService.create(
-      { subCategoryId, name: 'Pending', isDefault: true },
+      { name: 'Pending', isDefault: true },
       adminId
     );
   }

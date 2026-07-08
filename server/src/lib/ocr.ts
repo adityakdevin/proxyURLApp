@@ -3,10 +3,11 @@ import path from 'path';
 import { Jimp } from 'jimp';
 import { createWorker, Worker } from 'tesseract.js';
 import { OcrPort, WordBox } from '../validators/types.js';
+import { rasterizePdf } from './pdfExtractor.js';
 import { clamp01 } from './bbox.js';
 
 /** Walk Tesseract's block hierarchy (v5) — or the flat `words` fallback — into WordBoxes. */
-function collectWords(data: unknown, width: number, height: number): WordBox[] {
+function collectWords(data: unknown, width: number, height: number, page = 1): WordBox[] {
   if (!width || !height) return [];
   const out: WordBox[] = [];
   const push = (w: { text?: string; bbox?: { x0: number; y0: number; x1: number; y1: number }; confidence?: number }) => {
@@ -15,7 +16,7 @@ function collectWords(data: unknown, width: number, height: number): WordBox[] {
     const { x0, y0, x1, y1 } = w.bbox;
     out.push({
       text: t,
-      page: 1,
+      page,
       bbox: {
         x: clamp01(x0 / width),
         y: clamp01(y0 / height),
@@ -82,6 +83,27 @@ export class TesseractOcrPort implements OcrPort {
         // dimensions unavailable → words emitted without boxes (text still returned)
       }
       return { text, words: collectWords(data, width, height) };
+    } catch {
+      return { text: '', words: [] };
+    }
+  }
+
+  async extractPdf(absolutePath: string): Promise<{ text: string; words: WordBox[] }> {
+    try {
+      // Cap OCR pages: the relevant docs (salary slip / ID card) sit in the first
+      // pages, and OCRing a long PDF serially on one worker is the slow path.
+      const pages = await rasterizePdf(absolutePath, 12);
+      if (pages.length === 0) return { text: '', words: [] };
+      const worker = await this.getWorker();
+      const parts: string[] = [];
+      const words: WordBox[] = [];
+      for (const pg of pages) {
+        const { data } = await worker.recognize(pg.png, {}, { blocks: true });
+        const t = (data.text ?? '').trim();
+        if (t) parts.push(t);
+        words.push(...collectWords(data, pg.width, pg.height, pg.page));
+      }
+      return { text: parts.join('\n').trim(), words };
     } catch {
       return { text: '', words: [] };
     }

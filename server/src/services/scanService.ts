@@ -53,11 +53,14 @@ export class ScanService {
       throw new ScanServiceError('RULE_INACTIVE', 'SubCategory is inactive');
     }
 
+    // Status masters are global now (no per-SubCategory scope) — match the same
+    // default-status lookup ClaimService.create uses, else scan enqueue throws a
+    // PrismaClientValidationError on the removed `subCategoryId` column.
     const def = await this.prisma.statusMaster.findFirst({
-      where: { subCategoryId: rule.subCategoryId, isDefault: true, status: 'ACTIVE' },
+      where: { isDefault: true, status: 'ACTIVE' },
     });
     if (!def) {
-      throw new ScanServiceError('NO_DEFAULT_STATUS', 'SubCategory has no active default status');
+      throw new ScanServiceError('NO_DEFAULT_STATUS', 'No active default status is configured');
     }
 
     const live = await this.prisma.scanJob.findFirst({

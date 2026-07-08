@@ -91,7 +91,7 @@ describe('ScanService', () => {
   });
 
   it('enqueue creates a QUEUED job when a default status exists', async () => {
-    await statusService.create({ subCategoryId, name: 'Pending', isDefault: true }, adminId);
+    await statusService.create({ name: 'Pending', isDefault: true }, adminId);
     const svc = new ScanService(prisma, new FakeReader([]));
     const job = await svc.enqueue(ruleId, adminId);
     expect(job.status).toBe('QUEUED');
@@ -99,14 +99,14 @@ describe('ScanService', () => {
   });
 
   it('enqueue rejects a second concurrent scan for the same rule', async () => {
-    await statusService.create({ subCategoryId, name: 'Pending', isDefault: true }, adminId);
+    await statusService.create({ name: 'Pending', isDefault: true }, adminId);
     const svc = new ScanService(prisma, new FakeReader([]));
     await svc.enqueue(ruleId, adminId);
     await expect(svc.enqueue(ruleId, adminId)).rejects.toMatchObject({ code: 'SCAN_IN_PROGRESS' });
   });
 
   it('run ingests new claims, counts skips and errors, and is idempotent', async () => {
-    await statusService.create({ subCategoryId, name: 'Pending', isDefault: true }, adminId);
+    await statusService.create({ name: 'Pending', isDefault: true }, adminId);
     // 3 valid (>=8 chars), 1 too-short → 3 creatable, 1 error.
     const reader = new FakeReader(['CLM00001', 'CLM00002', 'SHORT', 'CLM00003']);
     const svc = new ScanService(prisma, reader);
@@ -131,7 +131,7 @@ describe('ScanService', () => {
   });
 
   it('run stores the Windows folderPath on created claims', async () => {
-    await statusService.create({ subCategoryId, name: 'Pending', isDefault: true }, adminId);
+    await statusService.create({ name: 'Pending', isDefault: true }, adminId);
     const svc = new ScanService(prisma, new FakeReader(['CLM00009']));
     const job = await svc.enqueue(ruleId, adminId);
     await svc.run(job.id);
@@ -140,7 +140,7 @@ describe('ScanService', () => {
   });
 
   it('sweepStaleJobs marks QUEUED/RUNNING jobs as FAILED', async () => {
-    await statusService.create({ subCategoryId, name: 'Pending', isDefault: true }, adminId);
+    await statusService.create({ name: 'Pending', isDefault: true }, adminId);
     const svc = new ScanService(prisma, new FakeReader([]));
     const job = await svc.enqueue(ruleId, adminId); // QUEUED
     const n = await svc.sweepStaleJobs();
@@ -151,7 +151,7 @@ describe('ScanService', () => {
   });
 
   it('run ingests documents per claim when a DocumentService is provided', async () => {
-    await statusService.create({ subCategoryId, name: 'Pending', isDefault: true }, adminId);
+    await statusService.create({ name: 'Pending', isDefault: true }, adminId);
     const reader = new FakeReader(['CLM00031']);
     const docService = new DocumentService(prisma, new FakeFs({}));
     const svc = new ScanService(prisma, reader, docService);
@@ -165,7 +165,7 @@ describe('ScanService', () => {
   });
 
   it('fires onClaimIngested only when documents were created, not on doc-less re-scans', async () => {
-    await statusService.create({ subCategoryId, name: 'Pending', isDefault: true }, adminId);
+    await statusService.create({ name: 'Pending', isDefault: true }, adminId);
     const reader = new FakeReader(['CLM00041']);
     const docService = new DocumentService(prisma, new FakeFs({}));
     const ingested: string[] = [];

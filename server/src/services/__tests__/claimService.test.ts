@@ -33,7 +33,7 @@ describe('ClaimService', () => {
   });
 
   async function seedDefaultStatus(name = 'Pending') {
-    return statusService.create({ subCategoryId, name, isDefault: true }, adminId);
+    return statusService.create({ name, isDefault: true }, adminId);
   }
 
   it('creates a claim and uses the SubCategory default status', async () => {
@@ -63,7 +63,7 @@ describe('ClaimService', () => {
   it('appendRemark with status change writes status before/after', async () => {
     const def = await seedDefaultStatus();
     const approved = await statusService.create(
-      { subCategoryId, name: 'Approved', isTerminal: true },
+      { name: 'Approved', isTerminal: true },
       adminId
     );
     const c = await service.create({ subCategoryId, claimId: 'C-1' }, adminId);
@@ -128,7 +128,7 @@ describe('ClaimService', () => {
     it('blocks a non-admin from moving a claim out of a terminal status; admin may override', async () => {
       const def = await seedDefaultStatus();
       const closed = await statusService.create(
-        { subCategoryId, name: 'Closed', isTerminal: true },
+        { name: 'Closed', isTerminal: true },
         adminId
       );
       const c = await service.create({ subCategoryId, claimId: 'C-TERM' }, adminId);

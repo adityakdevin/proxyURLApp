@@ -22,10 +22,14 @@ async function extract(
     try {
       const buf = await fs.readFile(doc.readablePath);
       const data = await pdfParse(buf);
-      return { text: (data.text ?? '').trim(), words: [] };
+      const text = (data.text ?? '').trim();
+      if (text) return { text, words: [] };
     } catch {
-      return { text: '', words: [] };
+      // fall through to OCR
     }
+    // No text layer → scanned PDF. Rasterize the pages and OCR them.
+    if (ctx.ocr.extractPdf) return ctx.ocr.extractPdf(doc.readablePath);
+    return { text: '', words: [] };
   }
   return { text: '', words: [] };
 }
@@ -33,6 +37,9 @@ async function extract(
 /** Hardening bounds so one huge/slow document can't stall a whole validation run. */
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // matches the 25 MB upload limit
 const EXTRACT_TIMEOUT_MS = 30_000;
+// Scanned PDFs are rasterized + OCR'd page-by-page on one worker — far slower than a
+// single image, so give them a wider budget before the run gives up on the document.
+const PDF_EXTRACT_TIMEOUT_MS = 120_000;
 
 /** Resolve `p`, but fall back to `fallback` if it doesn't settle within `ms`. */
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -78,7 +85,9 @@ export const metaValidator: Validator = {
         });
         continue;
       }
-      const { text, words } = await withTimeout(extract(ctx, doc), EXTRACT_TIMEOUT_MS, {
+      const timeoutMs =
+        (doc.mimeType ?? '') === 'application/pdf' ? PDF_EXTRACT_TIMEOUT_MS : EXTRACT_TIMEOUT_MS;
+      const { text, words } = await withTimeout(extract(ctx, doc), timeoutMs, {
         text: '',
         words: [],
       });
