@@ -121,9 +121,9 @@ describe('E2E: claim lifecycle + RBAC', () => {
   });
 
   it('enforces scope: a TEAM_LEAD cannot create a claim in another scope', async () => {
-    // Give the out-of-scope sub-category a default status too, so OUT_OF_SCOPE
-    // (not NO_DEFAULT_STATUS) is the reason creation is refused.
-    await seedStatuses(prisma, g.otherSubCategoryId, g.admin.id);
+    // Statuses are global, so the default seeded in beforeEach already applies to
+    // the out-of-scope sub-category — OUT_OF_SCOPE (not NO_DEFAULT_STATUS) is what
+    // refuses creation here.
     const tl = await loginAs(app, g.teamLead.username);
     const res = await tl
       .post('/api/claims')

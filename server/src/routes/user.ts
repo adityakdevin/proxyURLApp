@@ -390,28 +390,12 @@ router.get('/sub-categories', async (req, res, next) => {
   }
 });
 
-// GET /api/user/status-masters?subCategoryId=...
+// GET /api/user/status-masters — global workflow statuses (labels, not scoped)
 router.get('/status-masters', async (req, res, next) => {
   try {
     const prisma = req.app.get('prisma') as PrismaClient;
-    const subCategoryId = req.query.subCategoryId as string | undefined;
-    if (!subCategoryId) {
-      return res
-        .status(400)
-        .json({ error: 'subCategoryId required', code: 'VALIDATION_ERROR' });
-    }
-    // Non-admins may only read statuses for a SubCategory they are granted.
-    if (req.session!.role !== 'ADMIN') {
-      const access = await prisma.userSubCategory.findUnique({
-        where: { userId_subCategoryId: { userId: req.session!.userId, subCategoryId } },
-        select: { id: true },
-      });
-      if (!access) {
-        return res.status(403).json({ error: 'Access denied', code: 'ACCESS_DENIED' });
-      }
-    }
     const list = await prisma.statusMaster.findMany({
-      where: { subCategoryId, status: 'ACTIVE' },
+      where: { status: 'ACTIVE' },
       orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
     });
     res.json({ data: list });

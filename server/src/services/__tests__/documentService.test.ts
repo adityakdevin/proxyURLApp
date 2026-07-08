@@ -55,12 +55,11 @@ describe('DocumentService', () => {
   beforeEach(async () => {
     await truncateClaimsTables(prisma);
     const pending = await prisma.statusMaster.create({
-      data: { subCategoryId, name: 'Pending', isDefault: true, createdBy: adminId, updatedBy: adminId },
+      data: { name: 'Pending', isDefault: true, createdBy: adminId, updatedBy: adminId },
     });
     workflowStatusId = pending.id;
     await prisma.documentTypeMaster.create({
       data: {
-        subCategoryId,
         name: 'Aadhar Card',
         category: 'GOVT',
         govtCode: 'AADHAR',

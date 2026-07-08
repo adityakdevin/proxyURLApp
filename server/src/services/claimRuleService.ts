@@ -1,7 +1,6 @@
 import { PrismaClient, Prisma, Status, ClaimRule, RuleField, RuleOperator, Role } from '@prisma/client';
 import { ClaimFacts, evaluateRule, validOperatorsFor } from '../validators/ruleLogic.js';
 import { ClaimService } from './claimService.js';
-import { subCategoryExists } from '../lib/subCategoryGuard.js';
 
 export class ClaimRuleServiceError extends Error {
   constructor(public code: string, message: string) {
@@ -10,7 +9,6 @@ export class ClaimRuleServiceError extends Error {
 }
 
 export interface CreateClaimRuleInput {
-  subCategoryId: string;
   name: string;
   field: RuleField;
   operator: RuleOperator;
@@ -45,22 +43,25 @@ export class ClaimRuleService {
 
   async create(input: CreateClaimRuleInput, actorId: string): Promise<ClaimRule> {
     this.validateRule(input.field, input.operator, input.value);
-    if (!(await subCategoryExists(this.prisma, input.subCategoryId))) {
-      throw new ClaimRuleServiceError('SUBCATEGORY_NOT_FOUND', 'SubCategory not found');
+    try {
+      return await this.prisma.claimRule.create({
+        data: {
+          name: input.name,
+          field: input.field,
+          operator: input.operator,
+          value: input.value,
+          displayOrder: input.displayOrder ?? 0,
+          status: input.status ?? Status.ACTIVE,
+          createdBy: actorId,
+          updatedBy: actorId,
+        },
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') {
+        throw new ClaimRuleServiceError('DUPLICATE_RULE_NAME', 'Rule name must be unique');
+      }
+      throw err;
     }
-    return this.prisma.claimRule.create({
-      data: {
-        subCategoryId: input.subCategoryId,
-        name: input.name,
-        field: input.field,
-        operator: input.operator,
-        value: input.value,
-        displayOrder: input.displayOrder ?? 0,
-        status: input.status ?? Status.ACTIVE,
-        createdBy: actorId,
-        updatedBy: actorId,
-      },
-    });
   }
 
   async update(id: string, input: UpdateClaimRuleInput, actorId: string): Promise<ClaimRule> {
@@ -70,7 +71,14 @@ export class ClaimRuleService {
     const operator = input.operator ?? existing.operator;
     const value = input.value ?? existing.value;
     this.validateRule(field, operator, value);
-    return this.prisma.claimRule.update({ where: { id }, data: { ...input, updatedBy: actorId } });
+    try {
+      return await this.prisma.claimRule.update({ where: { id }, data: { ...input, updatedBy: actorId } });
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') {
+        throw new ClaimRuleServiceError('DUPLICATE_RULE_NAME', 'Rule name must be unique');
+      }
+      throw err;
+    }
   }
 
   async setStatus(id: string, status: Status, actorId: string): Promise<ClaimRule> {
@@ -85,11 +93,10 @@ export class ClaimRuleService {
     return this.prisma.claimRule.findUnique({ where: { id } });
   }
 
-  async list(filters: { subCategoryId?: string; status?: Status; page?: number; limit?: number }) {
+  async list(filters: { status?: Status; page?: number; limit?: number }) {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
     const where: Prisma.ClaimRuleWhereInput = {};
-    if (filters.subCategoryId) where.subCategoryId = filters.subCategoryId;
     if (filters.status) where.status = filters.status;
     const [data, total] = await Promise.all([
       this.prisma.claimRule.findMany({
@@ -115,7 +122,6 @@ export class ClaimRuleService {
     const [remarkCount, docTypes] = await Promise.all([
       this.prisma.claimRemark.count({ where: { claimId } }),
       this.prisma.documentTypeMaster.findMany({
-        where: { subCategoryId: claim.subCategoryId },
         select: { id: true, name: true },
       }),
     ]);
@@ -142,7 +148,7 @@ export class ClaimRuleService {
     const facts = await this.gatherFacts(claimId);
     if (!facts) return null;
     const rules = await this.prisma.claimRule.findMany({
-      where: { subCategoryId: claim.subCategoryId, status: 'ACTIVE' },
+      where: { status: 'ACTIVE' },
       orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
     });
     const evaluated = rules.map((r) => {

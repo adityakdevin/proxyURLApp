@@ -17,15 +17,6 @@ type BadgeVariant =
   | 'success'
   | 'warning';
 
-/** Status options offered when building a claim rule on a validation-status field. */
-export const VALIDATION_STATUS_VALUES: ValidationStatus[] = [
-  'PENDING',
-  'IN_PROGRESS',
-  'PASSED',
-  'FAILED',
-  'DOCS_NOT_AVAILABLE',
-];
-
 /** Collapse a validation status to binary for display: only an explicit FAILED
  *  reads as FAILED; every other state (PASSED / PENDING / IN_PROGRESS /
  *  DOCS_NOT_AVAILABLE) reads as PASSED. Mirrors the server's binaryValidationStatus. */

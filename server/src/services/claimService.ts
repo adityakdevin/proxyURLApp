@@ -131,12 +131,12 @@ export class ClaimService {
     }
 
     const def = await this.prisma.statusMaster.findFirst({
-      where: { subCategoryId: input.subCategoryId, isDefault: true, status: 'ACTIVE' },
+      where: { isDefault: true, status: 'ACTIVE' },
     });
     if (!def) {
       throw new ClaimServiceError(
         'NO_DEFAULT_STATUS',
-        'SubCategory has no active default status'
+        'No active default status configured'
       );
     }
 
@@ -216,7 +216,7 @@ export class ClaimService {
     }
     // Needed only when a row creates a new claim; resolved once (may be absent).
     const def = await this.prisma.statusMaster.findFirst({
-      where: { subCategoryId, isDefault: true, status: 'ACTIVE' },
+      where: { isDefault: true, status: 'ACTIVE' },
     });
 
     const errors: ObservationRowError[] = [];

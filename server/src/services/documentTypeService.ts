@@ -6,10 +6,8 @@ import {
   DocumentTypeCategory,
   GovtDocumentCode,
 } from '@prisma/client';
-import { subCategoryExists } from '../lib/subCategoryGuard.js';
 
 export interface CreateDocumentTypeInput {
-  subCategoryId: string;
   name: string;
   category: DocumentTypeCategory;
   govtCode?: GovtDocumentCode | null;
@@ -26,7 +24,6 @@ export interface UpdateDocumentTypeInput {
 }
 
 export interface ListDocumentTypesFilters {
-  subCategoryId?: string;
   status?: Status;
   category?: DocumentTypeCategory;
   page?: number;
@@ -55,29 +52,20 @@ export class DocumentTypeService {
         'govtCode must be empty when category is CUSTOM'
       );
     }
-    if (!(await subCategoryExists(this.prisma, input.subCategoryId))) {
-      throw new DocumentTypeServiceError('SUBCATEGORY_NOT_FOUND', 'SubCategory not found');
-    }
     if (input.category === 'GOVT') {
       const existing = await this.prisma.documentTypeMaster.findUnique({
-        where: {
-          govtCode_subCategoryId: {
-            govtCode: input.govtCode!,
-            subCategoryId: input.subCategoryId,
-          },
-        },
+        where: { govtCode: input.govtCode! },
       });
       if (existing) {
         throw new DocumentTypeServiceError(
           'DUPLICATE_GOVT_CODE',
-          'This Govt document type already exists in this SubCategory'
+          'This Govt document type already exists'
         );
       }
     }
     try {
       return await this.prisma.documentTypeMaster.create({
         data: {
-          subCategoryId: input.subCategoryId,
           name: input.name,
           category: input.category,
           govtCode: input.category === 'GOVT' ? input.govtCode! : null,
@@ -94,12 +82,12 @@ export class DocumentTypeService {
         if (target.includes('govt_code')) {
           throw new DocumentTypeServiceError(
             'DUPLICATE_GOVT_CODE',
-            'This Govt document type already exists in this SubCategory'
+            'This Govt document type already exists'
           );
         }
         throw new DocumentTypeServiceError(
           'DUPLICATE_NAME',
-          'Document type name must be unique per SubCategory'
+          'Document type name must be unique'
         );
       }
       throw err;
@@ -120,7 +108,7 @@ export class DocumentTypeService {
       if ((err as { code?: string }).code === 'P2002') {
         throw new DocumentTypeServiceError(
           'DUPLICATE_NAME',
-          'Document type name must be unique per SubCategory'
+          'Document type name must be unique'
         );
       }
       throw err;
@@ -148,7 +136,6 @@ export class DocumentTypeService {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
     const where: Prisma.DocumentTypeMasterWhereInput = {};
-    if (filters.subCategoryId) where.subCategoryId = filters.subCategoryId;
     if (filters.status) where.status = filters.status;
     if (filters.category) where.category = filters.category;
     const [data, total] = await Promise.all([

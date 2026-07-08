@@ -122,38 +122,39 @@ export async function seedScopeGraph(prisma: PrismaClient, label: string): Promi
  * their ids. Claim tables are truncated between tests, so call this per-test
  * (or in beforeEach) for whichever sub-categories a test needs.
  */
+// Statuses are global. `_subCategoryId` is kept for call-site compatibility but
+// ignored; seeding is idempotent (upsert by name) so seeding twice is a no-op.
 export async function seedStatuses(
   prisma: PrismaClient,
-  subCategoryId: string,
+  _subCategoryId: string,
   createdBy: string,
   names: { def?: string; terminal?: string } = {}
 ): Promise<{ defaultId: string; terminalId: string }> {
-  const def = await prisma.statusMaster.create({
-    data: { subCategoryId, name: names.def ?? 'Pending', isDefault: true, displayOrder: 0, createdBy },
+  const defName = names.def ?? 'Pending';
+  const terminalName = names.terminal ?? 'Approved';
+  const def = await prisma.statusMaster.upsert({
+    where: { name: defName },
+    update: {},
+    create: { name: defName, isDefault: true, displayOrder: 0, createdBy },
   });
-  const terminal = await prisma.statusMaster.create({
-    data: {
-      subCategoryId,
-      name: names.terminal ?? 'Approved',
-      isTerminal: true,
-      displayOrder: 1,
-      createdBy,
-    },
+  const terminal = await prisma.statusMaster.upsert({
+    where: { name: terminalName },
+    update: {},
+    create: { name: terminalName, isTerminal: true, displayOrder: 1, createdBy },
   });
   return { defaultId: def.id, terminalId: terminal.id };
 }
 
 /**
- * Tear down everything seedScopeGraph created. Claim-scoped rows (claims,
- * remarks, statuses, doc types, id-rules) are removed by truncateClaimsTables in
- * the suite's afterAll; here we also clear claimRule (not covered by truncate)
- * and the access graph itself, in FK-safe order.
+ * Tear down everything seedScopeGraph created. Claim-scoped rows and the global
+ * masters (claims, remarks, statuses, doc types, claim rules, id-rules) are
+ * removed by truncateClaimsTables in the suite's afterAll; here we clear the
+ * access graph itself, in FK-safe order.
  */
 export async function cleanupScopeGraph(prisma: PrismaClient, g: ScopeGraph): Promise<void> {
   const subCategoryIds = [g.subCategoryId, g.otherSubCategoryId];
   const userIds = [g.admin.id, g.teamLead.id, g.user.id, g.otherTeamLead.id];
 
-  await prisma.claimRule.deleteMany({ where: { subCategoryId: { in: subCategoryIds } } });
   await prisma.session.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.userAssignment.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });

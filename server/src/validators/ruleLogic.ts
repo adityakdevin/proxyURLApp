@@ -52,11 +52,14 @@ function cmpStr(a: string, op: RuleOperator, b: string): boolean {
   return false; // numeric operators are invalid for string fields
 }
 
-/** A validation-status field: compare the raw status directly, so `= PASSED`
- *  matches only a literal PASSED — DOCS_NOT_AVAILABLE / PENDING / IN_PROGRESS
- *  do NOT count as passed (a no-document claim must not read as validated). */
+/** A validation-status field: compare on the binary PASSED/FAILED collapse, so
+ *  rules agree with the claims report and summary (which use the same collapse).
+ *  Only a literal FAILED reads as FAILED; PASSED / PENDING / IN_PROGRESS /
+ *  DOCS_NOT_AVAILABLE all read as PASSED. `actual` is reported binary too, so a
+ *  passing claim never shows a raw PENDING next to a satisfied `= PASSED` rule. */
 function statusEval(status: string, op: RuleOperator, value: string): RuleEvaluation {
-  return { passed: cmpStr(status, op, value), actual: status };
+  const actual = binaryValidationStatus(status);
+  return { passed: cmpStr(actual, op, binaryValidationStatus(value)), actual };
 }
 
 export function evaluateRule(

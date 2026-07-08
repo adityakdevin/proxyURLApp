@@ -113,10 +113,8 @@ export default function ClaimDashboard() {
     const r = await api.get<{ data: SubCat[] }>('/user/sub-categories');
     setSubCats(r.data);
   };
-  const fetchStatusesForFilter = async (subCategoryId: string) => {
-    const r = await api.get<{ data: Status[] }>(
-      `/user/status-masters?subCategoryId=${subCategoryId}`
-    );
+  const fetchStatusesForFilter = async () => {
+    const r = await api.get<{ data: Status[] }>('/user/status-masters');
     setFilterStatuses(r.data);
   };
   const fetchAssignees = async () => {
@@ -151,12 +149,9 @@ export default function ClaimDashboard() {
   useEffect(() => {
     fetchSubCats();
     fetchAssignees();
+    fetchStatusesForFilter();
     fetchData();
   }, []);
-  useEffect(() => {
-    if (filters.subCategoryId) fetchStatusesForFilter(filters.subCategoryId);
-    else setFilterStatuses([]);
-  }, [filters.subCategoryId]);
 
   const handleAdd = async () => {
     if (!addForm.subCategoryId)
@@ -355,7 +350,6 @@ export default function ClaimDashboard() {
             onValueChange={(v) =>
               setFilters({ ...filters, workflowStatusId: v || undefined })
             }
-            disabled={!filters.subCategoryId}
           >
             <SelectTrigger>
               <SelectValue placeholder="All" />

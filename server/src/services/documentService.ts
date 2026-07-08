@@ -10,9 +10,11 @@ import { uploadsRoot } from '../lib/uploadPaths.js';
 export class DocumentService {
   constructor(private prisma: PrismaClient, private fsPort: FileSystemPort) {}
 
-  private async docTypesFor(subCategoryId: string) {
+  // Document types are global (not per-SubCategory) — classification uses the
+  // whole active set regardless of which SubCategory the claim belongs to.
+  private async docTypes() {
     return this.prisma.documentTypeMaster.findMany({
-      where: { subCategoryId, status: 'ACTIVE' },
+      where: { status: 'ACTIVE' },
       select: { id: true, name: true, category: true, govtCode: true, displayOrder: true },
     });
   }
@@ -45,7 +47,7 @@ export class DocumentService {
     }
     if (items.length === 0) return { created: 0, skipped: 0 };
 
-    const docTypes = await this.docTypesFor(claim.subCategoryId);
+    const docTypes = await this.docTypes();
     let created = 0;
     let skipped = 0;
     for (const it of items) {
@@ -73,11 +75,11 @@ export class DocumentService {
 
   async registerUpload(
     claimId: string,
-    subCategoryId: string,
+    _subCategoryId: string,
     file: { originalName: string; storedPath: string; sizeBytes: number },
     actorId: string
   ) {
-    const docTypes = await this.docTypesFor(subCategoryId);
+    const docTypes = await this.docTypes();
     return this.prisma.document.create({
       data: {
         claimId,

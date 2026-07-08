@@ -136,9 +136,7 @@ export default function ClaimUpdate() {
     try {
       const r = await api.get<{ data: ClaimDetail }>(`/claims/${id}`);
       setClaim(r.data);
-      const s = await api.get<{ data: Status[] }>(
-        `/user/status-masters?subCategoryId=${r.data.subCategory.id}`
-      );
+      const s = await api.get<{ data: Status[] }>('/user/status-masters');
       setStatuses(s.data);
       if (canReassign) {
         const u = await api.get<{ data: Assignee[] }>('/user/users-in-scope');

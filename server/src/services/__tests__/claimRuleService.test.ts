@@ -31,14 +31,14 @@ describe('ClaimRuleService', () => {
 
   beforeEach(async () => {
     await truncateClaimsTables(prisma);
-    await prisma.claimRule.deleteMany({ where: { subCategoryId } });
-    const st = await prisma.statusMaster.create({ data: { subCategoryId, name: 'Pending', isDefault: true, createdBy: adminId, updatedBy: adminId } });
+    await prisma.claimRule.deleteMany({});
+    const st = await prisma.statusMaster.create({ data: { name: 'Pending', isDefault: true, createdBy: adminId, updatedBy: adminId } });
     workflowStatusId = st.id;
-    await prisma.documentTypeMaster.create({ data: { subCategoryId, name: 'Aadhar Card', category: 'GOVT', govtCode: 'AADHAR', displayOrder: 1, createdBy: adminId, updatedBy: adminId } });
+    await prisma.documentTypeMaster.create({ data: { name: 'Aadhar Card', category: 'GOVT', govtCode: 'AADHAR', displayOrder: 1, createdBy: adminId, updatedBy: adminId } });
   });
 
   afterAll(async () => {
-    await prisma.claimRule.deleteMany({ where: { subCategoryId } });
+    await prisma.claimRule.deleteMany({});
     await truncateClaimsTables(prisma);
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });
@@ -48,43 +48,34 @@ describe('ClaimRuleService', () => {
 
   it('create rejects an operator invalid for the field', async () => {
     await expect(
-      service.create({ subCategoryId, name: 'bad', field: 'QR_STATUS', operator: 'GTE', value: 'PASSED' }, adminId)
+      service.create({ name: 'bad', field: 'QR_STATUS', operator: 'GTE', value: 'PASSED' }, adminId)
     ).rejects.toMatchObject({ code: 'INVALID_RULE' });
   });
 
   it('create rejects a non-integer value for a numeric field', async () => {
     await expect(
-      service.create({ subCategoryId, name: 'bad', field: 'DOCUMENT_COUNT', operator: 'GTE', value: 'three' }, adminId)
+      service.create({ name: 'bad', field: 'DOCUMENT_COUNT', operator: 'GTE', value: 'three' }, adminId)
     ).rejects.toMatchObject({ code: 'INVALID_RULE' });
   });
 
   it('create rejects a non-boolean value for ASSIGNED', async () => {
     await expect(
-      service.create({ subCategoryId, name: 'bad', field: 'ASSIGNED', operator: 'EQ', value: 'yes' }, adminId)
+      service.create({ name: 'bad', field: 'ASSIGNED', operator: 'EQ', value: 'yes' }, adminId)
     ).rejects.toMatchObject({ code: 'INVALID_RULE' });
   });
 
   it('create accepts ASSIGNED with a boolean value', async () => {
     const r = await service.create(
-      { subCategoryId, name: 'is assigned', field: 'ASSIGNED', operator: 'EQ', value: 'true' },
+      { name: 'is assigned', field: 'ASSIGNED', operator: 'EQ', value: 'true' },
       adminId
     );
     expect(r.value).toBe('true');
   });
 
-  it('create rejects a non-existent SubCategory', async () => {
-    await expect(
-      service.create(
-        { subCategoryId: '00000000-0000-0000-0000-000000000000', name: 'x', field: 'DOCUMENT_COUNT', operator: 'GTE', value: '1' },
-        adminId
-      )
-    ).rejects.toMatchObject({ code: 'SUBCATEGORY_NOT_FOUND' });
-  });
-
   it('evaluateForClaim gathers facts and evaluates active rules', async () => {
-    await service.create({ subCategoryId, name: 'min docs', field: 'DOCUMENT_COUNT', operator: 'GTE', value: '1' }, adminId);
-    await service.create({ subCategoryId, name: 'has aadhar', field: 'HAS_DOCUMENT_TYPE', operator: 'EQ', value: 'Aadhar Card' }, adminId);
-    const aadharType = await prisma.documentTypeMaster.findFirst({ where: { subCategoryId, name: 'Aadhar Card' } });
+    await service.create({ name: 'min docs', field: 'DOCUMENT_COUNT', operator: 'GTE', value: '1' }, adminId);
+    await service.create({ name: 'has aadhar', field: 'HAS_DOCUMENT_TYPE', operator: 'EQ', value: 'Aadhar Card' }, adminId);
+    const aadharType = await prisma.documentTypeMaster.findFirst({ where: { name: 'Aadhar Card' } });
     const claim = await prisma.claim.create({ data: { claimId: 'C-RULE', subCategoryId, workflowStatusId, createdBy: adminId, updatedBy: adminId } });
     await prisma.document.create({ data: { claimId: claim.id, source: 'UPLOADED', fileName: 'a.png', storagePath: `/x/${claim.id}/a.png`, documentTypeId: aadharType!.id } });
 

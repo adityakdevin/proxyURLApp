@@ -167,15 +167,12 @@ model SubCategory {
   createdBy   String?  @map("created_by") @db.VarChar(36)
   updatedBy   String?  @map("updated_by") @db.VarChar(36)
 
-  category            Category             @relation(fields: [categoryId], references: [id])
-  urlConfigurations   UrlConfiguration[]
-  statusMasters       StatusMaster[]
-  documentTypeMasters DocumentTypeMaster[]
-  claimIdRule         ClaimIdRule?
-  claims              Claim[]
-  scanJobs            ScanJob[]
-  claimRules          ClaimRule[]
-  userAccess          UserSubCategory[]
+  category          Category           @relation(fields: [categoryId], references: [id])
+  urlConfigurations UrlConfiguration[]
+  claimIdRule       ClaimIdRule?
+  claims            Claim[]
+  scanJobs          ScanJob[]
+  userAccess        UserSubCategory[]
 
   @@unique([name, categoryId])
   @@map("sub_categories")
@@ -302,49 +299,40 @@ model ProxyMetric {
 }
 
 model StatusMaster {
-  id            String   @id @default(uuid()) @db.VarChar(36)
-  subCategoryId String   @map("sub_category_id") @db.VarChar(36)
-  name          String   @db.VarChar(100)
-  displayOrder  Int      @default(0) @map("display_order")
-  isDefault     Boolean  @default(false) @map("is_default")
-  isTerminal    Boolean  @default(false) @map("is_terminal")
-  status        Status   @default(ACTIVE)
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  createdBy     String?  @map("created_by") @db.VarChar(36)
-  updatedBy     String?  @map("updated_by") @db.VarChar(36)
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  name         String   @unique @db.VarChar(100)
+  displayOrder Int      @default(0) @map("display_order")
+  isDefault    Boolean  @default(false) @map("is_default")
+  isTerminal   Boolean  @default(false) @map("is_terminal")
+  status       Status   @default(ACTIVE)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdBy    String?  @map("created_by") @db.VarChar(36)
+  updatedBy    String?  @map("updated_by") @db.VarChar(36)
 
-  subCategory         SubCategory   @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
   claims              Claim[]       @relation("ClaimWorkflowStatus")
   remarksStatusBefore ClaimRemark[] @relation("ClaimRemarkStatusBefore")
   remarksStatusAfter  ClaimRemark[] @relation("ClaimRemarkStatusAfter")
 
-  @@unique([name, subCategoryId])
-  @@index([subCategoryId])
   @@map("status_masters")
 }
 
 model DocumentTypeMaster {
-  id            String               @id @default(uuid()) @db.VarChar(36)
-  subCategoryId String               @map("sub_category_id") @db.VarChar(36)
-  name          String               @db.VarChar(100)
-  category      DocumentTypeCategory
-  govtCode      GovtDocumentCode?    @map("govt_code")
-  displayOrder  Int                  @default(0) @map("display_order")
+  id           String               @id @default(uuid()) @db.VarChar(36)
+  name         String               @unique @db.VarChar(100)
+  category     DocumentTypeCategory
+  govtCode     GovtDocumentCode?    @unique @map("govt_code")
+  displayOrder Int                  @default(0) @map("display_order")
   // Must a claim carry this type to pass FULL validation? (default preserves old behaviour)
-  isRequired    Boolean              @default(true) @map("is_required")
-  status        Status               @default(ACTIVE)
-  createdAt     DateTime             @default(now()) @map("created_at")
-  updatedAt     DateTime             @updatedAt @map("updated_at")
-  createdBy     String?              @map("created_by") @db.VarChar(36)
-  updatedBy     String?              @map("updated_by") @db.VarChar(36)
+  isRequired   Boolean              @default(true) @map("is_required")
+  status       Status               @default(ACTIVE)
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+  createdBy    String?              @map("created_by") @db.VarChar(36)
+  updatedBy    String?              @map("updated_by") @db.VarChar(36)
 
-  subCategory SubCategory @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
-  documents   Document[]
+  documents Document[]
 
-  @@unique([name, subCategoryId])
-  @@unique([govtCode, subCategoryId])
-  @@index([subCategoryId])
   @@map("document_type_masters")
 }
 
@@ -596,21 +584,17 @@ model ValidationFinding {
 }
 
 model ClaimRule {
-  id            String       @id @default(uuid()) @db.VarChar(36)
-  subCategoryId String       @map("sub_category_id") @db.VarChar(36)
-  name          String       @db.VarChar(150)
-  field         RuleField
-  operator      RuleOperator
-  value         String       @db.VarChar(150)
-  status        Status       @default(ACTIVE)
-  displayOrder  Int          @default(0) @map("display_order")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
-  createdBy     String?      @map("created_by") @db.VarChar(36)
-  updatedBy     String?      @map("updated_by") @db.VarChar(36)
+  id           String       @id @default(uuid()) @db.VarChar(36)
+  name         String       @unique @db.VarChar(150)
+  field        RuleField
+  operator     RuleOperator
+  value        String       @db.VarChar(150)
+  status       Status       @default(ACTIVE)
+  displayOrder Int          @default(0) @map("display_order")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  createdBy    String?      @map("created_by") @db.VarChar(36)
+  updatedBy    String?      @map("updated_by") @db.VarChar(36)
 
-  subCategory SubCategory @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
-
-  @@index([subCategoryId])
   @@map("claim_rules")
 }

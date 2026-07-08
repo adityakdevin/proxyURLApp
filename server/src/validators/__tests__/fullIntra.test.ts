@@ -51,10 +51,10 @@ describe('FULL + INTRA validators', () => {
   beforeEach(async () => {
     await truncateClaimsTables(prisma);
     const a = await prisma.documentTypeMaster.create({
-      data: { subCategoryId, name: 'Aadhar Card', category: 'GOVT', govtCode: 'AADHAR', displayOrder: 1, createdBy: adminId, updatedBy: adminId },
+      data: { name: 'Aadhar Card', category: 'GOVT', govtCode: 'AADHAR', displayOrder: 1, createdBy: adminId, updatedBy: adminId },
     });
     const b = await prisma.documentTypeMaster.create({
-      data: { subCategoryId, name: 'PAN Card', category: 'GOVT', govtCode: 'PAN', displayOrder: 2, createdBy: adminId, updatedBy: adminId },
+      data: { name: 'PAN Card', category: 'GOVT', govtCode: 'PAN', displayOrder: 2, createdBy: adminId, updatedBy: adminId },
     });
     typeAId = a.id;
     typeBId = b.id;

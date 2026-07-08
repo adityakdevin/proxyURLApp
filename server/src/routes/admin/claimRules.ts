@@ -11,13 +11,12 @@ const getService = (req: Request) => new ClaimRuleService(prismaOf(req));
 
 const handleErr = makeErrorHandler(ClaimRuleServiceError, {
   NOT_FOUND: 404,
-  SUBCATEGORY_NOT_FOUND: 404,
+  DUPLICATE_RULE_NAME: 409,
 });
 
 router.get(
   '/',
   [
-    query('subCategoryId').optional().isUUID(),
     query('status').optional().isIn(['ACTIVE', 'INACTIVE']),
     query('page').optional().isInt({ min: 1 }).toInt(),
     query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
@@ -26,7 +25,6 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const r = await getService(req).list({
-        subCategoryId: req.query.subCategoryId as string | undefined,
         status: req.query.status as 'ACTIVE' | 'INACTIVE' | undefined,
         page: req.query.page as unknown as number | undefined,
         limit: req.query.limit as unknown as number | undefined,
@@ -44,7 +42,6 @@ router.get(
 router.post(
   '/',
   [
-    body('subCategoryId').isUUID(),
     body('name').isString().trim().notEmpty().isLength({ max: 150 }),
     body('field').isIn(FIELDS),
     body('operator').isIn(OPERATORS),

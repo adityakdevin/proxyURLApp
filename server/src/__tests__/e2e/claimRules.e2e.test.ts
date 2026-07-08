@@ -45,7 +45,6 @@ describe('E2E: claim rules + claim-id rules', () => {
     const claimId = created.body.data.id as string;
 
     const rule = await admin.post('/api/admin/claim-rules').send({
-      subCategoryId: g.subCategoryId,
       name: 'At least one document',
       field: 'DOCUMENT_COUNT',
       operator: 'GTE',

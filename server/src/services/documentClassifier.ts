@@ -9,7 +9,7 @@ export interface ClassifiableType {
 }
 
 /**
- * Classify a filename to one of the SubCategory's ACTIVE DocumentTypeMasters by
+ * Classify a filename to one of the global ACTIVE DocumentTypeMasters by
  * token match: GOVT → govtCode or name; CUSTOM → name. One match → assign;
  * multiple → lowest displayOrder (tie → name); none → null.
  */

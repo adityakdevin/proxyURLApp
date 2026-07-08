@@ -27,6 +27,8 @@ export async function truncateClaimsTables(client: PrismaClient): Promise<void> 
   await client.claimRemark.deleteMany({});
   await client.claim.deleteMany({});
   await client.claimIdRule.deleteMany({});
+  // Global masters — cleared so each test starts from a known-empty set.
+  await client.claimRule.deleteMany({});
   await client.documentTypeMaster.deleteMany({});
   await client.statusMaster.deleteMany({});
 }

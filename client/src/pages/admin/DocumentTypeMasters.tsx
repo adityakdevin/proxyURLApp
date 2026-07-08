@@ -30,10 +30,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/components/ui/use-toast';
-import {
-  SubCategoryPicker,
-  SubCategoryPickerValue,
-} from '@/components/shared/SubCategoryPicker';
 
 type Category = 'GOVT' | 'CUSTOM';
 type GovtCode = 'AADHAR' | 'PAN' | 'DL' | 'PASSPORT' | 'VOTER_ID' | 'RATION_CARD';
@@ -48,7 +44,6 @@ const GOVT_LABELS: Record<GovtCode, string> = {
 
 interface DocType {
   id: string;
-  subCategoryId: string;
   name: string;
   category: Category;
   govtCode: GovtCode | null;
@@ -63,7 +58,6 @@ export default function DocumentTypeMasters() {
   const [data, setData] = useState<DocType[]>([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const [isLoading, setIsLoading] = useState(true);
-  const [picker, setPicker] = useState<Partial<SubCategoryPickerValue>>({});
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selected, setSelected] = useState<DocType | null>(null);
@@ -79,15 +73,10 @@ export default function DocumentTypeMasters() {
   // so the "code already used" filter is accurate regardless of pagination.
   const [allGovtDocs, setAllGovtDocs] = useState<DocType[]>([]);
 
-  const fetchAllGovtDocs = async (subCategoryId?: string) => {
-    const sc = subCategoryId ?? picker.subCategoryId;
-    if (!sc) {
-      setAllGovtDocs([]);
-      return;
-    }
+  const fetchAllGovtDocs = async () => {
     try {
       const r = await api.get<PaginatedResponse<DocType>>(
-        `/admin/document-type-masters?subCategoryId=${sc}&category=GOVT&status=ACTIVE&limit=100`
+        `/admin/document-type-masters?category=GOVT&status=ACTIVE&limit=100`
       );
       setAllGovtDocs(r.data);
     } catch {
@@ -98,10 +87,9 @@ export default function DocumentTypeMasters() {
   const fetchData = async (page = 1, limit = 10) => {
     setIsLoading(true);
     try {
-      const url = picker.subCategoryId
-        ? `/admin/document-type-masters?page=${page}&limit=${limit}&subCategoryId=${picker.subCategoryId}`
-        : `/admin/document-type-masters?page=${page}&limit=${limit}`;
-      const r = await api.get<PaginatedResponse<DocType>>(url);
+      const r = await api.get<PaginatedResponse<DocType>>(
+        `/admin/document-type-masters?page=${page}&limit=${limit}`
+      );
       setData(r.data);
       setPagination(r.pagination);
     } catch (e) {
@@ -118,7 +106,7 @@ export default function DocumentTypeMasters() {
   useEffect(() => {
     fetchData();
     fetchAllGovtDocs();
-  }, [picker.subCategoryId]);
+  }, []);
 
   const usedCodes = useMemo(
     () =>
@@ -135,8 +123,6 @@ export default function DocumentTypeMasters() {
   );
 
   const handleSubmit = async () => {
-    if (!picker.subCategoryId)
-      return toast({ title: 'Pick a SubCategory', variant: 'destructive' });
     if (formData.category === 'GOVT' && !formData.govtCode)
       return toast({ title: 'Pick a Govt code', variant: 'destructive' });
     if (!formData.name.trim()) return toast({ title: 'Name required', variant: 'destructive' });
@@ -150,7 +136,6 @@ export default function DocumentTypeMasters() {
         });
       } else {
         const payload: Record<string, unknown> = {
-          subCategoryId: picker.subCategoryId,
           name: formData.name,
           category: formData.category,
           displayOrder: formData.displayOrder,
@@ -310,15 +295,10 @@ export default function DocumentTypeMasters() {
             setFormData({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0, isRequired: true });
             setIsFormOpen(true);
           }}
-          disabled={!picker.subCategoryId}
         >
           <Plus className="mr-2 h-4 w-4" />
           Add Document Type
         </Button>
-      </div>
-
-      <div className="mb-4 p-4 bg-white border rounded-md">
-        <SubCategoryPicker value={picker} onChange={setPicker} />
       </div>
 
       <DataTable

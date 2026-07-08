@@ -18,7 +18,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/components/ui/use-toast';
-import { SubCategoryPicker, SubCategoryPickerValue } from '@/components/shared/SubCategoryPicker';
 
 type RuleField =
   | 'DOCUMENT_COUNT'
@@ -63,7 +62,6 @@ export default function ClaimRules() {
   const [data, setData] = useState<Rule[]>([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const [isLoading, setIsLoading] = useState(true);
-  const [picker, setPicker] = useState<Partial<SubCategoryPickerValue>>({});
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selected, setSelected] = useState<Rule | null>(null);
@@ -80,10 +78,9 @@ export default function ClaimRules() {
   const fetchData = async (page = 1, limit = 10) => {
     setIsLoading(true);
     try {
-      const url = picker.subCategoryId
-        ? `/admin/claim-rules?page=${page}&limit=${limit}&subCategoryId=${picker.subCategoryId}`
-        : `/admin/claim-rules?page=${page}&limit=${limit}`;
-      const r = await api.get<PaginatedResponse<Rule>>(url);
+      const r = await api.get<PaginatedResponse<Rule>>(
+        `/admin/claim-rules?page=${page}&limit=${limit}`
+      );
       setData(r.data);
       setPagination(r.pagination);
     } catch (e) {
@@ -95,18 +92,16 @@ export default function ClaimRules() {
 
   useEffect(() => {
     fetchData();
-    if (picker.subCategoryId) {
-      api
-        .get<{ data: { name: string }[] }>(`/admin/document-type-masters?subCategoryId=${picker.subCategoryId}&limit=100`)
-        .then((r) => setDocTypeNames(r.data.map((d) => d.name)))
-        .catch(() => setDocTypeNames([]));
-      api
-        .get<{ data: { name: string }[] }>(`/admin/status-masters?subCategoryId=${picker.subCategoryId}&limit=100`)
-        .then((r) => setStatusNames(r.data.map((s) => s.name)))
-        .catch(() => setStatusNames([]));
-    }
+    api
+      .get<{ data: { name: string }[] }>('/admin/document-type-masters?limit=100')
+      .then((r) => setDocTypeNames(r.data.map((d) => d.name)))
+      .catch(() => setDocTypeNames([]));
+    api
+      .get<{ data: { name: string }[] }>('/admin/status-masters?limit=100')
+      .then((r) => setStatusNames(r.data.map((s) => s.name)))
+      .catch(() => setStatusNames([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picker.subCategoryId]);
+  }, []);
 
   const valueOptions = useMemo((): string[] | null => {
     if (form.field === 'ASSIGNED') return ['true', 'false'];
@@ -124,7 +119,6 @@ export default function ClaimRules() {
   };
 
   const handleSubmit = async () => {
-    if (!picker.subCategoryId) return toast({ title: 'Pick a SubCategory', variant: 'destructive' });
     if (!form.name.trim()) return toast({ title: 'Name required', variant: 'destructive' });
     if (!form.value.trim()) return toast({ title: 'Value required', variant: 'destructive' });
     setIsSubmitting(true);
@@ -138,7 +132,6 @@ export default function ClaimRules() {
         });
       } else {
         await api.post('/admin/claim-rules', {
-          subCategoryId: picker.subCategoryId,
           name: form.name,
           field: form.field,
           operator: form.operator,
@@ -248,13 +241,9 @@ export default function ClaimRules() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Claim Rules</h1>
-        <Button onClick={openAdd} disabled={!picker.subCategoryId}>
+        <Button onClick={openAdd}>
           <Plus className="mr-2 h-4 w-4" /> Add Rule
         </Button>
-      </div>
-
-      <div className="mb-4 p-4 bg-white border rounded-md">
-        <SubCategoryPicker value={picker} onChange={setPicker} />
       </div>
 
       <DataTable

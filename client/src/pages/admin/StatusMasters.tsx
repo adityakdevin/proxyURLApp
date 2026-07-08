@@ -23,14 +23,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/components/ui/use-toast';
-import {
-  SubCategoryPicker,
-  SubCategoryPickerValue,
-} from '@/components/shared/SubCategoryPicker';
 
 interface StatusMaster {
   id: string;
-  subCategoryId: string;
   name: string;
   displayOrder: number;
   isDefault: boolean;
@@ -44,7 +39,6 @@ export default function StatusMasters() {
   const [data, setData] = useState<StatusMaster[]>([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const [isLoading, setIsLoading] = useState(true);
-  const [picker, setPicker] = useState<Partial<SubCategoryPickerValue>>({});
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selected, setSelected] = useState<StatusMaster | null>(null);
@@ -59,10 +53,9 @@ export default function StatusMasters() {
   const fetchData = async (page = 1, limit = 10) => {
     setIsLoading(true);
     try {
-      const url = picker.subCategoryId
-        ? `/admin/status-masters?page=${page}&limit=${limit}&subCategoryId=${picker.subCategoryId}`
-        : `/admin/status-masters?page=${page}&limit=${limit}`;
-      const r = await api.get<PaginatedResponse<StatusMaster>>(url);
+      const r = await api.get<PaginatedResponse<StatusMaster>>(
+        `/admin/status-masters?page=${page}&limit=${limit}`
+      );
       setData(r.data);
       setPagination(r.pagination);
     } catch (e) {
@@ -78,22 +71,15 @@ export default function StatusMasters() {
 
   useEffect(() => {
     fetchData();
-  }, [picker.subCategoryId]);
+  }, []);
 
   const handleSubmit = async () => {
-    if (!picker.subCategoryId)
-      return toast({
-        title: 'Validation',
-        description: 'Pick a Sub-Category',
-        variant: 'destructive',
-      });
     if (!formData.name.trim())
       return toast({ title: 'Validation', description: 'Name required', variant: 'destructive' });
     setIsSubmitting(true);
     try {
-      const payload = { subCategoryId: picker.subCategoryId, ...formData };
       if (selected) await api.put(`/admin/status-masters/${selected.id}`, formData);
-      else await api.post('/admin/status-masters', payload);
+      else await api.post('/admin/status-masters', formData);
       toast({ title: 'Saved' });
       setIsFormOpen(false);
       fetchData(pagination.page, pagination.limit);
@@ -230,15 +216,10 @@ export default function StatusMasters() {
             setFormData({ name: '', displayOrder: 0, isDefault: false, isTerminal: false });
             setIsFormOpen(true);
           }}
-          disabled={!picker.subCategoryId}
         >
           <Plus className="mr-2 h-4 w-4" />
           Add Status
         </Button>
-      </div>
-
-      <div className="mb-4 p-4 bg-white border rounded-md">
-        <SubCategoryPicker value={picker} onChange={setPicker} />
       </div>
 
       <DataTable

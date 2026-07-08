@@ -1,8 +1,6 @@
 import { PrismaClient, Prisma, Status, StatusMaster } from '@prisma/client';
-import { subCategoryExists } from '../lib/subCategoryGuard.js';
 
 export interface CreateStatusMasterInput {
-  subCategoryId: string;
   name: string;
   displayOrder?: number;
   isDefault?: boolean;
@@ -19,7 +17,6 @@ export interface UpdateStatusMasterInput {
 }
 
 export interface ListStatusMastersFilters {
-  subCategoryId?: string;
   status?: Status;
   page?: number;
   limit?: number;
@@ -35,20 +32,16 @@ export class StatusMasterService {
   constructor(private prisma: PrismaClient) {}
 
   async create(input: CreateStatusMasterInput, actorId: string): Promise<StatusMaster> {
-    if (!(await subCategoryExists(this.prisma, input.subCategoryId))) {
-      throw new StatusMasterServiceError('SUBCATEGORY_NOT_FOUND', 'SubCategory not found');
-    }
     try {
       return await this.prisma.$transaction(async (tx) => {
         if (input.isDefault) {
           await tx.statusMaster.updateMany({
-            where: { subCategoryId: input.subCategoryId, isDefault: true },
+            where: { isDefault: true },
             data: { isDefault: false },
           });
         }
         return tx.statusMaster.create({
           data: {
-            subCategoryId: input.subCategoryId,
             name: input.name,
             displayOrder: input.displayOrder ?? 0,
             isDefault: input.isDefault ?? false,
@@ -60,12 +53,12 @@ export class StatusMasterService {
         });
       });
     } catch (err) {
-      // Translate the unique(name, subCategoryId) violation here (was handled
-      // inline in the route, inconsistently with sibling services).
+      // Translate the unique(name) violation here (was handled inline in the
+      // route, inconsistently with sibling services).
       if ((err as { code?: string }).code === 'P2002') {
         throw new StatusMasterServiceError(
           'DUPLICATE_STATUS_NAME',
-          'Status name must be unique per SubCategory'
+          'Status name must be unique'
         );
       }
       throw err;
@@ -92,7 +85,7 @@ export class StatusMasterService {
       }
       if (input.isDefault) {
         await tx.statusMaster.updateMany({
-          where: { subCategoryId: existing.subCategoryId, isDefault: true, id: { not: id } },
+          where: { isDefault: true, id: { not: id } },
           data: { isDefault: false },
         });
       }
@@ -158,7 +151,6 @@ export class StatusMasterService {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
     const where: Prisma.StatusMasterWhereInput = {};
-    if (filters.subCategoryId) where.subCategoryId = filters.subCategoryId;
     if (filters.status) where.status = filters.status;
     const [data, total] = await Promise.all([
       this.prisma.statusMaster.findMany({

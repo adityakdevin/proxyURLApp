@@ -136,9 +136,9 @@ async function main() {
   const status: Record<string, { id: string }> = {};
   for (const s of statusDefs) {
     const row = await prisma.statusMaster.upsert({
-      where: { name_subCategoryId: { name: s.name, subCategoryId: subCategory.id } },
+      where: { name: s.name },
       update: { displayOrder: s.displayOrder, isDefault: s.isDefault, isTerminal: s.isTerminal },
-      create: { subCategoryId: subCategory.id, ...s, ...audit },
+      create: { ...s, ...audit },
     });
     status[s.name] = { id: row.id };
   }
@@ -153,10 +153,9 @@ async function main() {
   const docTypeIds: Record<string, string> = {};
   for (const d of docTypes) {
     const row = await prisma.documentTypeMaster.upsert({
-      where: { name_subCategoryId: { name: d.name, subCategoryId: subCategory.id } },
+      where: { name: d.name },
       update: {},
       create: {
-        subCategoryId: subCategory.id,
         name: d.name,
         category: d.category,
         govtCode: d.govtCode,
@@ -202,13 +201,10 @@ async function main() {
     { name: 'Full scan passed', field: 'FULL_STATUS', operator: 'EQ', value: 'PASSED', order: 10 },
   ];
   for (const r of claimRules) {
-    const exists = await prisma.claimRule.findFirst({
-      where: { subCategoryId: subCategory.id, name: r.name },
-    });
+    const exists = await prisma.claimRule.findFirst({ where: { name: r.name } });
     if (!exists) {
       await prisma.claimRule.create({
         data: {
-          subCategoryId: subCategory.id,
           name: r.name,
           field: r.field,
           operator: r.operator,

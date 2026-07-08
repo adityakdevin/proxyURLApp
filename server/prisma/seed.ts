@@ -51,27 +51,21 @@ async function main() {
     { name: 'Verified', displayOrder: 3, isDefault: false, isTerminal: false },
     { name: 'Closed', displayOrder: 4, isDefault: false, isTerminal: true },
   ];
-  const activeSubs = await prisma.subCategory.findMany({ where: { status: 'ACTIVE' } });
-  for (const sub of activeSubs) {
-    const hasDefault = await prisma.statusMaster.findFirst({
-      where: { subCategoryId: sub.id, isDefault: true },
+  // Statuses are global (not per-SubCategory). Seed the standard set once.
+  const hasDefault = await prisma.statusMaster.findFirst({ where: { isDefault: true } });
+  if (!hasDefault) {
+    await prisma.statusMaster.createMany({
+      data: STANDARD_STATUSES.map((s) => ({
+        ...s,
+        createdBy: admin.id,
+        updatedBy: admin.id,
+      })),
     });
-    if (!hasDefault) {
-      await prisma.statusMaster.createMany({
-        data: STANDARD_STATUSES.map((s) => ({
-          ...s,
-          subCategoryId: sub.id,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        })),
-      });
-    }
   }
+  const activeSubs = await prisma.subCategory.findMany({ where: { status: 'ACTIVE' } });
 
-  // Claim rules: the canonical set (one predicate per RuleField), dev-managed here
-  // and replicated onto EVERY active Sub-Category — admins don't edit these.
-  // Source of truth mirrors seedDemo.ts. ponytail: re-run db:seed after adding a
-  // Sub-Category to backfill its rules.
+  // Claim rules: the canonical global set (one predicate per RuleField),
+  // dev-managed here. Source of truth mirrors seedDemo.ts.
   const CLAIM_RULES: {
     name: string;
     field: RuleField;
@@ -90,34 +84,30 @@ async function main() {
     { name: 'Intra-claim consistency passed', field: 'INTRA_STATUS', operator: 'EQ', value: 'PASSED', displayOrder: 9 },
     { name: 'Full scan passed', field: 'FULL_STATUS', operator: 'EQ', value: 'PASSED', displayOrder: 10 },
   ];
-  for (const sub of activeSubs) {
-    const hasRules = await prisma.claimRule.findFirst({ where: { subCategoryId: sub.id } });
-    if (!hasRules) {
-      await prisma.claimRule.createMany({
-        data: CLAIM_RULES.map((r) => ({
-          ...r,
-          subCategoryId: sub.id,
-          createdBy: admin.id,
-          updatedBy: admin.id,
-        })),
-      });
-    }
+  // Claim rules are global (not per-SubCategory). Seed the canonical set once.
+  const hasRules = await prisma.claimRule.findFirst();
+  if (!hasRules) {
+    await prisma.claimRule.createMany({
+      data: CLAIM_RULES.map((r) => ({
+        ...r,
+        createdBy: admin.id,
+        updatedBy: admin.id,
+      })),
+    });
   }
 
   const sampleSub = activeSubs[0];
   if (sampleSub) {
     const defaultStatus = await prisma.statusMaster.findFirst({
-      where: { subCategoryId: sampleSub.id, isDefault: true },
+      where: { isDefault: true },
     });
 
-    const docTypeExists = await prisma.documentTypeMaster.findFirst({
-      where: { subCategoryId: sampleSub.id },
-    });
+    // Document types are global (not per-SubCategory).
+    const docTypeExists = await prisma.documentTypeMaster.findFirst();
     if (!docTypeExists) {
       await prisma.documentTypeMaster.createMany({
         data: [
           {
-            subCategoryId: sampleSub.id,
             name: 'Aadhar Card',
             category: 'GOVT',
             govtCode: 'AADHAR',
@@ -126,7 +116,6 @@ async function main() {
             updatedBy: admin.id,
           },
           {
-            subCategoryId: sampleSub.id,
             name: 'PAN Card',
             category: 'GOVT',
             govtCode: 'PAN',
@@ -135,7 +124,6 @@ async function main() {
             updatedBy: admin.id,
           },
           {
-            subCategoryId: sampleSub.id,
             name: 'Bill',
             category: 'CUSTOM',
             displayOrder: 3,

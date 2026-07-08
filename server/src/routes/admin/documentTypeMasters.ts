@@ -15,13 +15,11 @@ const handleErr = makeErrorHandler(DocumentTypeServiceError, {
   DUPLICATE_GOVT_CODE: 409,
   DUPLICATE_NAME: 409,
   NOT_FOUND: 404,
-  SUBCATEGORY_NOT_FOUND: 404,
 });
 
 router.get(
   '/',
   [
-    query('subCategoryId').optional().isUUID(),
     query('status').optional().isIn(['ACTIVE', 'INACTIVE']),
     query('category').optional().isIn(['GOVT', 'CUSTOM']),
     query('page').optional().isInt({ min: 1 }).toInt(),
@@ -31,7 +29,6 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await getService(req).list({
-        subCategoryId: req.query.subCategoryId as string | undefined,
         status: req.query.status as 'ACTIVE' | 'INACTIVE' | undefined,
         category: req.query.category as 'GOVT' | 'CUSTOM' | undefined,
         page: req.query.page as unknown as number | undefined,
@@ -55,7 +52,6 @@ router.get(
 router.post(
   '/',
   [
-    body('subCategoryId').isUUID(),
     body('name').isString().trim().notEmpty().isLength({ max: 100 }),
     body('category').isIn(['GOVT', 'CUSTOM']),
     body('govtCode').optional({ nullable: true }).isIn(GOVT_CODES),

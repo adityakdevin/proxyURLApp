@@ -40,12 +40,12 @@ describe('ruleLogic', () => {
   it('numeric operator on non-numeric field is false', () => {
     expect(evaluateRule({ field: 'QR_STATUS', operator: 'GTE', value: 'PASSED' }, facts).passed).toBe(false);
   });
-  it('validation status compares against the raw value', () => {
-    // Only a literal PASSED satisfies "= PASSED"; a not-yet-validated or
-    // no-document claim must not read as passed.
-    for (const s of ['PENDING', 'IN_PROGRESS', 'DOCS_NOT_AVAILABLE', 'FAILED']) {
-      expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED' }, { ...facts, spellCheckStatus: s })).toEqual({ passed: false, actual: s });
+  it('validation status compares on the binary PASSED/FAILED collapse', () => {
+    // Everything except a literal FAILED reads as PASSED, matching the report.
+    for (const s of ['PASSED', 'PENDING', 'IN_PROGRESS', 'DOCS_NOT_AVAILABLE']) {
+      expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED' }, { ...facts, spellCheckStatus: s })).toEqual({ passed: true, actual: 'PASSED' });
     }
-    expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED' }, { ...facts, spellCheckStatus: 'PASSED' })).toEqual({ passed: true, actual: 'PASSED' });
+    // Only a literal FAILED fails "= PASSED".
+    expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED' }, { ...facts, spellCheckStatus: 'FAILED' })).toEqual({ passed: false, actual: 'FAILED' });
   });
 });

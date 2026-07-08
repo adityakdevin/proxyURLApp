@@ -46,7 +46,7 @@ describe('ValidationService + drainer', () => {
     await truncateClaimsTables(prisma);
     await prisma.validationRun.deleteMany({ where: { claim: { subCategoryId } } });
     const st = await prisma.statusMaster.create({
-      data: { subCategoryId, name: 'Pending', isDefault: true, createdBy: adminId, updatedBy: adminId },
+      data: { name: 'Pending', isDefault: true, createdBy: adminId, updatedBy: adminId },
     });
     workflowStatusId = st.id;
   });

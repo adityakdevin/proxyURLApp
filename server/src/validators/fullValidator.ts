@@ -5,9 +5,9 @@ export const fullValidator: Validator = {
   key: 'FULL',
   column: 'fullScanStatus',
   async run(ctx) {
-    // Only REQUIRED active types gate FULL completeness.
+    // Only REQUIRED active types gate FULL completeness (global doc-type set).
     const types = await ctx.prisma.documentTypeMaster.findMany({
-      where: { subCategoryId: ctx.claim.subCategoryId, status: 'ACTIVE', isRequired: true },
+      where: { status: 'ACTIVE', isRequired: true },
       select: { id: true, name: true },
     });
     const presentIds = new Set(

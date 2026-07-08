@@ -12,7 +12,6 @@ const getService = (req: Request) => new StatusMasterService(prismaOf(req));
 
 const handleErr = makeErrorHandler(StatusMasterServiceError, {
   NOT_FOUND: 404,
-  SUBCATEGORY_NOT_FOUND: 404,
   STATUS_IN_USE: 409,
   STATUS_IS_DEFAULT: 409,
   DUPLICATE_STATUS_NAME: 409,
@@ -21,7 +20,6 @@ const handleErr = makeErrorHandler(StatusMasterServiceError, {
 router.get(
   '/',
   [
-    query('subCategoryId').optional().isUUID(),
     query('status').optional().isIn(['ACTIVE', 'INACTIVE']),
     query('page').optional().isInt({ min: 1 }).toInt(),
     query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
@@ -30,7 +28,6 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await getService(req).list({
-        subCategoryId: req.query.subCategoryId as string | undefined,
         status: req.query.status as 'ACTIVE' | 'INACTIVE' | undefined,
         page: req.query.page as unknown as number | undefined,
         limit: req.query.limit as unknown as number | undefined,
@@ -53,7 +50,6 @@ router.get(
 router.post(
   '/',
   [
-    body('subCategoryId').isUUID(),
     body('name').isString().trim().notEmpty().isLength({ max: 100 }),
     body('displayOrder').optional().isInt({ min: 0 }),
     body('isDefault').optional().isBoolean(),
