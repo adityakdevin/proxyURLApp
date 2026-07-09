@@ -55,3 +55,5 @@ uploads/
 
 # Sample claim PDFs (6.6 MB of binary/PII source docs — keep local, not in git)
 docs/samples/
+# PM2 logs
+logs/
