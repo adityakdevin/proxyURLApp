@@ -9,6 +9,7 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -523,7 +524,7 @@ export default function Users() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">{selectedItem ? 'New Password (leave blank to keep)' : 'Password'} {!selectedItem && <span className="text-destructive">*</span>}</Label>
-              <Input id="password" type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} placeholder="Enter password" />
+              <PasswordInput id="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} placeholder="Enter password" />
             </div>
             <div className="space-y-2">
               <Label>Role</Label>

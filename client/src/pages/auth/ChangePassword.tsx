@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { PasswordInput } from '@/components/ui/password-input';
 import { useAuthStore } from '@/stores/authStore';
+
+const fieldClass =
+  'mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary';
 
 export default function ChangePassword() {
   const navigate = useNavigate();
@@ -74,26 +78,24 @@ export default function ChangePassword() {
               <label htmlFor="currentPassword" className="block text-sm font-medium text-gray-700">
                 Current Password <span className="text-red-500">*</span>
               </label>
-              <input
+              <PasswordInput
                 id="currentPassword"
-                type="password"
                 required
+                className={fieldClass}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary"
               />
             </div>
             <div>
               <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700">
                 New Password <span className="text-red-500">*</span>
               </label>
-              <input
+              <PasswordInput
                 id="newPassword"
-                type="password"
                 required
+                className={fieldClass}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary"
               />
               <p className="mt-1 text-xs text-gray-500">
                 Min 8 characters, uppercase, lowercase, and number required
@@ -103,13 +105,12 @@ export default function ChangePassword() {
               <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
                 Confirm New Password <span className="text-red-500">*</span>
               </label>
-              <input
+              <PasswordInput
                 id="confirmPassword"
-                type="password"
                 required
+                className={fieldClass}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary"
               />
             </div>
           </div>

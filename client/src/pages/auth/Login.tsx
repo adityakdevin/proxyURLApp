@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { PasswordInput } from '@/components/ui/password-input';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function Login() {
@@ -76,10 +77,9 @@ export default function Login() {
               <label htmlFor="password" className="block text-sm font-medium text-gray-700">
                 Password <span className="text-red-500">*</span>
               </label>
-              <input
+              <PasswordInput
                 id="password"
                 name="password"
-                type="password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

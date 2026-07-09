@@ -96,43 +96,90 @@ async function main() {
     });
   }
 
+  // Document types are global (not per-SubCategory). Additive & idempotent:
+  // skipDuplicates leaves existing rows untouched and inserts any newly-added ones.
+  {
+    await prisma.documentTypeMaster.createMany({
+      skipDuplicates: true,
+      data: [
+        {
+          name: 'Aadhar Card',
+          category: 'GOVT',
+          govtCode: 'AADHAR',
+          displayOrder: 1,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+        {
+          name: 'PAN Card',
+          category: 'GOVT',
+          govtCode: 'PAN',
+          displayOrder: 2,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+        {
+          name: 'Driving Licence',
+          category: 'GOVT',
+          govtCode: 'DL',
+          displayOrder: 3,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+        {
+          name: 'Passport',
+          category: 'GOVT',
+          govtCode: 'PASSPORT',
+          displayOrder: 4,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+        {
+          name: 'Voter ID',
+          category: 'GOVT',
+          govtCode: 'VOTER_ID',
+          displayOrder: 5,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+        {
+          name: 'Ration Card',
+          category: 'GOVT',
+          govtCode: 'RATION_CARD',
+          displayOrder: 6,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+        {
+          name: 'Bill',
+          category: 'CUSTOM',
+          displayOrder: 7,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+        {
+          name: 'Invoice',
+          category: 'CUSTOM',
+          displayOrder: 8,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+        {
+          name: 'Bank Statement',
+          category: 'CUSTOM',
+          displayOrder: 9,
+          createdBy: admin.id,
+          updatedBy: admin.id,
+        },
+      ],
+    });
+  }
+
   const sampleSub = activeSubs[0];
   if (sampleSub) {
     const defaultStatus = await prisma.statusMaster.findFirst({
       where: { isDefault: true },
     });
-
-    // Document types are global (not per-SubCategory).
-    const docTypeExists = await prisma.documentTypeMaster.findFirst();
-    if (!docTypeExists) {
-      await prisma.documentTypeMaster.createMany({
-        data: [
-          {
-            name: 'Aadhar Card',
-            category: 'GOVT',
-            govtCode: 'AADHAR',
-            displayOrder: 1,
-            createdBy: admin.id,
-            updatedBy: admin.id,
-          },
-          {
-            name: 'PAN Card',
-            category: 'GOVT',
-            govtCode: 'PAN',
-            displayOrder: 2,
-            createdBy: admin.id,
-            updatedBy: admin.id,
-          },
-          {
-            name: 'Bill',
-            category: 'CUSTOM',
-            displayOrder: 3,
-            createdBy: admin.id,
-            updatedBy: admin.id,
-          },
-        ],
-      });
-    }
 
     const ruleExists = await prisma.claimIdRule.findUnique({
       where: { subCategoryId: sampleSub.id },
