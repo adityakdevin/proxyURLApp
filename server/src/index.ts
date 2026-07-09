@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import https from 'node:https';
 import { PrismaClient } from '@prisma/client';
 
 // App factory (routes + middleware, no listen/sweeps)
@@ -14,6 +16,7 @@ import { registry as validatorRegistry } from './validators/registry.js';
 const prisma = new PrismaClient();
 const app = createApp(prisma);
 const PORT = process.env.PORT || 3001;
+const HTTPS_PORT = process.env.HTTPS_PORT || 443;
 
 // Safety net for fire-and-forget background jobs (scan runner, validation
 // drainer): log stray rejections instead of letting them terminate the process.
@@ -46,8 +49,7 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+function runStartupSweeps() {
   // Fail any scan jobs orphaned by a previous shutdown (in-process runner).
   new ScanService(prisma, new FsDirectoryReader())
     .sweepStaleJobs()
@@ -65,6 +67,27 @@ app.listen(PORT, () => {
     })
     .catch((e) => console.error('Validation stale-run sweep failed:', e))
     .finally(() => kickDrain(prisma, validatorRegistry));
+}
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  runStartupSweeps(); // once, regardless of whether HTTPS is also enabled
 });
+
+// Optional in-app TLS: enabled when HTTPS_KEY + HTTPS_CERT point at readable PEM
+// files. Shares the same Express app; PM2 supervises this process, so HTTPS
+// survives reboot without a separate reverse proxy. HTTP stays up alongside.
+const httpsKey = process.env.HTTPS_KEY;
+const httpsCert = process.env.HTTPS_CERT;
+if (httpsKey && httpsCert) {
+  if (fs.existsSync(httpsKey) && fs.existsSync(httpsCert)) {
+    https
+      .createServer({ key: fs.readFileSync(httpsKey), cert: fs.readFileSync(httpsCert) }, app)
+      .listen(HTTPS_PORT, () => console.log(`HTTPS server running on port ${HTTPS_PORT}`));
+  } else {
+    // Don't crash-loop under PM2 if certs are misconfigured — log and stay HTTP-only.
+    console.error(`HTTPS disabled: cert files not found (${httpsKey}, ${httpsCert})`);
+  }
+}
 
 export { app, prisma };
