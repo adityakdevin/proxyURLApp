@@ -29,7 +29,7 @@
     "test:e2e:ui": "npm run db:seed:e2e && playwright test",
     "test:e2e": "npm run test:e2e:api && npm run test:e2e:ui",
     "lint": "npm run lint --workspaces",
-    "deploy": "npm run db:generate && npm run db:push && npm run build && pm2 restart proxyurl-server"
+    "deploy": "pm2 stop proxyurl-server && npm run db:generate && npm run db:push && npm run build && pm2 restart proxyurl-server"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
