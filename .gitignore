@@ -57,3 +57,7 @@ uploads/
 docs/samples/
 # PM2 logs
 logs/
+
+# TLS certs (self-signed, per-host)
+server/certs/
+*.pem
