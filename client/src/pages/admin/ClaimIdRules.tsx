@@ -97,8 +97,6 @@ export default function ClaimIdRules() {
   }, [picker.subCategoryId]);
 
   const handleSubmit = async () => {
-    if (!picker.subCategoryId)
-      return toast({ title: 'Pick a SubCategory', variant: 'destructive' });
     const locErr = validateLocation(formData.scanLocation);
     if (locErr)
       return toast({ title: 'Invalid location', description: locErr, variant: 'destructive' });
@@ -107,6 +105,10 @@ export default function ClaimIdRules() {
       if (selected) {
         await api.put(`/admin/claim-id-rules/${selected.id}`, formData);
       } else {
+        if (!picker.subCategoryId) {
+          setIsSubmitting(false);
+          return toast({ title: 'Pick a SubCategory', variant: 'destructive' });
+        }
         await api.post('/admin/claim-id-rules', {
           subCategoryId: picker.subCategoryId,
           ...formData,
