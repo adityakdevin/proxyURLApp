@@ -34,6 +34,7 @@ interface ClaimRow {
   subCategory: { id: string; name: string };
   assignedTo: { id: string; fullName: string } | null;
   spellCheckStatus: string;
+  spellSummary: string | null;
   qrStatus: string;
   metaExtractionStatus: string;
   intraClaimStatus: string;
@@ -247,7 +248,12 @@ export default function ClaimDashboard() {
     {
       id: 'spell',
       header: 'Spell',
-      cell: ({ row }) => <ValidationBadge status={row.original.spellCheckStatus} />,
+      cell: ({ row }) => (
+        <ValidationBadge
+          status={row.original.spellCheckStatus}
+          title={row.original.spellSummary ?? undefined}
+        />
+      ),
     },
     {
       id: 'qr',

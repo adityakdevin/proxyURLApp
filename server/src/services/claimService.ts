@@ -503,7 +503,28 @@ export class ClaimService {
       }),
       this.prisma.claim.count({ where }),
     ]);
-    return { data, total, page, limit };
+    // Attach the misspelled words per claim so the dashboard can show WHY the Spell
+    // badge is red on hover, without opening the claim. Use each claim's LATEST SPELL
+    // result and only if it FAILED — a newer PASS must not inherit an old run's tooltip.
+    const spellByClaim = new Map<string, string>();
+    // Only FAILED claims get a tooltip, so query results for just those — skips the
+    // passed majority (whose summaries we'd discard anyway) and is often empty.
+    const failedIds = data.filter((c) => c.spellCheckStatus === 'FAILED').map((c) => c.id);
+    if (failedIds.length) {
+      const results = await this.prisma.validationResult.findMany({
+        where: { claimId: { in: failedIds }, validatorKey: 'SPELL', status: 'FAILED' },
+        orderBy: { createdAt: 'desc' },
+        select: { claimId: true, summary: true },
+      });
+      const seen = new Set<string>();
+      for (const r of results) {
+        if (seen.has(r.claimId)) continue; // rows are newest-first → first per claim is latest FAILED
+        seen.add(r.claimId);
+        if (r.summary) spellByClaim.set(r.claimId, r.summary);
+      }
+    }
+    const rows = data.map((c) => ({ ...c, spellSummary: spellByClaim.get(c.id) ?? null }));
+    return { data: rows, total, page, limit };
   }
 
   private buildWhere(filters: ListClaimsFilters): Prisma.ClaimWhereInput {

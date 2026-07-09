@@ -1,13 +1,12 @@
 import {
   metaOutcome,
-  spellOutcome,
   qrOutcome,
   intraOutcome,
   completenessOutcome,
   normalizeText,
-  tokenizeWords,
   matchesClaimId,
-  SPELL_MAX_RATIO,
+  editDistanceCapped,
+  findTermMisspellings,
 } from '../logic.js';
 
 describe('validator logic', () => {
@@ -16,11 +15,20 @@ describe('validator logic', () => {
     expect(metaOutcome(0, 2).status).toBe('FAILED');
     expect(metaOutcome(1, 2).status).toBe('PASSED');
   });
-  it('spellOutcome threshold', () => {
-    expect(spellOutcome(0, 0, []).status).toBe('PASSED');
-    expect(spellOutcome(1, 100, []).status).toBe('PASSED');
-    expect(spellOutcome(30, 100, []).status).toBe('FAILED');
-    expect(SPELL_MAX_RATIO).toBe(0.2);
+  it('editDistanceCapped', () => {
+    expect(editDistanceCapped('clerk', 'clerk', 2)).toBe(0);
+    expect(editDistanceCapped('cleark', 'clerk', 2)).toBe(1); // insertion
+    expect(editDistanceCapped('govemment', 'government', 2)).toBe(2);
+    expect(editDistanceCapped('madhya', 'clerk', 2)).toBe(3); // capped -> cap+1
+  });
+  it('findTermMisspellings flags expected-term near-misses, not names/real words', () => {
+    const real = (w: string) => ['clerk', 'engineer', 'cleaner'].includes(w.toLowerCase());
+    const hits = findTermMisspellings(
+      ['profesion', 'enginear', 'cleark', 'gaurav', 'madhya', 'cleaner', 'clerk'],
+      real
+    );
+    const tokens = hits.map((h) => h.token).sort();
+    expect(tokens).toEqual(['cleark', 'enginear', 'profesion']); // names + real words excluded
   });
   it('qrOutcome', () => {
     expect(qrOutcome(0, 0, []).status).toBe('PASSED');
@@ -39,7 +47,6 @@ describe('validator logic', () => {
   });
   it('text utils', () => {
     expect(normalizeText('CLM-00001')).toBe('clm00001');
-    expect(tokenizeWords('The qux cat')).toEqual(['the', 'qux', 'cat']);
   });
 
   describe('matchesClaimId', () => {

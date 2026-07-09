@@ -1,7 +1,7 @@
 import nspell from 'nspell';
 import enDictionary from 'dictionary-en';
 import { Validator, FindingInput, WordBox } from './types.js';
-import { spellOutcome, tokenizeWords } from './logic.js';
+import { spellCandidates, findTermMisspellings, SPELL_MIN_TERM_HITS } from './logic.js';
 
 /** Index a document's word boxes by their normalized text, as consumable queues,
  *  so repeated occurrences of a word map to distinct boxes in reading order. */
@@ -46,40 +46,48 @@ export const spellValidator: Validator = {
   key: 'SPELL',
   column: 'spellCheckStatus',
   async run(ctx) {
-    // Single pass over each document's text (shared is documentId -> text) so every
-    // suspect word is attributed to its source file; the dictionary loads lazily on the
-    // first document that actually has words, so a text-less claim never pays for it.
+    // Forgery signal = misspellings of EXPECTED form vocabulary, not a raw
+    // dictionary-miss ratio. On scanned Indian paperwork the ratio just tracked OCR
+    // quality (place/personal names + OCR garbage swamp the real typos); matching
+    // near-misses of a curated term list isolates the words reviewers actually flag.
+    // The dictionary loads lazily on the first document that has candidate words.
     let spell: Spell | null = null;
-    let total = 0;
-    let misspelled = 0;
-    const sample: string[] = []; // back-compat details.suspect (<=50)
+    const sample: string[] = []; // details.suspect: "token→term" (<=50)
     const findings: FindingInput[] = [];
+    const distinct = new Set<string>();
     for (const [documentId, text] of ctx.shared) {
-      const words = tokenizeWords(text);
+      const words = spellCandidates(text);
       if (words.length === 0) continue;
-      total += words.length;
       const s = spell ?? (spell = await getSpell());
-      // OCR word boxes let us anchor each suspect to a region on an image (Phase 2).
+      // A token counts as a real word if the dictionary accepts it in its own case
+      // or lowercased (dictionary-en holds many proper nouns only capitalised).
+      const isRealWord = (w: string) => s.correct(w) || s.correct(w.toLowerCase());
+      // OCR word boxes let us anchor each hit to a region on an image (Phase 2).
       const boxIndex = indexBoxes(ctx.wordBoxes.get(documentId) ?? []);
-      for (const w of words) {
-        if (s.correct(w)) continue;
-        misspelled++;
-        if (sample.length < 50) sample.push(w);
-        const box = boxIndex.get(w)?.shift();
+      for (const { token, term } of findTermMisspellings(words, isRealWord)) {
+        distinct.add(token);
+        if (sample.length < 50) sample.push(`${token}→${term}`);
+        const box = boxIndex.get(token)?.shift();
         findings.push({
           documentId,
           code: 'SPELL_SUSPECT',
-          message: `Suspect word: "${w}"`,
+          message: `Misspelled "${token}" (expected "${term}")`,
           page: box?.page ?? null,
           bbox: box?.bbox ?? null,
-          data: { word: w },
+          data: { word: token, expected: term },
         });
       }
     }
 
-    const outcome = spellOutcome(misspelled, total, sample);
-    // Only surface per-word findings when the check FAILED (avoid noise on a pass).
-    if (outcome.status === 'FAILED') outcome.findings = findings.slice(0, 200);
-    return outcome;
+    const status = distinct.size >= SPELL_MIN_TERM_HITS ? 'FAILED' : 'PASSED';
+    return {
+      status,
+      summary: distinct.size
+        ? `${distinct.size} expected-term misspelling(s): ${sample.slice(0, 8).join(', ')}`
+        : 'No expected-term misspellings found.',
+      details: { suspect: sample },
+      // Surface the per-word findings only on a FAIL (avoid noise on a pass).
+      findings: status === 'FAILED' ? findings.slice(0, 200) : [],
+    };
   },
 };

@@ -1,6 +1,10 @@
 import { ValidatorOutcome } from './types.js';
 
-export const SPELL_MAX_RATIO = 0.2;
+/** A document FAILS the SPELL check when it contains at least this many DISTINCT
+ *  expected-term misspellings. >2 tolerates the occasional interior OCR misread
+ *  ("govemment", "signatur"); a genuinely forged form carries several real typos
+ *  ("Dayes", "Retantion", "Profesion" all at once). */
+export const SPELL_MIN_TERM_HITS = 3;
 
 export function metaOutcome(docsWithText: number, totalDocs: number): ValidatorOutcome {
   if (totalDocs === 0) return { status: 'PASSED', summary: 'No documents to extract.' };
@@ -12,21 +16,6 @@ export function metaOutcome(docsWithText: number, totalDocs: number): ValidatorO
   };
 }
 
-export function spellOutcome(
-  misspelled: number,
-  total: number,
-  sample: string[]
-): ValidatorOutcome {
-  if (total === 0) return { status: 'PASSED', summary: 'No text to spell-check.' };
-  const ratio = misspelled / total;
-  const pct = Math.round(ratio * 100);
-  const status = ratio <= SPELL_MAX_RATIO ? 'PASSED' : 'FAILED';
-  return {
-    status,
-    summary: `${pct}% suspect (${misspelled}/${total} words).`,
-    details: { suspect: sample },
-  };
-}
 
 export function qrOutcome(found: number, imageCount: number, values: string[]): ValidatorOutcome {
   if (imageCount === 0) return { status: 'PASSED', summary: 'No image documents to scan.' };
@@ -92,8 +81,102 @@ export function matchesClaimId(text: string, claimId: string): boolean {
   return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(text);
 }
 
-export function tokenizeWords(s: string): string[] {
-  return s.toLowerCase().match(/[a-z]{3,}/g) ?? [];
+/** Spell-check candidates: 3+ letter alphabetic tokens with CASE PRESERVED, minus
+ *  all-caps acronyms/codes (PAN, HDFC, VIN prefixes).
+ *  Case is kept so the caller can test proper-noun capitalisation against the
+ *  dictionary — dictionary-en holds many proper nouns only in capitalised form
+ *  ("India" is known, "india" is not), so lowercasing everything (as the old
+ *  tokenizer did) flagged every name as misspelled. */
+export function spellCandidates(text: string): string[] {
+  const out: string[] = [];
+  for (const w of text.match(/[A-Za-z]{3,}/g) ?? []) {
+    if (/^[A-Z]{2,}$/.test(w)) continue; // acronym / all-caps code
+    out.push(w);
+  }
+  return out;
+}
+
+/** Vocabulary the forged forms are expected to contain (salary slips, ID cards,
+ *  dealer/insurance paperwork). A token that is a 1–2 edit near-miss of one of
+ *  these — but isn't itself a real word — is the high-signal forgery marker the
+ *  human reviewers actually cite ("profession" printed as "profesion"). Place
+ *  names, personal names and OCR garbage aren't near any expected term, so they
+ *  don't trigger it — which is exactly the noise the old ratio drowned in.
+ *  Extend this list as new document types / real misses surface. */
+export const EXPECTED_TERMS: string[] = [
+  // salary slip
+  'salary', 'profession', 'professional', 'designation', 'department', 'employee',
+  'employer', 'employment', 'engineer', 'manager', 'executive', 'officer', 'clerk',
+  'supervisor', 'accountant', 'basic', 'allowance', 'allowances', 'deduction',
+  'deductions', 'earnings', 'gross', 'total', 'retention', 'attendance', 'present',
+  'absent', 'leave', 'overtime', 'bonus', 'incentive', 'provident', 'pension', 'wages',
+  // identity / address
+  'father', 'mother', 'address', 'district', 'pincode', 'signature', 'government',
+  'identity', 'identification', 'account', 'number', 'birth', 'gender', 'nationality',
+  'company', 'private', 'limited', 'division', 'branch', 'office',
+  // insurance / dealer
+  'insurance', 'policy', 'premium', 'vehicle', 'invoice', 'dealer', 'customer',
+  'warranty', 'chassis', 'registration',
+];
+
+/** Levenshtein distance, capped: returns `cap + 1` as soon as the best cell in a
+ *  row exceeds `cap`, so near-miss checks stay O(cap·len) instead of O(len²). */
+export function editDistanceCapped(a: string, b: string, cap: number): number {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      cur[j] = v;
+      if (v < best) best = v;
+    }
+    if (best > cap) return cap + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+export interface TermMisspelling {
+  token: string;
+  term: string;
+}
+
+/**
+ * From spell candidates, find DISTINCT tokens that misspell an expected term:
+ * a token ≥4 chars that isn't a real word (`isRealWord` false in any case) yet
+ * lands 1–2 edits from an EXPECTED_TERM. Short terms (<6 chars) match at edit
+ * distance 1 only — distance 2 on a 4–5 letter word is mostly coincidence.
+ */
+export function findTermMisspellings(
+  candidates: string[],
+  isRealWord: (w: string) => boolean
+): TermMisspelling[] {
+  const hits = new Map<string, string>(); // token -> matched term (dedupes repeats)
+  const seen = new Set<string>(); // skip re-checking an identical token (same header word on every page)
+  for (const raw of candidates) {
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    const token = raw.toLowerCase();
+    if (token.length < 4 || hits.has(token)) continue;
+    if (isRealWord(raw)) continue; // a genuine word (e.g. "cleaner" near "clerk") is fine
+    for (const term of EXPECTED_TERMS) {
+      if (token === term) continue;
+      // Require the first letter to match. Real misspellings alter an INTERIOR
+      // letter ("profeSion", "retAntion"); OCR drops leading characters
+      // ("nsurance", "ddress", "ustomer") — that edge-drop noise is not forgery.
+      if (token[0] !== term[0]) continue;
+      const cap = term.length >= 6 ? 2 : 1;
+      const d = editDistanceCapped(token, term, cap);
+      if (d >= 1 && d <= cap) {
+        hits.set(token, term);
+        break;
+      }
+    }
+  }
+  return [...hits].map(([token, term]) => ({ token, term }));
 }
 
 // ── Intra-claim cross-document field extraction (Phase 4) ──────────────────────

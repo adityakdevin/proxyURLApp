@@ -14,6 +14,8 @@
     "db:seed:demo": "tsx prisma/seedDemo.ts",
     "db:seed:e2e": "tsx prisma/seedE2e.ts",
     "db:setup:samples": "tsx prisma/setupSampleClaims.ts",
+    "db:setup:spelling": "tsx prisma/setupSpellingChecks.ts",
+    "db:revalidate": "tsx prisma/revalidateClaims.ts",
     "db:reset-admin": "tsx prisma/resetAdminPassword.ts",
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
