@@ -96,6 +96,17 @@ export async function seedScopeGraph(prisma: PrismaClient, label: string): Promi
     },
   });
 
+  // Scope is resolved from per-sub-category grants (UserSubCategory), not the
+  // project assignment alone. Grant the in-scope users the in-scope sub-category
+  // and the disjoint user the disjoint one, so OUT_OF_SCOPE assertions hold.
+  await prisma.userSubCategory.createMany({
+    data: [
+      { userId: teamLead.id, subCategoryId: subCategory.id },
+      { userId: user.id, subCategoryId: subCategory.id },
+      { userId: otherTeamLead.id, subCategoryId: otherSubCategory.id },
+    ],
+  });
+
   const pick = (u: { id: string; username: string; role: Role }): SeededUser => ({
     id: u.id,
     username: u.username,
