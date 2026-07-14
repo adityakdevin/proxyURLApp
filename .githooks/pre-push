@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# pre-push: run the fast API E2E suite before pushing, mirroring CI's api-e2e
+# job. Catches the class of failures that has kept `main` red — fixtures and
+# assertions drifting out of sync with app/schema changes — before they land.
+#
+# Requires a THROWAWAY test database (never the dev DB — the suite truncates
+# claim tables). Point TEST_DATABASE_URL at it, e.g.:
+#   export TEST_DATABASE_URL="mysql://root:PASS@127.0.0.1:3307/proxyapp_test"
+#
+# Bypass for a one-off (docs-only push, no DB handy):  git push --no-verify
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# Fall back to TEST_DATABASE_URL from server/.env (gitignored) if not exported.
+if [ -z "${TEST_DATABASE_URL:-}" ] && [ -f server/.env ]; then
+  TEST_DATABASE_URL="$(grep -E '^TEST_DATABASE_URL=' server/.env | tail -1 | cut -d= -f2- | tr -d "\"'")"
+  export TEST_DATABASE_URL
+fi
+
+if [ -z "${TEST_DATABASE_URL:-}" ]; then
+  echo "✗ pre-push: TEST_DATABASE_URL is not set — cannot run API E2E." >&2
+  echo "  Add it to server/.env (gitignored) or export it. Point at a THROWAWAY DB." >&2
+  echo "  Point it at a throwaway DB (NOT the dev DB), e.g.:" >&2
+  echo '    export TEST_DATABASE_URL="mysql://root:PASS@127.0.0.1:3307/proxyapp_test"' >&2
+  echo "  Or bypass once with:  git push --no-verify" >&2
+  exit 1
+fi
+
+echo "→ pre-push: syncing schema + running API E2E against the test DB…"
+export DATABASE_URL="$TEST_DATABASE_URL"
+npm --workspace=server exec -- prisma db push --skip-generate --accept-data-loss >/dev/null
+npm run test:e2e:api
+
+echo "✓ pre-push: API E2E passed."
