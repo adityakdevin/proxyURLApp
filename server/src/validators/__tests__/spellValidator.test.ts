@@ -24,8 +24,9 @@ describe('spellValidator', () => {
     const forged = 'Employee profesion enginear with retantion of 30 dayes on salary slip';
     expect((await spellValidator.run(ctx(forged))).status).toBe('FAILED');
   });
-  it('PASSES a single stray misspelling (tolerates one OCR glitch)', async () => {
-    expect((await spellValidator.run(ctx('Employee salary slip with profesion listed'))).status).toBe('PASSED');
+  it('FAILS on a SINGLE expected-term misspelling (matches human reviewer, threshold 1)', async () => {
+    // Reviewers flag a form on one genuine typo; the old threshold of 3 let these pass.
+    expect((await spellValidator.run(ctx('Employee salary slip with profesion listed'))).status).toBe('FAILED');
   });
   it('PASSES (N/A) when there is no text', async () => {
     expect((await spellValidator.run(ctx(''))).status).toBe('PASSED');

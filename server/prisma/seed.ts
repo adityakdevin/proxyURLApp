@@ -1,5 +1,6 @@
 import { PrismaClient, RuleField, RuleOperator } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { EXPECTED_TERMS } from '../src/validators/logic.js';
 
 const prisma = new PrismaClient();
 
@@ -173,6 +174,21 @@ async function main() {
         },
       ],
     });
+  }
+
+  // SpellTerm dictionary — seed from the validator's built-in EXPECTED_TERMS.
+  // skipDuplicates is additive/idempotent so new default terms flow in on re-seed
+  // while any admin-added terms stay untouched.
+  {
+    const created = await prisma.spellTerm.createMany({
+      skipDuplicates: true,
+      data: [...new Set(EXPECTED_TERMS.map((t) => t.toLowerCase().trim()))].map((term) => ({
+        term,
+        createdBy: admin.id,
+        updatedBy: admin.id,
+      })),
+    });
+    console.log(`SpellTerm dictionary ensured (${created.count} new term(s) inserted).`);
   }
 
   const sampleSub = activeSubs[0];

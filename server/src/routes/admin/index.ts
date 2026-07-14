@@ -15,6 +15,7 @@ import claimIdRulesRoutes from './claimIdRules.js';
 import claimsRoutes from './claims.js';
 import scansRoutes from './scans.js';
 import claimRulesRoutes from './claimRules.js';
+import spellTermsRoutes from './spellTerms.js';
 
 const router = Router();
 
@@ -38,5 +39,6 @@ router.use('/claim-id-rules', claimIdRulesRoutes);
 router.use('/claims', claimsRoutes);
 router.use('/scans', scansRoutes);
 router.use('/claim-rules', claimRulesRoutes);
+router.use('/spell-terms', spellTermsRoutes);
 
 export default router;

@@ -12,6 +12,7 @@ import {
   FileText,
   Crosshair,
   ClipboardList,
+  BookText,
 } from 'lucide-react';
 
 const navItems = [
@@ -26,6 +27,7 @@ const navItems = [
 const claimsNavItems = [
   { path: '/admin/doc-type-masters', label: 'Doc Type Masters', icon: FileText },
   { path: '/admin/claim-id-rules', label: 'Claim ID Rules', icon: Crosshair },
+  { path: '/admin/spell-terms', label: 'Spell Dictionary', icon: BookText },
   { path: '/admin/claims', label: 'Claims Dashboard', icon: ClipboardList },
 ];
 

@@ -1,7 +1,25 @@
 import nspell from 'nspell';
 import enDictionary from 'dictionary-en';
+import { PrismaClient } from '@prisma/client';
 import { Validator, FindingInput, WordBox } from './types.js';
-import { spellCandidates, findTermMisspellings, SPELL_MIN_TERM_HITS } from './logic.js';
+import { spellCandidates, findTermMisspellings, SPELL_MIN_TERM_HITS, EXPECTED_TERMS } from './logic.js';
+
+/** The expected-vocabulary the near-miss matcher checks against. Prefer the
+ *  admin-managed `SpellTerm` table so the list can be tuned without a deploy;
+ *  fall back to the built-in EXPECTED_TERMS when it's empty or unreadable so the
+ *  check never silently degrades to "no terms → nothing ever flagged". */
+async function loadExpectedTerms(prisma: PrismaClient): Promise<string[]> {
+  try {
+    const rows = await prisma.spellTerm.findMany({
+      where: { status: 'ACTIVE' },
+      select: { term: true },
+    });
+    const terms = rows.map((r) => r.term.toLowerCase().trim()).filter((t) => t.length >= 4);
+    return terms.length > 0 ? terms : EXPECTED_TERMS;
+  } catch {
+    return EXPECTED_TERMS;
+  }
+}
 
 /** Index a document's word boxes by their normalized text, as consumable queues,
  *  so repeated occurrences of a word map to distinct boxes in reading order. */
@@ -52,6 +70,7 @@ export const spellValidator: Validator = {
     // near-misses of a curated term list isolates the words reviewers actually flag.
     // The dictionary loads lazily on the first document that has candidate words.
     let spell: Spell | null = null;
+    const terms = await loadExpectedTerms(ctx.prisma);
     const sample: string[] = []; // details.suspect: "token→term" (<=50)
     const findings: FindingInput[] = [];
     const distinct = new Set<string>();
@@ -64,7 +83,7 @@ export const spellValidator: Validator = {
       const isRealWord = (w: string) => s.correct(w) || s.correct(w.toLowerCase());
       // OCR word boxes let us anchor each hit to a region on an image (Phase 2).
       const boxIndex = indexBoxes(ctx.wordBoxes.get(documentId) ?? []);
-      for (const { token, term } of findTermMisspellings(words, isRealWord)) {
+      for (const { token, term } of findTermMisspellings(words, isRealWord, terms)) {
         distinct.add(token);
         if (sample.length < 50) sample.push(`${token}→${term}`);
         const box = boxIndex.get(token)?.shift();

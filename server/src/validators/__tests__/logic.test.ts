@@ -20,6 +20,9 @@ describe('validator logic', () => {
     expect(editDistanceCapped('cleark', 'clerk', 2)).toBe(1); // insertion
     expect(editDistanceCapped('govemment', 'government', 2)).toBe(2);
     expect(editDistanceCapped('madhya', 'clerk', 2)).toBe(3); // capped -> cap+1
+    // Damerau: an adjacent transposition is ONE edit, not two.
+    expect(editDistanceCapped('nmae', 'name', 1)).toBe(1); // swapped 'ma' -> 'am'
+    expect(editDistanceCapped('recieve', 'receive', 1)).toBe(1); // swapped 'ie' -> 'ei'
   });
   it('findTermMisspellings flags expected-term near-misses, not names/real words', () => {
     const real = (w: string) => ['clerk', 'engineer', 'cleaner'].includes(w.toLowerCase());
@@ -29,6 +32,15 @@ describe('validator logic', () => {
     );
     const tokens = hits.map((h) => h.token).sort();
     expect(tokens).toEqual(['cleark', 'enginear', 'profesion']); // names + real words excluded
+  });
+  it('findTermMisspellings matches a caller-supplied term list (entity gazetteer)', () => {
+    // Proper-noun misspellings the reviewers flag: "Bajaij" for the brand "Bajaj".
+    const notReal = () => false;
+    const hits = findTermMisspellings(['bajaij', 'lucnow', 'toyota'], notReal, ['bajaj', 'lucknow']);
+    expect(hits.map((h) => `${h.token}->${h.term}`).sort()).toEqual([
+      'bajaij->bajaj',
+      'lucnow->lucknow',
+    ]); // 'toyota' is near neither term
   });
   it('qrOutcome', () => {
     expect(qrOutcome(0, 0, []).status).toBe('PASSED');

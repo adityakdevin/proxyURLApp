@@ -27,6 +27,7 @@ import StatusMasters from '@/pages/admin/StatusMasters';
 import DocumentTypeMasters from '@/pages/admin/DocumentTypeMasters';
 import ClaimIdRules from '@/pages/admin/ClaimIdRules';
 import ClaimRules from '@/pages/admin/ClaimRules';
+import SpellTerms from '@/pages/admin/SpellTerms';
 import AdminClaims from '@/pages/admin/AdminClaims';
 import ClaimDashboard from '@/pages/claims/ClaimDashboard';
 import ClaimUpdate from '@/pages/claims/ClaimUpdate';
@@ -86,6 +87,7 @@ function App() {
           <Route path="doc-type-masters" element={<DocumentTypeMasters />} />
           <Route path="claim-id-rules" element={<ClaimIdRules />} />
           <Route path="claim-rules" element={<ClaimRules />} />
+          <Route path="spell-terms" element={<SpellTerms />} />
           <Route path="claims" element={<AdminClaims />} />
           <Route path="claims/:id" element={<ClaimUpdate />} />
         </Route>

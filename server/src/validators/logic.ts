@@ -1,10 +1,16 @@
 import { ValidatorOutcome } from './types.js';
 
-/** A document FAILS the SPELL check when it contains at least this many DISTINCT
- *  expected-term misspellings. >2 tolerates the occasional interior OCR misread
- *  ("govemment", "signatur"); a genuinely forged form carries several real typos
- *  ("Dayes", "Retantion", "Profesion" all at once). */
-export const SPELL_MIN_TERM_HITS = 3;
+/** A document FAILS the SPELL check on the FIRST distinct expected-term misspelling.
+ *  Human reviewers flag a form on a single genuine typo ("enginear", "Cleark",
+ *  "ninty"), so the old threshold of 3 silently passed real forgeries — on the
+ *  20-doc reviewer sample it caught 5/20; threshold 1 catches 14/20 (the rest are
+ *  OCR-ceiling misses where tesseract couldn't read the misspelt word).
+ *  Trade-off: an interior OCR misread of an expected word ("govemment", "signatur")
+ *  can now trip a fail — acceptable because SPELL is a pre-filter for human review
+ *  and we favour recall over precision here.
+ *  ponytail: raise this, or gate on OCR word confidence (WordBox.conf), if
+ *  legitimate scans throw too many false positives. */
+export const SPELL_MIN_TERM_HITS = 1;
 
 export function metaOutcome(docsWithText: number, totalDocs: number): ValidatorOutcome {
   if (totalDocs === 0) return { status: 'PASSED', summary: 'No documents to extract.' };
@@ -101,39 +107,69 @@ export function spellCandidates(text: string): string[] {
  *  these — but isn't itself a real word — is the high-signal forgery marker the
  *  human reviewers actually cite ("profession" printed as "profesion"). Place
  *  names, personal names and OCR garbage aren't near any expected term, so they
- *  don't trigger it — which is exactly the noise the old ratio drowned in.
- *  Extend this list as new document types / real misses surface. */
+ *  don't trigger it — which is exactly the noise a full-dictionary check drowns in
+ *  (measured: full-dict flagged ~35 tokens/doc vs ~3.5 with this list).
+ *
+ *  This is the BUILT-IN FALLBACK/seed list. At runtime the SPELL validator prefers
+ *  the admin-managed `SpellTerm` table (CRUD in the admin dashboard) and only uses
+ *  this when that table is empty or unreadable. Keep the two in sync via the seed. */
 export const EXPECTED_TERMS: string[] = [
-  // salary slip
+  // salary slip / payroll
   'salary', 'profession', 'professional', 'designation', 'department', 'employee',
   'employer', 'employment', 'engineer', 'manager', 'executive', 'officer', 'clerk',
   'supervisor', 'accountant', 'basic', 'allowance', 'allowances', 'deduction',
   'deductions', 'earnings', 'gross', 'total', 'retention', 'attendance', 'present',
   'absent', 'leave', 'overtime', 'bonus', 'incentive', 'provident', 'pension', 'wages',
+  'conveyance', 'gratuity', 'reimbursement', 'stipend', 'payslip', 'payroll', 'remuneration',
   // identity / address
-  'father', 'mother', 'address', 'district', 'pincode', 'signature', 'government',
-  'identity', 'identification', 'account', 'number', 'birth', 'gender', 'nationality',
-  'company', 'private', 'limited', 'division', 'branch', 'office',
-  // insurance / dealer
+  'father', 'mother', 'address', 'district', 'pincode', 'signature', 'signatory',
+  // British spelling ONLY — it's what appears on these Indian forms; adding the US
+  // 'authorized' too would flag every correct "Authorised" as a typo of it, since
+  // dictionary-en (US) rejects the British form. Same rule for any en-GB/en-US pair.
+  'authorised', 'government', 'identity', 'identification', 'account',
+  'number', 'birth', 'gender', 'nationality', 'name', 'company', 'private', 'limited',
+  'division', 'branch', 'office', 'staff', 'deputy', 'female', 'male',
+  // organisations / education (ID cards)
+  'institute', 'institution', 'university', 'college', 'school', 'hospital', 'hospitality',
+  'medical', 'sciences', 'science', 'engineering', 'technology', 'corporation',
+  'industries', 'enterprises', 'solutions', 'services',
+  // insurance / dealer / vehicle
   'insurance', 'policy', 'premium', 'vehicle', 'invoice', 'dealer', 'customer',
-  'warranty', 'chassis', 'registration',
+  'warranty', 'chassis', 'registration', 'automobile', 'motors', 'finance',
+  // common form vocabulary reviewers flag
+  'ninety', 'three', 'does', 'require', 'required', 'days', 'letterhead', 'declaration',
+  'certificate', 'special',
+  // months
+  'january', 'february', 'march', 'april', 'june', 'july', 'august', 'september',
+  'october', 'november', 'december',
+  // entity gazetteer (brands / orgs / places reviewers name) — extend via admin CRUD
+  'bajaj', 'jindal', 'prudential', 'lucknow', 'flipkart',
 ];
 
-/** Levenshtein distance, capped: returns `cap + 1` as soon as the best cell in a
- *  row exceeds `cap`, so near-miss checks stay O(cap·len) instead of O(len²). */
+/** Damerau (optimal string alignment) edit distance, capped: returns `cap + 1` as
+ *  soon as the best cell in a row exceeds `cap`, so near-miss checks stay O(cap·len)
+ *  instead of O(len²). Counts an adjacent transposition as ONE edit so a swapped
+ *  pair ("nmae"→"name") reads as a single typo, not two — transpositions are among
+ *  the most common human/forgery misspellings. */
 export function editDistanceCapped(a: string, b: string, cap: number): number {
   if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let prevPrev: number[] = [];
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
     const cur = [i];
     let best = i;
     for (let j = 1; j <= b.length; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      const v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      // Adjacent transposition (OSA): a[i-1]a[i-2] == b[j-2]b[j-1].
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        v = Math.min(v, prevPrev[j - 2] + 1);
+      }
       cur[j] = v;
       if (v < best) best = v;
     }
     if (best > cap) return cap + 1;
+    prevPrev = prev;
     prev = cur;
   }
   return prev[b.length];
@@ -147,12 +183,15 @@ export interface TermMisspelling {
 /**
  * From spell candidates, find DISTINCT tokens that misspell an expected term:
  * a token ≥4 chars that isn't a real word (`isRealWord` false in any case) yet
- * lands 1–2 edits from an EXPECTED_TERM. Short terms (<6 chars) match at edit
+ * lands 1–2 edits from a term in `terms`. Short terms (<6 chars) match at edit
  * distance 1 only — distance 2 on a 4–5 letter word is mostly coincidence.
+ * `terms` defaults to the built-in EXPECTED_TERMS; the validator passes the
+ * admin-managed list. Terms shorter than 4 chars are ignored (too noisy).
  */
 export function findTermMisspellings(
   candidates: string[],
-  isRealWord: (w: string) => boolean
+  isRealWord: (w: string) => boolean,
+  terms: string[] = EXPECTED_TERMS
 ): TermMisspelling[] {
   const hits = new Map<string, string>(); // token -> matched term (dedupes repeats)
   const seen = new Set<string>(); // skip re-checking an identical token (same header word on every page)
@@ -162,8 +201,8 @@ export function findTermMisspellings(
     const token = raw.toLowerCase();
     if (token.length < 4 || hits.has(token)) continue;
     if (isRealWord(raw)) continue; // a genuine word (e.g. "cleaner" near "clerk") is fine
-    for (const term of EXPECTED_TERMS) {
-      if (token === term) continue;
+    for (const term of terms) {
+      if (term.length < 4 || token === term) continue;
       // Require the first letter to match. Real misspellings alter an INTERIOR
       // letter ("profeSion", "retAntion"); OCR drops leading characters
       // ("nsurance", "ddress", "ustomer") — that edge-drop noise is not forgery.
