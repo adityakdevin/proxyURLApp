@@ -10,7 +10,7 @@ test.describe('Claims UI smoke', () => {
   test('admin opens the Admin Claims screen', async ({ page }) => {
     await page.goto('/admin/claims');
     await expect(page).toHaveURL(/\/admin\/claims/);
-    await expect(page.getByRole('heading', { name: 'Claims (All)' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Claims Dashboard' })).toBeVisible();
   });
 
   test('claim dashboard renders for the authenticated session', async ({ page }) => {
