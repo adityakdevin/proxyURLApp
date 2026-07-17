@@ -1,5 +1,5 @@
 import { Validator, FindingInput } from './types.js';
-import { completenessOutcome, typeInText } from './logic.js';
+import { completenessOutcome, typePresent } from './logic.js';
 
 export const fullValidator: Validator = {
   key: 'FULL',
@@ -8,7 +8,7 @@ export const fullValidator: Validator = {
     // Only REQUIRED active types gate FULL completeness (global doc-type set).
     const types = await ctx.prisma.documentTypeMaster.findMany({
       where: { status: 'ACTIVE', isRequired: true },
-      select: { id: true, name: true },
+      select: { id: true, name: true, govtCode: true },
     });
     const presentIds = new Set(
       ctx.documents.map((d) => d.documentTypeId).filter((x): x is string => !!x)
@@ -18,7 +18,7 @@ export const fullValidator: Validator = {
     // scanned claims are one bundled PDF whose filename names no type.
     const texts = [...ctx.shared.values()];
     const presentNames = types
-      .filter((t) => presentIds.has(t.id) || typeInText(t.name, texts))
+      .filter((t) => presentIds.has(t.id) || typePresent(t.name, t.govtCode, texts))
       .map((t) => t.name);
     const outcome = completenessOutcome(
       presentNames,

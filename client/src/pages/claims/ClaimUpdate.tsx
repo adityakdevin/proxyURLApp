@@ -88,6 +88,7 @@ interface ValResult {
     extracted?: { documentId: string; fileName: string; text: string; truncated?: boolean }[];
     values?: string[];
     decoded?: { documentId: string; fileName: string; value: string; page?: number }[];
+    present?: string[];
   } | null;
 }
 interface ValRun {
@@ -133,6 +134,14 @@ function parseKeyValues(text: string): [string, string][] {
  *  whose colon was omitted ("OD period02 Jul 2025…"), at the first digit. Returns
  *  [] when the payload isn't field-shaped so the caller falls back to raw text. */
 function parseQrFields(value: string): [string, string][] {
+  // Aadhaar QRs carry XML (<PrintLetterBarcodeData uid="…" name="…"/>) —
+  // show its attributes as rows.
+  if (value.trimStart().startsWith('<')) {
+    const attrs = [...value.matchAll(/([A-Za-z_][\w-]*)="([^"]*)"/g)].map(
+      (m): [string, string] => [m[1], m[2]]
+    );
+    return attrs.length >= 2 ? attrs : [];
+  }
   const sep = value.includes('|') ? '|' : ',';
   const pairs: [string, string][] = [];
   for (const part of value.split(sep)) {
@@ -584,6 +593,11 @@ export default function ClaimUpdate() {
               <>
                 <h2 className="inline text-lg font-semibold">{v.label}</h2>
                 <div className="mt-1 text-sm text-gray-600">{res.summary}</div>
+                {v.key === 'FULL' && (res.details?.present?.length ?? 0) > 0 && (
+                  <div className="mt-1 text-sm text-green-700">
+                    Present: {res.details!.present!.join(', ')}
+                  </div>
+                )}
               </>
             );
             return (
@@ -596,7 +610,7 @@ export default function ClaimUpdate() {
                   <div>{header}</div>
                   <ChevronDown className="h-4 w-4 mt-1.5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" />
                 </summary>
-                {findings.length === 0 && v.key !== 'META' && docs.length > 0 && (
+                {(findings.length === 0 || v.key === 'FULL') && v.key !== 'META' && docs.length > 0 && (
                   <ul className="-mt-3 px-6 pb-6 space-y-1 text-sm text-gray-500">
                     {docs.map((d) => (
                       <li key={d.id}>

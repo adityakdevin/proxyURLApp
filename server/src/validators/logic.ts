@@ -51,26 +51,58 @@ export function completenessOutcome(
   if (requiredTypeNames.length === 0)
     return { status: 'PASSED', summary: 'No required document types configured.' };
   const missing = requiredTypeNames.filter((t) => !presentTypeNames.includes(t));
-  const present = requiredTypeNames.length - missing.length;
   if (missing.length === 0)
     return {
       status: 'PASSED',
       summary: `All ${requiredTypeNames.length} required document types present.`,
+      details: { present: presentTypeNames },
     };
   return {
     status: 'FAILED',
-    summary: `${present} of ${requiredTypeNames.length} required document types present.`,
-    details: { missing },
+    summary: `${presentTypeNames.length} of ${requiredTypeNames.length} required document types present.`,
+    details: { missing, present: presentTypeNames },
   };
+}
+
+/** Distinctive per-type markers for govt document types, keyed by govtCode.
+ *  A bare name-phrase match is wrong for these: policy boilerplate mentions
+ *  "holds an effective driving license" (false present) while an actual Aadhaar
+ *  card never prints the English phrase "Aadhar Card" (false missing). Each
+ *  predicate needs wording that appears ON the card itself and not in insurance
+ *  legalese. ponytail: extend inline; move to a DocumentTypeMaster alias column
+ *  if reviewers need to tune these without a deploy. */
+const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
+  AADHAR: (t) =>
+    /(^|[^a-z])(uidai|aad?haa?r)([^a-z]|$)/i.test(t) ||
+    /unique\s+identification\s+authority/i.test(t),
+  // OCR of blurry cards drops spaces ("INCOMETAX DEPARTMENT") — keep \s* loose.
+  PAN: (t) => /income\s*tax\s*depart/i.test(t) || /permanent\s*account\s*number/i.test(t),
+  // Cards carry a DL number / class-of-vehicle codes; policy clauses just say
+  // "driving license", so require both signals.
+  DL: (t) =>
+    /driving\s+licen[cs]e/i.test(t) &&
+    /(^|[^a-z])(dl\s*no|cov|lmv|mcwg|hgmv|hpmv)([^a-z]|$)/i.test(t),
+  VOTER_ID: (t) =>
+    /election\s+commission/i.test(t) || /(^|[^a-z])(epic|voter)([^a-z]|$)/i.test(t),
+  PASSPORT: (t) =>
+    /(^|[^a-z])passport([^a-z]|$)/i.test(t) &&
+    /republic\s+of\s+india|nationality|place\s+of\s+birth/i.test(t),
+};
+
+/** Is this document type present, judging by the documents' extracted text?
+ *  Govt types use their distinctive markers; custom types (Invoice, Bill, …)
+ *  match their name as a whole word/phrase. */
+export function typePresent(name: string, govtCode: string | null, texts: string[]): boolean {
+  const marker = govtCode ? GOVT_TYPE_MARKERS[govtCode] : undefined;
+  if (marker) return texts.some(marker);
+  return typeInText(name, texts);
 }
 
 /** Does any document's extracted text mention this document-type name as a
  *  whole word/phrase? Scanned claims arrive as ONE bundled PDF named by chassis
  *  number, so filename classification can never see the invoice/licence pages
  *  inside — this content fallback is what marks them present. Recall-favoring
- *  pre-filter like SPELL; word boundaries keep "Bill" from matching "billing".
- *  ponytail: variants are inline (licence/license, aadhar spellings) — add an
- *  alias column on DocumentTypeMaster if reviewers need per-type synonyms. */
+ *  pre-filter like SPELL; word boundaries keep "Bill" from matching "billing". */
 export function typeInText(name: string, texts: string[]): boolean {
   const pattern = name
     .trim()

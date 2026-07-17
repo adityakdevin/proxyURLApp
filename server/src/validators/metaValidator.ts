@@ -18,7 +18,21 @@ async function extract(
   if (mime === 'application/pdf') {
     // Prefer pdfjs (text + per-word coordinates); fall back to text-only pdf-parse.
     const withCoords = await extractPdf(doc.readablePath);
-    if (withCoords && withCoords.text) return withCoords;
+    if (withCoords && withCoords.text) {
+      // Mixed PDF: digital pages have a text layer, but scanned pages (bundled
+      // ID cards, stamps) don't — OCR just those pages and merge, otherwise
+      // they're invisible to every text-based check.
+      if (withCoords.textlessPages.length > 0 && ctx.ocr.extractPdf) {
+        const ocrd = await ctx.ocr.extractPdf(doc.readablePath, withCoords.textlessPages);
+        if (ocrd.text) {
+          return {
+            text: `${withCoords.text}\n${ocrd.text}`,
+            words: [...withCoords.words, ...ocrd.words],
+          };
+        }
+      }
+      return withCoords;
+    }
     try {
       const buf = await fs.readFile(doc.readablePath);
       const data = await pdfParse(buf);

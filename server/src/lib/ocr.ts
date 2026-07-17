@@ -88,11 +88,17 @@ export class TesseractOcrPort implements OcrPort {
     }
   }
 
-  async extractPdf(absolutePath: string): Promise<{ text: string; words: WordBox[] }> {
+  async extractPdf(
+    absolutePath: string,
+    onlyPages?: number[]
+  ): Promise<{ text: string; words: WordBox[] }> {
     try {
       // Cap OCR pages: the relevant docs (salary slip / ID card) sit in the first
       // pages, and OCRing a long PDF serially on one worker is the slow path.
-      const pages = await rasterizePdf(absolutePath, 12);
+      // onlyPages narrows to specific pages (mixed digital/scanned PDFs OCR just
+      // the pages that have no text layer).
+      let pages = await rasterizePdf(absolutePath, 12);
+      if (onlyPages) pages = pages.filter((p) => onlyPages.includes(p.page));
       if (pages.length === 0) return { text: '', words: [] };
       const worker = await this.getWorker();
       const parts: string[] = [];

@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import path from 'path';
 import { WordBox } from '../validators/types.js';
 import { clamp01 } from './bbox.js';
 
@@ -79,7 +80,7 @@ interface PdfTextItem {
  */
 export async function extractPdf(
   absolutePath: string
-): Promise<{ text: string; words: WordBox[] } | null> {
+): Promise<{ text: string; words: WordBox[]; textlessPages: number[] } | null> {
   try {
     // Dynamic import: pdfjs-dist ships ESM-only; NodeNext keeps this a native import()
     // so it loads under both tsx (dev) and compiled dist (prod).
@@ -88,15 +89,20 @@ export async function extractPdf(
     const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
     const words: WordBox[] = [];
     const parts: string[] = [];
+    // Pages with no text layer (scanned images inside an otherwise digital PDF) —
+    // the caller OCRs just these so bundled ID-card pages aren't invisible.
+    const textlessPages: number[] = [];
     try {
       const pageCount = Math.min(doc.numPages, MAX_PDF_PAGES);
       for (let p = 1; p <= pageCount; p++) {
         const page = await doc.getPage(p);
         const viewport = page.getViewport({ scale: 1 });
         const content = await page.getTextContent();
+        let pageHasText = false;
         for (const item of content.items as PdfTextItem[]) {
           const str = typeof item.str === 'string' ? item.str : '';
           if (str.trim() === '' || !item.transform) continue;
+          pageHasText = true;
           parts.push(str);
           words.push(
             ...runToWords(
@@ -111,12 +117,13 @@ export async function extractPdf(
             )
           );
         }
+        if (!pageHasText) textlessPages.push(p);
       }
     } finally {
       await doc.cleanup?.();
       await doc.destroy?.();
     }
-    return { text: parts.join(' ').trim(), words };
+    return { text: parts.join(' ').trim(), words, textlessPages };
   } catch {
     return null;
   }
@@ -140,18 +147,38 @@ export interface RasterPage {
 export async function rasterizePdf(
   absolutePath: string,
   maxPages = MAX_PDF_PAGES,
-  scale = 2
+  scale = 2,
+  onlyPages?: number[]
 ): Promise<RasterPage[]> {
   try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     // @napi-rs/canvas ships prebuilt binaries (incl. Windows) — no node-gyp build.
     const { createCanvas } = await import('@napi-rs/canvas');
     const data = new Uint8Array(await fs.readFile(absolutePath));
-    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
+    // Without the bundled standard fonts, pages using non-embedded fonts render
+    // BLANK in Node ("Requesting object that isn't resolved yet Times_path_…"),
+    // which hid whole policy pages from the QR scan and OCR.
+    let standardFontDataUrl: string | undefined;
+    try {
+      standardFontDataUrl = path.join(
+        path.dirname(require.resolve('pdfjs-dist/package.json')),
+        'standard_fonts/'
+      );
+    } catch {
+      // resolution failure → render without; scanned (image) pages still work
+    }
+    const doc = await getDocument({
+      data,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      disableFontFace: true,
+      standardFontDataUrl,
+    }).promise;
     const out: RasterPage[] = [];
     try {
       const pageCount = Math.min(doc.numPages, maxPages);
       for (let p = 1; p <= pageCount; p++) {
+        if (onlyPages && !onlyPages.includes(p)) continue;
         const page = await doc.getPage(p);
         const viewport = page.getViewport({ scale });
         const canvas = createCanvas(viewport.width, viewport.height);

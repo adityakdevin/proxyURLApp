@@ -29,7 +29,10 @@ export interface OcrPort {
    * OCR a scanned (image-only) PDF by rasterizing its pages. Optional — when absent,
    * a PDF with no text layer yields no text. Returns text + per-word normalized boxes.
    */
-  extractPdf?(absolutePath: string): Promise<{ text: string; words: WordBox[] }>;
+  extractPdf?(
+    absolutePath: string,
+    onlyPages?: number[]
+  ): Promise<{ text: string; words: WordBox[] }>;
   /** Release any underlying resources (e.g. a reused OCR worker). Optional. */
   close?(): Promise<void>;
 }

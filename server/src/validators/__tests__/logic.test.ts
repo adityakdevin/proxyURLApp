@@ -4,6 +4,7 @@ import {
   intraOutcome,
   completenessOutcome,
   typeInText,
+  typePresent,
   normalizeText,
   matchesClaimId,
   editDistanceCapped,
@@ -60,6 +61,19 @@ describe('validator logic', () => {
   });
   it('text utils', () => {
     expect(normalizeText('CLM-00001')).toBe('clm00001');
+  });
+  it('typePresent uses distinctive govt markers, not bare name phrases', () => {
+    // Policy boilerplate mentions "driving license" — must NOT count as a DL.
+    const policy = ['provided that the person driving holds an effective driving license'];
+    expect(typePresent('Driving Licence', 'DL', policy)).toBe(false);
+    expect(typePresent('Driving Licence', 'DL', ['INDIAN UNION DRIVING LICENCE DL No UK07 LMV'])).toBe(true);
+    // Aadhaar cards never print "Aadhar Card" in English — uidai/gov markers do.
+    expect(typePresent('Aadhar Card', 'AADHAR', ['help@uidai.gov.in www.uidai.gov.in'])).toBe(true);
+    expect(typePresent('Aadhar Card', 'AADHAR', policy)).toBe(false);
+    // Blurry OCR drops spaces on the PAN card header.
+    expect(typePresent('PAN Card', 'PAN', ['INCOMETAX DEPARTMENT GOVT. OF INDIA'])).toBe(true);
+    // Custom types fall back to the name-phrase match.
+    expect(typePresent('Invoice', null, ['TAX INVOICE No. 1'])).toBe(true);
   });
   it('typeInText matches type names in document text, word-bounded, with variants', () => {
     expect(typeInText('Invoice', ['TAX INVOICE No. 123'])).toBe(true);
