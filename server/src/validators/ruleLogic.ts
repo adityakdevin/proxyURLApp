@@ -20,13 +20,16 @@ export interface RuleEvaluation {
 const NUMERIC_FIELDS: RuleField[] = ['DOCUMENT_COUNT', 'REMARK_COUNT'];
 
 /**
- * Collapse a validation-check status to a binary PASSED/FAILED for both display
- * and rule evaluation: only an explicit FAILED counts as failed; every other
- * state (PASSED / PENDING / IN_PROGRESS / DOCS_NOT_AVAILABLE) reads as PASSED.
- * Shared by the claims xlsx export so the two agree.
+ * Collapse a validation-check status for rule evaluation and the claims xlsx
+ * export (shared so the two agree): PENDING / IN_PROGRESS read as PASSED (a
+ * mid-run claim shouldn't flunk rules), but DOCS_NOT_AVAILABLE keeps its own
+ * state — a claim with zero documents was never checked, so it must not
+ * satisfy "= PASSED" status rules (it doesn't read as FAILED either).
  */
-export function binaryValidationStatus(raw: string): 'PASSED' | 'FAILED' {
-  return raw === 'FAILED' ? 'FAILED' : 'PASSED';
+export function collapseValidationStatus(raw: string): 'PASSED' | 'FAILED' | 'DOCS N/A' {
+  if (raw === 'FAILED') return 'FAILED';
+  if (raw === 'DOCS_NOT_AVAILABLE' || raw === 'DOCS N/A') return 'DOCS N/A';
+  return 'PASSED';
 }
 
 export function validOperatorsFor(field: RuleField): RuleOperator[] {
@@ -52,14 +55,13 @@ function cmpStr(a: string, op: RuleOperator, b: string): boolean {
   return false; // numeric operators are invalid for string fields
 }
 
-/** A validation-status field: compare on the binary PASSED/FAILED collapse, so
- *  rules agree with the claims report and summary (which use the same collapse).
- *  Only a literal FAILED reads as FAILED; PASSED / PENDING / IN_PROGRESS /
- *  DOCS_NOT_AVAILABLE all read as PASSED. `actual` is reported binary too, so a
- *  passing claim never shows a raw PENDING next to a satisfied `= PASSED` rule. */
+/** A validation-status field: compare on the collapsed status, so rules agree
+ *  with the claims report and summary (which use the same collapse). `actual`
+ *  is reported collapsed too, so a passing claim never shows a raw PENDING
+ *  next to a satisfied `= PASSED` rule — and a zero-doc claim shows DOCS N/A. */
 function statusEval(status: string, op: RuleOperator, value: string): RuleEvaluation {
-  const actual = binaryValidationStatus(status);
-  return { passed: cmpStr(actual, op, binaryValidationStatus(value)), actual };
+  const actual = collapseValidationStatus(status);
+  return { passed: cmpStr(actual, op, collapseValidationStatus(value.trim().toUpperCase())), actual };
 }
 
 export function evaluateRule(

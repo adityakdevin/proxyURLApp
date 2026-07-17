@@ -5,7 +5,7 @@ import {
   ParsedObservationRow,
   deriveForgeryStatus,
 } from './observationSheet.js';
-import { binaryValidationStatus } from '../validators/ruleLogic.js';
+import { collapseValidationStatus } from '../validators/ruleLogic.js';
 
 export class ClaimServiceError extends Error {
   constructor(public code: string, message: string) {
@@ -573,11 +573,11 @@ export class ClaimService {
       category: c.subCategory.category.name,
       workflowStatus: c.workflowStatus.name,
       assignedTo: c.assignedTo?.fullName ?? 'Unassigned',
-      spell: binaryValidationStatus(c.spellCheckStatus),
-      qr: binaryValidationStatus(c.qrStatus),
-      meta: binaryValidationStatus(c.metaExtractionStatus),
-      intra: binaryValidationStatus(c.intraClaimStatus),
-      full: binaryValidationStatus(c.fullScanStatus),
+      spell: collapseValidationStatus(c.spellCheckStatus),
+      qr: collapseValidationStatus(c.qrStatus),
+      meta: collapseValidationStatus(c.metaExtractionStatus),
+      intra: collapseValidationStatus(c.intraClaimStatus),
+      full: collapseValidationStatus(c.fullScanStatus),
       documents: c._count.documents,
       created: c.createdAt.toISOString().slice(0, 10),
     }));

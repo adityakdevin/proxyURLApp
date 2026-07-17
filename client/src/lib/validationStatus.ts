@@ -17,13 +17,6 @@ type BadgeVariant =
   | 'success'
   | 'warning';
 
-/** Collapse a validation status to binary for display: only an explicit FAILED
- *  reads as FAILED; every other state (PASSED / PENDING / IN_PROGRESS /
- *  DOCS_NOT_AVAILABLE) reads as PASSED. Mirrors the server's binaryValidationStatus. */
-export function binaryValidationStatus(s: string): 'PASSED' | 'FAILED' {
-  return s === 'FAILED' ? 'FAILED' : 'PASSED';
-}
-
 /** Short, readable label for a validation status badge. */
 export function validationStatusLabel(s: string): string {
   switch (s) {
