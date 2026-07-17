@@ -23,13 +23,13 @@ export function metaOutcome(docsWithText: number, totalDocs: number): ValidatorO
 }
 
 
-export function qrOutcome(found: number, imageCount: number, values: string[]): ValidatorOutcome {
-  if (imageCount === 0) return { status: 'PASSED', summary: 'No image documents to scan.' };
+export function qrOutcome(found: number, docCount: number, values: string[]): ValidatorOutcome {
+  if (docCount === 0) return { status: 'PASSED', summary: 'No image or PDF documents to scan.' };
   if (found === 0)
-    return { status: 'FAILED', summary: `No QR code found across ${imageCount} image(s).` };
+    return { status: 'FAILED', summary: `No QR code found across ${docCount} document(s).` };
   return {
     status: 'PASSED',
-    summary: `${found} QR code(s) found across ${imageCount} image(s).`,
+    summary: `${found} QR code(s) found across ${docCount} document(s).`,
     details: { values },
   };
 }
@@ -62,6 +62,25 @@ export function completenessOutcome(
     summary: `${present} of ${requiredTypeNames.length} required document types present.`,
     details: { missing },
   };
+}
+
+/** Does any document's extracted text mention this document-type name as a
+ *  whole word/phrase? Scanned claims arrive as ONE bundled PDF named by chassis
+ *  number, so filename classification can never see the invoice/licence pages
+ *  inside — this content fallback is what marks them present. Recall-favoring
+ *  pre-filter like SPELL; word boundaries keep "Bill" from matching "billing".
+ *  ponytail: variants are inline (licence/license, aadhar spellings) — add an
+ *  alias column on DocumentTypeMaster if reviewers need per-type synonyms. */
+export function typeInText(name: string, texts: string[]): boolean {
+  const pattern = name
+    .trim()
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/licence/i, 'licen[cs]e')
+    .replace(/aadhar/i, 'aad?haa?r')
+    .replace(/\s+/g, '\\s+');
+  if (!pattern) return false;
+  const re = new RegExp(`(^|[^A-Za-z])${pattern}([^A-Za-z]|$)`, 'i');
+  return texts.some((t) => re.test(t));
 }
 
 export function normalizeText(s: string): string {

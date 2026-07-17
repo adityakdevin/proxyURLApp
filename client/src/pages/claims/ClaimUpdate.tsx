@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ChevronDown } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   ValidationStatus,
+  validationStatusCardClass,
   validationStatusLabel,
   validationStatusVariant,
 } from '@/lib/validationStatus';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DocumentViewer } from '@/components/claims/DocumentViewer';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Finding } from '@/lib/claimTypes';
 import {
   Select,
@@ -82,6 +84,11 @@ interface ValResult {
   status: ValidationStatus;
   summary: string | null;
   findings?: Finding[];
+  details?: {
+    extracted?: { documentId: string; fileName: string; text: string; truncated?: boolean }[];
+    values?: string[];
+    decoded?: { documentId: string; fileName: string; value: string; page?: number }[];
+  } | null;
 }
 interface ValRun {
   id: string;
@@ -99,6 +106,51 @@ interface RuleEval {
   actual: string;
 }
 const OP_SYMBOL: Record<string, string> = { EQ: '=', NEQ: '≠', GTE: '≥', LTE: '≤', GT: '>', LT: '<' };
+
+function parseKeyValues(text: string): [string, string][] {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  const re = /([A-Z][A-Za-z0-9 .*%/&()'-]{2,45}?)\s*:(?!\d)\s*/g;
+  const labels: { label: string; start: number; end: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(clean)) !== null) {
+    const keep = m[1].trim().split(' ').slice(-4);
+    while (keep.length > 1 && (/\d/.test(keep[0]) || /\.$/.test(keep[0]) || !/^[A-Z(]/.test(keep[0]))) {
+      keep.shift();
+    }
+    const label = keep.join(' ');
+    if (!/^[A-Z]/.test(label) || label.length < 2) continue;
+    labels.push({ label, start: m.index + m[1].lastIndexOf(label), end: re.lastIndex });
+  }
+  const pairs: [string, string][] = [];
+  for (let i = 0; i < labels.length; i++) {
+    const value = clean.slice(labels[i].end, labels[i + 1]?.start ?? clean.length).trim();
+    if (value) pairs.push([labels[i].label, value]);
+  }
+  return pairs;
+}
+/** Policy QR payloads are "Label:Value" fields joined by "|" (or ","). Split each
+ *  field at its label colon — skipping time colons like "11:43AM" — or, for fields
+ *  whose colon was omitted ("OD period02 Jul 2025…"), at the first digit. Returns
+ *  [] when the payload isn't field-shaped so the caller falls back to raw text. */
+function parseQrFields(value: string): [string, string][] {
+  const sep = value.includes('|') ? '|' : ',';
+  const pairs: [string, string][] = [];
+  for (const part of value.split(sep)) {
+    const p = part.trim();
+    if (!p) continue;
+    // First colon that isn't a time colon ("11:43AM" — digit on BOTH sides).
+    const colon = /(?<!\d):|:(?!\d)/.exec(p);
+    if (colon && colon.index > 0) {
+      pairs.push([p.slice(0, colon.index).trim(), p.slice(colon.index + 1).trim()]);
+      continue;
+    }
+    const digit = /^([A-Za-z. ]{2,}?)\s*(\d.*)$/.exec(p);
+    if (digit) pairs.push([digit[1].trim(), digit[2].trim()]);
+    else pairs.push(['', p]);
+  }
+  return pairs.filter(([label]) => label).length >= 2 ? pairs : [];
+}
+
 const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof ClaimDetail }[] = [
   { key: 'SPELL', label: 'Spell', column: 'spellCheckStatus' },
   { key: 'QR', label: 'QR', column: 'qrStatus' },
@@ -276,6 +328,16 @@ export default function ClaimUpdate() {
     fileName: string;
     findings: Finding[];
   } | null>(null);
+  // Full-text popup for META extracted data.
+  const [metaView, setMetaView] = useState<{
+    fileName: string;
+    text: string;
+    truncated?: boolean;
+  } | null>(null);
+  // Popup listing decoded QR values.
+  const [qrView, setQrView] = useState<{ fileName: string; value: string; page?: number }[] | null>(
+    null
+  );
   const [isValidating, setIsValidating] = useState(false);
 
   const fetchValidation = async () => {
@@ -323,6 +385,17 @@ export default function ClaimUpdate() {
   };
 
   const resultFor = (key: ValResult['validatorKey']) => valResults.find((r) => r.validatorKey === key);
+
+  // Badge click → toggle the matching validator card below (scroll into view on open).
+  const openCard = (key: ValResult['validatorKey']) => {
+    const el = document.getElementById(`val-card-${key}`);
+    if (!el) return;
+    if (el instanceof HTMLDetailsElement) {
+      el.open = !el.open;
+      if (!el.open) return;
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
 
   // Group findings per validator → per document once (null docId = claim-level), plus a
   // docId→fileName lookup, instead of rebuilding them on every render inside the map.
@@ -426,7 +499,13 @@ export default function ClaimUpdate() {
               const colVal = String(claim[v.column]);
               const res = resultFor(v.key);
               return (
-                <Badge key={v.key} variant={validationStatusVariant(colVal)} title={res?.summary ?? ''}>
+                <Badge
+                  key={v.key}
+                  variant={validationStatusVariant(colVal)}
+                  title={res?.summary ?? ''}
+                  className="cursor-pointer"
+                  onClick={() => openCard(v.key)}
+                >
                   {v.label}: {validationStatusLabel(colVal)}
                 </Badge>
               );
@@ -443,52 +522,140 @@ export default function ClaimUpdate() {
             </Button>
           )}
         </div>
-        {valResults.length > 0 && (
-          <div className="mt-3 space-y-2 text-sm text-gray-600">
-            {VALIDATORS.map((v) => {
-              const res = resultFor(v.key);
-              if (!res) return null;
-              const findings = res.findings ?? [];
-              const groups = findingsByValidator.get(v.key) ?? new Map<string | null, Finding[]>();
-              return (
-                <div key={v.key}>
-                  <div>
-                    <span className="font-medium">{v.label}:</span> {res.summary}
-                  </div>
-                  {findings.length > 0 && (
-                    <ul className="ml-4 mt-1 space-y-0.5 text-xs text-gray-500">
-                      {[...groups.entries()].map(([docId, fs]) => {
-                        const name = docId ? nameByDocId.get(docId) ?? 'Document' : 'Claim-level';
-                        const shown = fs.slice(0, 5).map((f) => f.message).join('; ');
-                        const more = fs.length > 5 ? ` …(+${fs.length - 5} more)` : '';
-                        return (
-                          <li key={docId ?? 'claim'}>
-                            {docId ? (
-                              <button
-                                type="button"
-                                className="text-blue-600 hover:underline"
-                                onClick={() =>
-                                  setViewer({ documentId: docId, fileName: name, findings: fs })
-                                }
-                              >
-                                {name}
-                              </button>
-                            ) : (
-                              <span className="font-medium">{name}</span>
-                            )}{' '}
-                            — {fs.length} finding{fs.length > 1 ? 's' : ''}: {shown}
-                            {more}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
+
+      {valResults.length > 0 && (
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          {VALIDATORS.map((v) => {
+            const res = resultFor(v.key);
+            if (!res) return null;
+            const findings = res.findings ?? [];
+            const groups = findingsByValidator.get(v.key) ?? new Map<string | null, Finding[]>();
+            const cardClass = validationStatusCardClass(String(claim[v.column]));
+            // META shows the extracted text itself instead of a plain file list.
+            const extracted = v.key === 'META' ? res.details?.extracted ?? [] : [];
+            const extractedBlock = extracted.length > 0 && (
+              <div className="mt-2 space-y-3">
+                {extracted.map((e) => (
+                  <div key={e.documentId}>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-blue-600 hover:underline"
+                        onClick={() =>
+                          setViewer({ documentId: e.documentId, fileName: e.fileName, findings: [] })
+                        }
+                      >
+                        {e.fileName}
+                      </button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs shrink-0"
+                        onClick={() => setMetaView(e)}
+                      >
+                        View Meta Data
+                      </Button>
+                    </div>
+                    <p className="mt-1 text-sm text-gray-600 whitespace-pre-line line-clamp-3">
+                      {e.text}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            );
+            // QR shows a popup with the decoded QR values (old runs only stored bare values).
+            const qrButton = v.key === 'QR' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-2 h-6 px-2 text-xs shrink-0"
+                onClick={() =>
+                  setQrView(
+                    res.details?.decoded ??
+                      (res.details?.values ?? []).map((value) => ({ fileName: 'QR code', value }))
+                  )
+                }
+              >
+                View QR Data
+              </Button>
+            );
+            const header = (
+              <>
+                <h2 className="inline text-lg font-semibold">{v.label}</h2>
+                <div className="mt-1 text-sm text-gray-600">{res.summary}</div>
+              </>
+            );
+            return (
+              <details
+                key={v.key}
+                id={`val-card-${v.key}`}
+                className={`group ${cardClass} border rounded-md ${v.key === 'FULL' ? 'col-span-2' : ''}`}
+              >
+                <summary className="flex cursor-pointer select-none items-start justify-between gap-2 p-6 list-none [&::-webkit-details-marker]:hidden">
+                  <div>{header}</div>
+                  <ChevronDown className="h-4 w-4 mt-1.5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" />
+                </summary>
+                {findings.length === 0 && v.key !== 'META' && docs.length > 0 && (
+                  <ul className="-mt-3 px-6 pb-6 space-y-1 text-sm text-gray-500">
+                    {docs.map((d) => (
+                      <li key={d.id}>
+                        <button
+                          type="button"
+                          className="text-blue-600 hover:underline"
+                          onClick={() =>
+                            setViewer({ documentId: d.id, fileName: d.fileName, findings: [] })
+                          }
+                        >
+                          {d.fileName}
+                        </button>
+                        {qrButton}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {findings.length > 0 && (
+                <ul className="-mt-3 px-6 pb-6 space-y-2 text-sm text-gray-500">
+                  {[...groups.entries()].map(([docId, fs]) => {
+                    const name = docId ? nameByDocId.get(docId) ?? 'Document' : 'Claim-level';
+                    return (
+                      <li key={docId ?? 'claim'}>
+                        {docId ? (
+                          <button
+                            type="button"
+                            className="text-blue-600 hover:underline"
+                            onClick={() =>
+                              setViewer({ documentId: docId, fileName: name, findings: fs })
+                            }
+                          >
+                            {name}
+                          </button>
+                        ) : (
+                          <span className="font-medium">{name}</span>
+                        )}{' '}
+                        — {fs.length} finding{fs.length > 1 ? 's' : ''}:
+                        <ul className="mt-1 ml-5 list-disc space-y-0.5">
+                          {fs.slice(0, 5).map((f, i) => (
+                            <li key={i}>{f.message}</li>
+                          ))}
+                          {fs.length > 5 && <li>…(+{fs.length - 5} more)</li>}
+                        </ul>
+                      </li>
+                    );
+                  })}
+                </ul>
+                )}
+                {(extractedBlock || (findings.length > 0 && qrButton)) && (
+                  <div className="-mt-3 px-6 pb-6">
+                    {extractedBlock}
+                    {findings.length > 0 && qrButton}
+                  </div>
+                )}
+              </details>
+            );
+          })}
+        </div>
+      )}
 
       <div className="bg-white border rounded-md p-6 mb-6">
         <h2 className="text-lg font-semibold mb-4">Update Claim</h2>
@@ -697,6 +864,106 @@ export default function ClaimUpdate() {
           findings={viewer.findings}
         />
       )}
+
+      <Dialog open={!!qrView} onOpenChange={(o) => !o && setQrView(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>QR Data</DialogTitle>
+          </DialogHeader>
+          {qrView &&
+            (qrView.length === 0 ? (
+              <p className="text-sm text-gray-500">No QR codes were decoded for this claim.</p>
+            ) : (
+              <div className="max-h-[70vh] space-y-4 overflow-y-auto text-sm">
+                {qrView.map((q, i) => {
+                  const fields = parseQrFields(q.value);
+                  return (
+                    <div key={i}>
+                      <div className="font-medium">
+                        {q.fileName}
+                        {q.page != null && (
+                          <span className="ml-2 font-normal text-gray-400">page {q.page}</span>
+                        )}
+                      </div>
+                      {fields.length > 0 ? (
+                        <>
+                          <table className="mt-1 w-full">
+                            <tbody className="divide-y">
+                              {fields.map(([label, value], j) => (
+                                <tr key={j}>
+                                  <td className="py-1.5 pr-4 align-top font-medium text-gray-700 whitespace-nowrap">
+                                    {label}
+                                  </td>
+                                  <td className="py-1.5 break-all text-gray-600">{value}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-xs text-gray-400">
+                              Raw QR payload
+                            </summary>
+                            <div className="mt-1 break-all text-xs text-gray-500">{q.value}</div>
+                          </details>
+                        </>
+                      ) : (
+                        <div className="mt-1 break-all text-gray-600">{q.value}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!metaView} onOpenChange={(o) => !o && setMetaView(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Extracted Data — {metaView?.fileName}</DialogTitle>
+          </DialogHeader>
+          {metaView && (
+            <div className="max-h-[70vh] overflow-y-auto text-sm">
+              {(() => {
+                const pairs = parseKeyValues(metaView.text);
+                if (pairs.length < 5) {
+                  return (
+                    <div className="whitespace-pre-line text-gray-700">
+                      {metaView.text}
+                      {metaView.truncated ? '\n…(truncated)' : ''}
+                    </div>
+                  );
+                }
+                return (
+                  <>
+                    <table className="w-full">
+                      <tbody className="divide-y">
+                        {pairs.map(([label, value], i) => (
+                          <tr key={i}>
+                            <td className="py-1.5 pr-4 align-top font-medium text-gray-700 whitespace-nowrap max-w-[16rem] overflow-hidden text-ellipsis">
+                              {label}
+                            </td>
+                            <td className="py-1.5 text-gray-600">{value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <details className="mt-4">
+                      <summary className="cursor-pointer select-none text-xs text-gray-400">
+                        Raw text
+                      </summary>
+                      <div className="mt-2 whitespace-pre-line text-xs text-gray-500">
+                        {metaView.text}
+                        {metaView.truncated ? '\n…(truncated)' : ''}
+                      </div>
+                    </details>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

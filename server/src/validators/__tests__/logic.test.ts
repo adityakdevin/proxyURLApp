@@ -3,6 +3,7 @@ import {
   qrOutcome,
   intraOutcome,
   completenessOutcome,
+  typeInText,
   normalizeText,
   matchesClaimId,
   editDistanceCapped,
@@ -59,6 +60,14 @@ describe('validator logic', () => {
   });
   it('text utils', () => {
     expect(normalizeText('CLM-00001')).toBe('clm00001');
+  });
+  it('typeInText matches type names in document text, word-bounded, with variants', () => {
+    expect(typeInText('Invoice', ['TAX INVOICE No. 123'])).toBe(true);
+    expect(typeInText('Bill', ['send to billing address'])).toBe(false);
+    expect(typeInText('Driving Licence', ['DRIVING LICENSE NO DL-123'])).toBe(true);
+    expect(typeInText('Aadhar Card', ['Aadhaar Card No 1234'])).toBe(true);
+    expect(typeInText('Passport', ['no matching words here'])).toBe(false);
+    expect(typeInText('PAN Card', [])).toBe(false);
   });
 
   describe('matchesClaimId', () => {

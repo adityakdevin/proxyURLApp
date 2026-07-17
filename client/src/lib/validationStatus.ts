@@ -36,6 +36,21 @@ export function validationStatusLabel(s: string): string {
   }
 }
 
+export function validationStatusCardClass(s: string): string {
+  switch (s) {
+    case 'PASSED':
+      return 'border-green-500 bg-white';
+    case 'FAILED':
+      return 'border-red-600 bg-white';
+    case 'IN_PROGRESS':
+      return 'border-gray-400 bg-white';
+    case 'DOCS_NOT_AVAILABLE':
+      return 'border-yellow-500 bg-white';
+    default:
+      return 'bg-white';
+  }
+}
+
 /** Badge colour for a validation status. */
 export function validationStatusVariant(s: string): BadgeVariant {
   switch (s) {

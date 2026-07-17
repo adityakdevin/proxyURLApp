@@ -69,6 +69,15 @@ export const metaValidator: Validator = {
     let withText = 0;
     const noText: FindingInput[] = [];
     const aiFindings: FindingInput[] = [];
+    // Extracted text per document, persisted in result.details so the UI can show it.
+    // ponytail: 20k chars/doc cap keeps the JSON column and API payload bounded.
+    const MAX_DETAIL_CHARS = 20_000;
+    const extracted: {
+      documentId: string;
+      fileName: string;
+      text: string;
+      truncated: boolean;
+    }[] = [];
     for (const doc of ctx.documents) {
       // Skip oversized files up front — never OCR/parse a 100 MB upload.
       let sizeBytes = 0;
@@ -95,6 +104,12 @@ export const metaValidator: Validator = {
         ctx.shared.set(doc.id, text);
         if (words.length > 0) ctx.wordBoxes.set(doc.id, words);
         withText++;
+        extracted.push({
+          documentId: doc.id,
+          fileName: doc.fileName,
+          text: text.slice(0, MAX_DETAIL_CHARS),
+          truncated: text.length > MAX_DETAIL_CHARS,
+        });
       } else {
         noText.push({
           documentId: doc.id,
@@ -120,6 +135,7 @@ export const metaValidator: Validator = {
     // AI findings always surface; no-text findings only when the check itself failed.
     const findings = [...aiFindings, ...(outcome.status === 'FAILED' ? noText : [])];
     if (findings.length > 0) outcome.findings = findings;
+    if (extracted.length > 0) outcome.details = { extracted };
     return outcome;
   },
 };

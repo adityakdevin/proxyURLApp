@@ -1,5 +1,5 @@
 import { Validator, FindingInput } from './types.js';
-import { completenessOutcome } from './logic.js';
+import { completenessOutcome, typeInText } from './logic.js';
 
 export const fullValidator: Validator = {
   key: 'FULL',
@@ -13,7 +13,13 @@ export const fullValidator: Validator = {
     const presentIds = new Set(
       ctx.documents.map((d) => d.documentTypeId).filter((x): x is string => !!x)
     );
-    const presentNames = types.filter((t) => presentIds.has(t.id)).map((t) => t.name);
+    // A type is present if a document was classified to it (filename match) OR
+    // the extracted text (META runs first, fills ctx.shared) mentions it —
+    // scanned claims are one bundled PDF whose filename names no type.
+    const texts = [...ctx.shared.values()];
+    const presentNames = types
+      .filter((t) => presentIds.has(t.id) || typeInText(t.name, texts))
+      .map((t) => t.name);
     const outcome = completenessOutcome(
       presentNames,
       types.map((t) => t.name)
