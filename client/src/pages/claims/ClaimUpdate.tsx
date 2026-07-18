@@ -85,7 +85,13 @@ interface ValResult {
   summary: string | null;
   findings?: Finding[];
   details?: {
-    extracted?: { documentId: string; fileName: string; text: string; truncated?: boolean }[];
+    extracted?: {
+      documentId: string;
+      fileName: string;
+      text: string;
+      truncated?: boolean;
+      properties?: Record<string, string>;
+    }[];
     values?: string[];
     decoded?: { documentId: string; fileName: string; value: string; page?: number }[];
     present?: string[];
@@ -108,6 +114,9 @@ interface RuleEval {
 }
 const OP_SYMBOL: Record<string, string> = { EQ: '=', NEQ: '≠', GTE: '≥', LTE: '≤', GT: '>', LT: '<' };
 
+/** Parse "Label: value" fields out of a document's extracted body text (invoice/form
+ *  fields like "Customer Id: C2025…", "Bill To: …"). Skips time-style colons. Returns
+ *  [] when the text isn't field-shaped so the caller falls back to raw text. */
 function parseKeyValues(text: string): [string, string][] {
   const clean = text.replace(/\s+/g, ' ').trim();
   const re = /([A-Z][A-Za-z0-9 .*%/&()'-]{2,45}?)\s*:(?!\d)\s*/g;
@@ -337,11 +346,14 @@ export default function ClaimUpdate() {
     fileName: string;
     findings: Finding[];
   } | null>(null);
-  // Full-text popup for META extracted data.
+  // META popup: 'properties' = PDF document metadata (created/modified/producer/…);
+  // 'extracted' = key/value fields parsed from the body text (invoice/form fields).
   const [metaView, setMetaView] = useState<{
     fileName: string;
     text: string;
     truncated?: boolean;
+    properties?: Record<string, string>;
+    mode: 'properties' | 'extracted';
   } | null>(null);
   // Popup listing decoded QR values.
   const [qrView, setQrView] = useState<{ fileName: string; value: string; page?: number }[] | null>(
@@ -561,14 +573,19 @@ export default function ClaimUpdate() {
                         size="sm"
                         variant="outline"
                         className="h-6 px-2 text-xs shrink-0"
-                        onClick={() => setMetaView(e)}
+                        onClick={() => setMetaView({ ...e, mode: 'properties' })}
                       >
                         View Meta Data
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs shrink-0"
+                        onClick={() => setMetaView({ ...e, mode: 'extracted' })}
+                      >
+                        View Extracted Properties
+                      </Button>
                     </div>
-                    <p className="mt-1 text-sm text-gray-600 whitespace-pre-line line-clamp-3">
-                      {e.text}
-                    </p>
                   </div>
                 ))}
               </div>
@@ -934,43 +951,40 @@ export default function ClaimUpdate() {
       <Dialog open={!!metaView} onOpenChange={(o) => !o && setMetaView(null)}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Extracted Data — {metaView?.fileName}</DialogTitle>
+            <DialogTitle>
+              {metaView?.mode === 'extracted' ? 'Extracted Properties' : 'Document Properties'} —{' '}
+              {metaView?.fileName}
+            </DialogTitle>
           </DialogHeader>
           {metaView && (
             <div className="max-h-[70vh] overflow-y-auto text-sm">
               {(() => {
-                const pairs = parseKeyValues(metaView.text);
-                if (pairs.length < 5) {
-                  return (
-                    <div className="whitespace-pre-line text-gray-700">
-                      {metaView.text}
-                      {metaView.truncated ? '\n…(truncated)' : ''}
-                    </div>
-                  );
-                }
+                const rows =
+                  metaView.mode === 'extracted'
+                    ? parseKeyValues(metaView.text)
+                    : Object.entries(metaView.properties ?? {});
+                const empty =
+                  metaView.mode === 'extracted'
+                    ? 'No labelled fields found in the extracted text.'
+                    : 'No document properties found for this file.';
                 return (
                   <>
-                    <table className="w-full">
-                      <tbody className="divide-y">
-                        {pairs.map(([label, value], i) => (
-                          <tr key={i}>
-                            <td className="py-1.5 pr-4 align-top font-medium text-gray-700 whitespace-nowrap max-w-[16rem] overflow-hidden text-ellipsis">
-                              {label}
-                            </td>
-                            <td className="py-1.5 text-gray-600">{value}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <details className="mt-4">
-                      <summary className="cursor-pointer select-none text-xs text-gray-400">
-                        Raw text
-                      </summary>
-                      <div className="mt-2 whitespace-pre-line text-xs text-gray-500">
-                        {metaView.text}
-                        {metaView.truncated ? '\n…(truncated)' : ''}
-                      </div>
-                    </details>
+                    {rows.length > 0 ? (
+                      <table className="w-full">
+                        <tbody className="divide-y">
+                          {rows.map(([label, value], i) => (
+                            <tr key={i}>
+                              <td className="py-1.5 pr-4 align-top font-medium text-gray-700 whitespace-nowrap max-w-[16rem] overflow-hidden text-ellipsis">
+                                {label}
+                              </td>
+                              <td className="py-1.5 text-gray-600 break-all">{value}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="text-gray-500">{empty}</div>
+                    )}
                   </>
                 );
               })()}

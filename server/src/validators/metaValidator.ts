@@ -3,8 +3,34 @@ import { promises as fs } from 'fs';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox } from './types.js';
 import { metaOutcome } from './logic.js';
-import { extractPdf } from '../lib/pdfExtractor.js';
+import { extractPdf, readPdfInfo } from '../lib/pdfExtractor.js';
 import { readFileMeta } from '../lib/fileMeta.js';
+
+/** Document properties (created/modified/author/…), NOT body text. PDFs read the Info
+ *  dictionary; images read EXIF; both fall back to file size + filesystem mtime so the
+ *  panel is never empty. */
+async function documentProperties(doc: ValidatorDoc): Promise<Record<string, string>> {
+  const props: Record<string, string> = {};
+  const mime = doc.mimeType ?? '';
+  if (mime === 'application/pdf') {
+    Object.assign(props, await readPdfInfo(doc.readablePath));
+  } else if (mime.startsWith('image/')) {
+    const m = await readFileMeta(doc.readablePath, doc.mimeType);
+    if (m.createDate) props.Created = m.createDate;
+    if (m.modifyDate) props.Modified = m.modifyDate;
+    if (m.software) props.Software = m.software;
+    if (m.make) props.Make = m.make;
+    if (m.model) props.Model = m.model;
+  }
+  try {
+    const st = await fs.stat(doc.readablePath);
+    props['File Size'] = `${(st.size / 1024).toFixed(1)} KB`;
+    if (!props.Modified) props.Modified = st.mtime.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  } catch {
+    // stat failure → whatever properties we already have
+  }
+  return props;
+}
 
 async function extract(
   ctx: ValidatorContext,
@@ -91,6 +117,7 @@ export const metaValidator: Validator = {
       fileName: string;
       text: string;
       truncated: boolean;
+      properties: Record<string, string>;
     }[] = [];
     for (const doc of ctx.documents) {
       // Skip oversized files up front — never OCR/parse a 100 MB upload.
@@ -123,6 +150,7 @@ export const metaValidator: Validator = {
           fileName: doc.fileName,
           text: text.slice(0, MAX_DETAIL_CHARS),
           truncated: text.length > MAX_DETAIL_CHARS,
+          properties: await documentProperties(doc),
         });
       } else {
         noText.push({

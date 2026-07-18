@@ -129,6 +129,87 @@ export async function extractPdf(
   }
 }
 
+/** Turn a PDF date string (`D:20250610123456+05'30'`) into a readable ISO-ish stamp.
+ *  Leaves anything that isn't a recognisable PDF date untouched. */
+export function formatPdfDate(raw: string): string {
+  const m = /^D:(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?([Zz+-].*)?$/.exec(raw.trim());
+  if (!m) return raw.trim();
+  const [, y, mo = '01', d = '01', h = '00', mi = '00', s = '00', tz] = m;
+  const zone = !tz || tz === 'Z' || tz === 'z' ? 'Z' : tz.replace(/'/g, ':').replace(/:$/, '');
+  return `${y}-${mo}-${d} ${h}:${mi}:${s}${zone === 'Z' ? ' UTC' : ' ' + zone}`;
+}
+
+/** Document properties (Info dictionary + page count), NOT body text. Used by the META
+ *  validator so reviewers can see created/modified/author/producer. Returns {} on any
+ *  failure or an encrypted/imageless PDF — the caller degrades to file-level metadata. */
+export async function readPdfInfo(absolutePath: string): Promise<Record<string, string>> {
+  try {
+    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const data = new Uint8Array(await fs.readFile(absolutePath));
+    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
+    const out: Record<string, string> = {};
+    try {
+      const { info, metadata } = (await doc.getMetadata()) as unknown as {
+        info?: Record<string, unknown>;
+        metadata?: { getAll?: () => Record<string, unknown> } | null;
+      };
+      const fields: [string, string][] = [
+        ['Title', 'Title'],
+        ['Author', 'Author'],
+        ['Subject', 'Subject'],
+        ['Keywords', 'Keywords'],
+        ['Creator', 'Creator'],
+        ['Producer', 'Producer'],
+        ['CreationDate', 'Created'],
+        ['ModDate', 'Modified'],
+        ['PDFFormatVersion', 'PDF Version'],
+      ];
+      for (const [key, label] of fields) {
+        const v = info?.[key];
+        if (v === null || v === undefined || String(v).trim() === '') continue;
+        const s = String(v).trim();
+        out[label] = key === 'CreationDate' || key === 'ModDate' ? formatPdfDate(s) : s;
+      }
+      out.Pages = String(doc.numPages);
+
+      // XMP metadata — fills blanks the Info dict dropped (dates/tool often survive a
+      // re-save) and carries the edit-trail IDs that flag a tampered document.
+      const xmp = metadata?.getAll?.() ?? {};
+      const xmpStr = (k: string): string | undefined => {
+        const v = xmp[k];
+        return v === null || v === undefined || String(v).trim() === '' ? undefined : String(v).trim();
+      };
+      const xmpDate = (k: string): string | undefined => {
+        const v = xmpStr(k);
+        return v ? v.replace('T', ' ').replace(/([+-]\d{2}:\d{2}|Z)$/, (m) => (m === 'Z' ? ' UTC' : ' ' + m)) : undefined;
+      };
+      const xmpFill: [string, string | undefined][] = [
+        ['Created', xmpDate('xmp:createdate')],
+        ['Modified', xmpDate('xmp:modifydate')],
+        ['Creator', xmpStr('xmp:creatortool')],
+        ['Title', xmpStr('dc:title')],
+        ['Document ID', xmpStr('xmpmm:documentid')],
+        ['Instance ID', xmpStr('xmpmm:instanceid')],
+      ];
+      for (const [label, v] of xmpFill) if (v && !out[label]) out[label] = v;
+
+      // Security / structure flags — genuine dealer invoices are plain, unsigned PDFs;
+      // encryption, signatures, and embedded forms are all worth a reviewer's eye.
+      const flag = (k: string) => info?.[k] === true;
+      if (info?.EncryptFilterName) out.Encrypted = 'Yes';
+      if (flag('IsSignaturesPresent')) out['Digitally Signed'] = 'Yes';
+      if (flag('IsAcroFormPresent') || flag('IsXFAPresent')) out['Has Form'] = 'Yes';
+      if (flag('IsLinearized')) out.Linearized = 'Yes';
+    } finally {
+      await doc.cleanup?.();
+      await doc.destroy?.();
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 /** One rendered page: PNG bytes plus the raster dimensions (for box normalization). */
 export interface RasterPage {
   page: number;
