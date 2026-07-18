@@ -59,16 +59,17 @@ Missing-type findings stay as-is.
 | Type | Rule | Check | Reason on fail |
 |---|---|---|---|
 | PAN | 10-char format | `^[A-Z]{5}[0-9]{4}[A-Z]$` | "PAN not a valid 10-char format" (+count) |
-| PAN | 4th-letter category | map P/C/H/A/T/B/L/J/G | reports holder category; flag if 4th char invalid |
+| PAN | 4th-letter category | map P/F/C/H/A/T/B/L/J/G (F=Firm/LLP) | reports holder category; flag if 4th char invalid |
 | Aadhaar | 12-digit | `\b\d{4}\s?\d{4}\s?\d{4}\b` | "Aadhaar not 12 digits" (+count) |
-| Aadhaar | VID 14-digit | `\b\d{4}\s?\d{4}\s?\d{4}\s?\d{2}\b` | "VID not 14 digits" |
+| Aadhaar | VID | **SKIPPED in Phase 1** — length disputed (14 vs 16); confirm with requirements owners before adding | — |
 | Aadhaar | front=back | same number across pages of one file | "Aadhaar differs front vs back" |
-| GST | 15-digit + `Z` at pos 14 | GSTIN regex, 2nd-from-end = `Z` | "GST invalid / missing Z" (+count) |
-| DL | 16 chars | length/format | "DL not 16 digits" (+count) |
+| GST | 15 alphanumeric + `Z` | `^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$` | "GST invalid / missing Z" (+count) |
+| DL | state 2 letters + 13 digits | `^[A-Z]{2}\s?\d{2}\s?\d{11}$` (15 alphanumeric, separators normalized) | "DL format invalid" (+count) |
 | Voter ID | number same on back | cross-page match; else "Back side NA" | "Voter ID differs on back" |
-| Udyam | 19-char `UDYAM-XX-XX-NNNNNNN` | regex | "Udyam reg. no. malformed" (+count) |
-| Passport | file no 12 or 15 digits | length check | "File no. outside 12-15 digits" (+count) |
-| Passport | 8-digit passport no twice | appears on p.1 and near barcode | "Passport no. mismatch across pages" |
+| Udyam | `UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}` | regex (2nd group is DIGITS, not letters) | "Udyam reg. no. malformed" (+count) |
+| Passport | number = 1 letter + 7 digits | `^[A-Z]\d{7}$` | "Passport no. malformed" |
+| Passport | file no 12-15 alphanumeric | `^[A-Z0-9]{12,15}$` | "File no. outside 12-15 alphanumeric" (+count) |
+| Passport | passport no twice | appears on p.1 and near barcode | "Passport no. mismatch across pages" |
 | Every doc | signature keyword | `authorised|signatory|signature` present | "No signature/authorised-signatory found" |
 | Every doc | editor/AI watermark | `readPdfInfo` Producer/Creator matches editor list | "Document produced/edited by <tool>" |
 | Every doc | calendar-valid dates | reject 31 in Apr/Jun/Sep/Nov, 29 in non-leap Feb | "Impossible date: <date>" |
@@ -166,25 +167,55 @@ Refinements from `/plan-eng-review`, binding on implementation:
    re-classifies independently.
 6. **Registry order.** REDFLAG registers AFTER META (needs `ctx.shared` +
    `ctx.pageTexts`). FULL stays last.
-7. **Wording fixes.** DL is 16 *characters* (`[A-Z]{2}[0-9]{2}` + 11 digits), not
-   "16 digits" — fix the reason text. Recheck Udyam (19 chars including hyphens).
+7. **Rule catalog format fixes** (see corrected table above). DL = state 2 letters
+   + 13 digits (15 alphanumeric), not "16 digits". Udyam 2nd group is digits.
 8. **Watermark severity = FAILED** (user decision, overriding the WARNING
    recommendation). Accepted tradeoff: editor Producers (iText/iLovePDF) are
    common on re-saved PDFs, so expect a high initial FAILED rate. STRONGLY
    recommended fast-follow: admin-editable editor allowlist so common tools don't
    fire. Tracked in Out of Scope; prioritize it right after Phase 1 High lands.
 
+## Engineering Review — Outside Voice (Codex, 2026-07-19)
+
+Second, independent pass. New binding decisions on top of 1-8:
+
+9. **Candidate extraction is the real foundation — build it first.** Rules operate
+   on already-isolated numbers, but nothing in the spec finds the intended
+   PAN/GST/DL token amid OCR noise. Before any format rule runs, `redFlagLogic`
+   MUST: (a) extract label-anchored candidates (`"PAN No: X"`, `"GSTIN: X"`) —
+   reuse the pattern in `logic.ts:281` `extractLabeledNames`; (b) normalize OCR
+   confusions (`O↔0`, `I/l↔1`, strip stray spaces) — reuse `normalizeText`
+   (`logic.ts:118`); (c) emit THREE distinct outcomes per rule: **absent** (no
+   candidate found → not this doc's concern), **unreadable** (candidate found but
+   OCR-garbled → advisory, don't fail), **malformed** (clean candidate that fails
+   the format → red flag). Collapsing unreadable into malformed is the top
+   false-positive source.
+10. **Always retain page numbers internally; `page=null` is DISPLAY-only.** Decision
+    3's "single-type file → page=null" loses page provenance exactly where the
+    cross-page rules (Aadhaar front/back, passport no. on p.1 vs barcode) need it.
+    Store the real page on every finding; the UI collapses to filename-only when a
+    file is single-type AND single-page. Never drop page data at the data layer.
+11. **Rule catalog corrections** (folded into the table): PAN category map adds
+    **F** (Firm/LLP); GST is 15 *alphanumeric* with entity char `[1-9A-Z]`;
+    Passport number = 1 letter + 7 digits (not "8 digits"); Passport file no =
+    12-15 alphanumeric; VID length dispute → **rule skipped** in Phase 1 pending
+    requirements-owner confirmation (14 per source doc vs 16 per UIDAI).
+
 ## GSTACK REVIEW REPORT
 
 | Run | Status | Findings |
 |-----|--------|----------|
-| plan-eng-review (claude) | complete | 7 architecture/correctness findings, 1 decision resolved |
+| plan-eng-review (claude) | complete | 7 findings, 1 decision resolved (decisions 1-8) |
+| plan-eng-review outside-voice (codex) | absorbed | 4 findings → decisions 9-11 + 6 rule-format corrections |
 
-VERDICT: APPROVED WITH LOCKED REFINEMENTS. Spec is buildable once decisions 1-8
-above are folded in. Highest risks addressed: per-page text fragility (→ extractPdf
-per-page), Every-Doc FP flood (→ file-level), testability under jest (→ no
-extraction in segment). Watermark-FAILED accepted by user with allowlist fast-follow.
+VERDICT: APPROVED WITH LOCKED REFINEMENTS (2 passes). Buildable once decisions
+1-11 are folded in. Codex caught the two things the first pass missed: candidate
+extraction / OCR normalization is the real foundation (decision 9), and the
+page=null rule silently broke the cross-page checks (decision 10). Six factual
+rule-format errors corrected (PAN+F, GST, DL, Udyam, Passport ×2). VID rule
+deferred pending requirements confirmation.
 
 **UNRESOLVED DECISIONS:**
-- Editor allowlist for the watermark rule: build in this PR or as immediate
+- VID length (14 vs 16): confirm with Puneet/Vikas before the rule is added back.
+- Editor allowlist for the watermark rule: build in this PR or immediate
   fast-follow? (Recommendation: fast-follow, keeps Phase 1 High shippable.)
