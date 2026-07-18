@@ -138,3 +138,53 @@ already carry `page`).
 
 ~3h segment/classify + 4h rule functions + 2h validator wiring + 1h schema/registry
 + 2h Full Scan provenance + 3h frontend card + 4h tests ~= 19h.
+
+## Engineering Review — Locked Decisions (2026-07-18)
+
+Refinements from `/plan-eng-review`, binding on implementation:
+
+1. **Per-page text source.** Do NOT reconstruct page text by re-joining
+   `ctx.wordBoxes` (fragile: pdf-parse fallback has no boxes; token order is
+   approximate). Instead, change `extractPdf` (`pdfExtractor.ts:97-121`) to also
+   return a per-page text array, and have `metaValidator` store it on the context
+   (new `ctx.pageTexts: Map<documentId, string[]>`). `segment` reads that.
+2. **No extraction inside `segment` / `redFlagLogic`.** Both consume already-
+   populated `ctx` data only. Never call `extractPdf`/`rasterizePdf` from them —
+   pdfjs dynamic import can't run under jest, and this keeps every rule unit test
+   injectable with plain fixtures.
+3. **Rule granularity.** Type-specific format rules (PAN/Aadhaar/GST/DL/Udyam/
+   Passport) run per classified page/instance. The three "Every Doc" rules
+   (signature keyword, editor/AI watermark, calendar-date validity) run at the
+   FILE level — a keyword present anywhere in the file satisfies it — to avoid a
+   false-positive flood on merged bundles.
+4. **Classifier vs `documentTypeId`.** Content classification decides WHERE a
+   format rule runs (page-level). Filename `documentTypeId` stays authoritative
+   for FULL completeness. A disagreement is a LOW-severity finding, not a silent
+   override.
+5. **DRY the classifier.** `segment` is the single classification path; both
+   `fullValidator` (provenance) and `redFlagValidator` call it. Neither
+   re-classifies independently.
+6. **Registry order.** REDFLAG registers AFTER META (needs `ctx.shared` +
+   `ctx.pageTexts`). FULL stays last.
+7. **Wording fixes.** DL is 16 *characters* (`[A-Z]{2}[0-9]{2}` + 11 digits), not
+   "16 digits" — fix the reason text. Recheck Udyam (19 chars including hyphens).
+8. **Watermark severity = FAILED** (user decision, overriding the WARNING
+   recommendation). Accepted tradeoff: editor Producers (iText/iLovePDF) are
+   common on re-saved PDFs, so expect a high initial FAILED rate. STRONGLY
+   recommended fast-follow: admin-editable editor allowlist so common tools don't
+   fire. Tracked in Out of Scope; prioritize it right after Phase 1 High lands.
+
+## GSTACK REVIEW REPORT
+
+| Run | Status | Findings |
+|-----|--------|----------|
+| plan-eng-review (claude) | complete | 7 architecture/correctness findings, 1 decision resolved |
+
+VERDICT: APPROVED WITH LOCKED REFINEMENTS. Spec is buildable once decisions 1-8
+above are folded in. Highest risks addressed: per-page text fragility (→ extractPdf
+per-page), Every-Doc FP flood (→ file-level), testability under jest (→ no
+extraction in segment). Watermark-FAILED accepted by user with allowlist fast-follow.
+
+**UNRESOLVED DECISIONS:**
+- Editor allowlist for the watermark rule: build in this PR or as immediate
+  fast-follow? (Recommendation: fast-follow, keeps Phase 1 High shippable.)
