@@ -59,6 +59,7 @@ interface ClaimDetail {
   metaExtractionStatus: string;
   intraClaimStatus: string;
   fullScanStatus: string;
+  redFlagStatus: string;
   remarks: Remark[];
   createdAt: string;
 }
@@ -80,7 +81,7 @@ function humanSize(bytes: number | null): string {
 }
 
 interface ValResult {
-  validatorKey: 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL';
+  validatorKey: 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG';
   status: ValidationStatus;
   summary: string | null;
   findings?: Finding[];
@@ -95,6 +96,7 @@ interface ValResult {
     values?: string[];
     decoded?: { documentId: string; fileName: string; value: string; page?: number }[];
     present?: string[];
+    provenance?: Record<string, string>;
   } | null;
 }
 interface ValRun {
@@ -174,6 +176,7 @@ const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof
   { key: 'QR', label: 'QR', column: 'qrStatus' },
   { key: 'META', label: 'Meta', column: 'metaExtractionStatus' },
   { key: 'INTRA', label: 'Intra-Claim', column: 'intraClaimStatus' },
+  { key: 'REDFLAG', label: 'Red Flags', column: 'redFlagStatus' },
   { key: 'FULL', label: 'Full Scan', column: 'fullScanStatus' },
 ];
 
@@ -612,7 +615,10 @@ export default function ClaimUpdate() {
                 <div className="mt-1 text-sm text-gray-600">{res.summary}</div>
                 {v.key === 'FULL' && (res.details?.present?.length ?? 0) > 0 && (
                   <div className="mt-1 text-sm text-green-700">
-                    Present: {res.details!.present!.join(', ')}
+                    {res.details!.present!.map((name) => {
+                      const where = res.details?.provenance?.[name];
+                      return where ? `${name} (${where})` : name;
+                    }).join(', ')}
                   </div>
                 )}
               </>

@@ -13,6 +13,7 @@ const COLUMNS = [
   'qrStatus',
   'intraClaimStatus',
   'fullScanStatus',
+  'redFlagStatus',
 ] as const;
 
 export class ValidationService {
@@ -91,6 +92,7 @@ export class ValidationService {
         ocr,
         shared: new Map<string, string>(),
         wordBoxes: new Map(),
+        pageTexts: new Map<string, string[]>(),
       };
 
       // Run all validators first (failures captured as FAILED, never thrown).

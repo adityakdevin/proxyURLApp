@@ -9,6 +9,7 @@ function ctx(documents: ValidatorDoc[], ocrText: string): ValidatorContext {
     ocr: { extractImageText: async () => ocrText },
     shared: new Map(),
     wordBoxes: new Map(),
+    pageTexts: new Map(),
   };
 }
 const doc = (over: Partial<ValidatorDoc>): ValidatorDoc => ({

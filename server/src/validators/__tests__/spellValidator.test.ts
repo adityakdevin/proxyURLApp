@@ -9,6 +9,7 @@ function ctx(text: string): ValidatorContext {
     ocr: { extractImageText: async () => '' },
     shared: new Map(text ? [['d1', text]] : []),
     wordBoxes: new Map(),
+    pageTexts: new Map(),
   };
 }
 

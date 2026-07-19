@@ -13,6 +13,7 @@ function baseCtx(over: Partial<ValidatorContext>): ValidatorContext {
     ocr: { extractImageText: async () => '' },
     shared: new Map(),
     wordBoxes: new Map(),
+    pageTexts: new Map(),
     ...over,
   };
 }

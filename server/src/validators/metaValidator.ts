@@ -32,46 +32,77 @@ async function documentProperties(doc: ValidatorDoc): Promise<Record<string, str
   return props;
 }
 
+/** Group per-word OCR/text boxes into per-page text (index 0 = page 1). Words arrive
+ *  in reading order per page, so a space-join is a fair reconstruction — good enough
+ *  for the page-scoped classification and format rules REDFLAG runs. */
+function pageTextsFromWords(words: WordBox[]): string[] {
+  const byPage = new Map<number, string[]>();
+  for (const w of words) {
+    const arr = byPage.get(w.page) ?? [];
+    arr.push(w.text);
+    byPage.set(w.page, arr);
+  }
+  const maxPage = words.reduce((m, w) => Math.max(m, w.page), 0);
+  const out: string[] = [];
+  for (let p = 1; p <= maxPage; p++) out[p - 1] = (byPage.get(p) ?? []).join(' ').trim();
+  return out;
+}
+
 async function extract(
   ctx: ValidatorContext,
   doc: ValidatorDoc
-): Promise<{ text: string; words: WordBox[] }> {
+): Promise<{ text: string; words: WordBox[]; pageTexts: string[] }> {
   const mime = doc.mimeType ?? '';
   if (mime.startsWith('image/')) {
-    if (ctx.ocr.extractImage) return ctx.ocr.extractImage(doc.readablePath);
-    return { text: await ctx.ocr.extractImageText(doc.readablePath), words: [] };
+    // A single image is one "page".
+    if (ctx.ocr.extractImage) {
+      const r = await ctx.ocr.extractImage(doc.readablePath);
+      return { ...r, pageTexts: [r.text] };
+    }
+    const text = await ctx.ocr.extractImageText(doc.readablePath);
+    return { text, words: [], pageTexts: [text] };
   }
   if (mime === 'application/pdf') {
-    // Prefer pdfjs (text + per-word coordinates); fall back to text-only pdf-parse.
+    // Prefer pdfjs (text + per-word coordinates + per-page text); fall back to pdf-parse.
     const withCoords = await extractPdf(doc.readablePath);
     if (withCoords && withCoords.text) {
+      const pageTexts = [...withCoords.pageTexts];
       // Mixed PDF: digital pages have a text layer, but scanned pages (bundled
       // ID cards, stamps) don't — OCR just those pages and merge, otherwise
       // they're invisible to every text-based check.
       if (withCoords.textlessPages.length > 0 && ctx.ocr.extractPdf) {
         const ocrd = await ctx.ocr.extractPdf(doc.readablePath, withCoords.textlessPages);
         if (ocrd.text) {
+          // Merge the OCR'd pages back into their page slots so classification sees them.
+          for (const [i, t] of pageTextsFromWords(ocrd.words).entries()) {
+            if (t) pageTexts[i] = pageTexts[i] ? `${pageTexts[i]} ${t}` : t;
+          }
           return {
             text: `${withCoords.text}\n${ocrd.text}`,
             words: [...withCoords.words, ...ocrd.words],
+            pageTexts,
           };
         }
       }
-      return withCoords;
+      return { text: withCoords.text, words: withCoords.words, pageTexts };
     }
     try {
       const buf = await fs.readFile(doc.readablePath);
       const data = await pdfParse(buf);
       const text = (data.text ?? '').trim();
-      if (text) return { text, words: [] };
+      // pdf-parse gives no page boundaries → one page-null unit (spec decision 1 fallback).
+      if (text) return { text, words: [], pageTexts: [text] };
     } catch {
       // fall through to OCR
     }
     // No text layer → scanned PDF. Rasterize the pages and OCR them.
-    if (ctx.ocr.extractPdf) return ctx.ocr.extractPdf(doc.readablePath);
-    return { text: '', words: [] };
+    if (ctx.ocr.extractPdf) {
+      const r = await ctx.ocr.extractPdf(doc.readablePath);
+      return { ...r, pageTexts: pageTextsFromWords(r.words) };
+    }
+    return { text: '', words: [], pageTexts: [] };
   }
-  return { text: '', words: [] };
+  return { text: '', words: [], pageTexts: [] };
 }
 
 /** Hardening bounds so one huge/slow document can't stall a whole validation run. */
@@ -137,13 +168,15 @@ export const metaValidator: Validator = {
       }
       const timeoutMs =
         (doc.mimeType ?? '') === 'application/pdf' ? PDF_EXTRACT_TIMEOUT_MS : EXTRACT_TIMEOUT_MS;
-      const { text, words } = await withTimeout(extract(ctx, doc), timeoutMs, {
+      const { text, words, pageTexts } = await withTimeout(extract(ctx, doc), timeoutMs, {
         text: '',
         words: [],
+        pageTexts: [],
       });
       if (text && text.replace(/\s/g, '').length >= 3) {
         ctx.shared.set(doc.id, text);
         if (words.length > 0) ctx.wordBoxes.set(doc.id, words);
+        if (pageTexts.length > 0) ctx.pageTexts.set(doc.id, pageTexts);
         withText++;
         extracted.push({
           documentId: doc.id,

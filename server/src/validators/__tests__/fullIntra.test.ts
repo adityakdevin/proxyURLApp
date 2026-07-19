@@ -21,6 +21,7 @@ function ctxFor(
     ocr: { extractImageText: async () => '' },
     shared,
     wordBoxes: new Map(),
+    pageTexts: new Map(),
   };
 }
 

@@ -80,7 +80,7 @@ interface PdfTextItem {
  */
 export async function extractPdf(
   absolutePath: string
-): Promise<{ text: string; words: WordBox[]; textlessPages: number[] } | null> {
+): Promise<{ text: string; words: WordBox[]; textlessPages: number[]; pageTexts: string[] } | null> {
   try {
     // Dynamic import: pdfjs-dist ships ESM-only; NodeNext keeps this a native import()
     // so it loads under both tsx (dev) and compiled dist (prod).
@@ -89,6 +89,9 @@ export async function extractPdf(
     const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
     const words: WordBox[] = [];
     const parts: string[] = [];
+    // Per-page text (index 0 = page 1), so REDFLAG/segment can classify and run
+    // format rules page-by-page without re-joining word boxes in stream order.
+    const pageTexts: string[] = [];
     // Pages with no text layer (scanned images inside an otherwise digital PDF) —
     // the caller OCRs just these so bundled ID-card pages aren't invisible.
     const textlessPages: number[] = [];
@@ -99,11 +102,13 @@ export async function extractPdf(
         const viewport = page.getViewport({ scale: 1 });
         const content = await page.getTextContent();
         let pageHasText = false;
+        const pageParts: string[] = [];
         for (const item of content.items as PdfTextItem[]) {
           const str = typeof item.str === 'string' ? item.str : '';
           if (str.trim() === '' || !item.transform) continue;
           pageHasText = true;
           parts.push(str);
+          pageParts.push(str);
           words.push(
             ...runToWords(
               str,
@@ -117,13 +122,14 @@ export async function extractPdf(
             )
           );
         }
+        pageTexts[p - 1] = pageParts.join(' ').trim();
         if (!pageHasText) textlessPages.push(p);
       }
     } finally {
       await doc.cleanup?.();
       await doc.destroy?.();
     }
-    return { text: parts.join(' ').trim(), words, textlessPages };
+    return { text: parts.join(' ').trim(), words, textlessPages, pageTexts };
   } catch {
     return null;
   }

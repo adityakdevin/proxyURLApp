@@ -395,6 +395,7 @@ model Claim {
   metaExtractionStatus ValidationStatus @default(PENDING) @map("meta_extraction_status")
   intraClaimStatus     ValidationStatus @default(PENDING) @map("intra_claim_status")
   fullScanStatus       ValidationStatus @default(PENDING) @map("full_scan_status")
+  redFlagStatus        ValidationStatus @default(PENDING) @map("red_flag_status")
 
   status    Status   @default(ACTIVE)
   createdAt DateTime @default(now()) @map("created_at")

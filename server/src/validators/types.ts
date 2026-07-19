@@ -1,13 +1,14 @@
 import { PrismaClient } from '@prisma/client';
 import { BBox } from '../lib/bbox.js';
 
-export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL';
+export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG';
 export type ClaimColumn =
   | 'metaExtractionStatus'
   | 'spellCheckStatus'
   | 'qrStatus'
   | 'intraClaimStatus'
-  | 'fullScanStatus';
+  | 'fullScanStatus'
+  | 'redFlagStatus';
 
 /** A normalized ([0..1], top-left origin) bounding box for a recognized word. */
 export interface WordBox {
@@ -55,6 +56,8 @@ export interface ValidatorContext {
   shared: Map<string, string>; // documentId → extracted text (META fills; SPELL/INTRA read)
   /** documentId → per-word boxes (META fills for images; SPELL/INTRA read to anchor highlights). */
   wordBoxes: Map<string, WordBox[]>;
+  /** documentId → per-page text (META fills; segment/REDFLAG read for page-scoped classification+rules). */
+  pageTexts: Map<string, string[]>;
 }
 
 /**

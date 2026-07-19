@@ -71,7 +71,7 @@ export function completenessOutcome(
  *  predicate needs wording that appears ON the card itself and not in insurance
  *  legalese. ponytail: extend inline; move to a DocumentTypeMaster alias column
  *  if reviewers need to tune these without a deploy. */
-const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
+export const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
   AADHAR: (t) =>
     /(^|[^a-z])(uidai|aad?haa?r)([^a-z]|$)/i.test(t) ||
     /unique\s+identification\s+authority/i.test(t),
@@ -87,6 +87,16 @@ const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
   PASSPORT: (t) =>
     /(^|[^a-z])passport([^a-z]|$)/i.test(t) &&
     /republic\s+of\s+india|nationality|place\s+of\s+birth/i.test(t),
+  // GST certificate (Form GST REG-06). GSTIN or the tax name on the cert body;
+  // a bare "GST" appears in dealer invoices, so require a certificate signal.
+  GST: (t) =>
+    /(^|[^a-z])gstin([^a-z]|$)/i.test(t) ||
+    /goods\s+and\s+services\s+tax/i.test(t) ||
+    /gst\s*reg-?\s*0?6/i.test(t),
+  // Udyam / MSME registration certificate.
+  UDYAM: (t) =>
+    /udyam/i.test(t) || /(^|[^a-z])msme([^a-z]|$)/i.test(t) ||
+    /micro,?\s*small\s*(and|&)\s*medium/i.test(t),
 };
 
 /** Is this document type present, judging by the documents' extracted text?
