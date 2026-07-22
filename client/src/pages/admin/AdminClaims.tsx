@@ -71,6 +71,24 @@ export default function AdminClaims() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<ServerSort>({ field: 'createdAt', order: 'desc' });
   const [checks, setChecks] = useState<Record<string, string>>({});
+  const [workflowStatusId, setWorkflowStatusId] = useState('');
+  const [statusOptions, setStatusOptions] = useState<{ value: string; label: string }[]>([]);
+
+  // Workflow statuses are global — fetch the active set once to populate the Status filter.
+  useEffect(() => {
+    api
+      .get<PaginatedResponse<{ id: string; name: string; status: string }>>(
+        '/admin/status-masters?limit=100'
+      )
+      .then((r) =>
+        setStatusOptions(
+          r.data
+            .filter((s) => s.status === 'ACTIVE')
+            .map((s) => ({ value: s.id, label: s.name }))
+        )
+      )
+      .catch(() => setStatusOptions([]));
+  }, []);
 
   const [obsOpen, setObsOpen] = useState(false);
   const [picker, setPicker] = useState<Partial<SubCategoryPickerValue>>({});
@@ -90,6 +108,7 @@ export default function AdminClaims() {
         sortOrder: sort.order,
       });
       if (search.trim()) params.set('search', search.trim());
+      if (workflowStatusId) params.set('workflowStatusId', workflowStatusId);
       for (const cf of CHECK_FILTERS) {
         if (checks[cf.key]) params.set(cf.key, checks[cf.key]);
       }
@@ -111,7 +130,7 @@ export default function AdminClaims() {
   useEffect(() => {
     fetchData(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, sort, checks]);
+  }, [search, sort, checks, workflowStatusId]);
 
   // Clear the picker / file / report when the dialog closes so a stale selection
   // can't carry into the next open (and a wrong-sub-category upload).
@@ -260,6 +279,14 @@ export default function AdminClaims() {
       </div>
       <div className="mb-4">
         <TableToolbar search={search} onSearchChange={setSearch} placeholder="Search claim id…">
+          <FilterSelect
+            value={workflowStatusId}
+            onChange={setWorkflowStatusId}
+            allLabel="All"
+            prefix="Status"
+            options={statusOptions}
+            className="w-[150px]"
+          />
           {CHECK_FILTERS.map((cf) => (
             <FilterSelect
               key={cf.key}
