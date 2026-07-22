@@ -12,6 +12,9 @@ export class ScanServiceError extends Error {
 
 const MAX_ERRORS = 100;
 const FLUSH_EVERY = 50;
+// Max levels below the scan root a FOLDER scan descends. ponytail: constant, not a
+// per-rule setting — lift to the ClaimIdRule if callers ever need different depths.
+const MAX_SCAN_DEPTH = 5;
 
 export class ScanService {
   /**
@@ -119,7 +122,11 @@ export class ScanService {
       });
 
       const root = resolveScanRoot(job.scanLocation);
-      const entries = await this.reader.list(root, job.scanTarget);
+      const entries = await this.reader.list(root, job.scanTarget, {
+        startPosition: rule.startPosition,
+        length: rule.length,
+        maxDepth: MAX_SCAN_DEPTH,
+      });
       await this.prisma.scanJob.update({
         where: { id: jobId },
         data: { totalEntries: entries.length },
@@ -135,7 +142,8 @@ export class ScanService {
           if (!claimId) {
             pushError(name, 'EMPTY_CLAIM_ID');
           } else {
-            const folderPath = path.win32.join(job.scanLocation, name);
+            // Rebuild the stored Windows path from the entry's segments (may be nested).
+            const folderPath = path.win32.join(job.scanLocation, ...entries[i].relSegments);
             let claimForDocs: { id: string; folderPath: string | null; subCategoryId: string } | null =
               null;
             try {

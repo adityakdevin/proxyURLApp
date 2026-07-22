@@ -13,7 +13,7 @@ import {
 class FakeReader implements DirectoryReader {
   constructor(private names: string[]) {}
   async list(): Promise<DirectoryEntry[]> {
-    return this.names.map((name) => ({ name }));
+    return this.names.map((name) => ({ name, relSegments: [name], isDirectory: true }));
   }
 }
 
