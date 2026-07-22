@@ -15,9 +15,9 @@ describe('FsDirectoryReader', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it('lists only directories for FOLDER target', async () => {
+  it('lists both directories and files for FOLDER target', async () => {
     const names = (await new FsDirectoryReader().list(dir, 'FOLDER')).map((e) => e.name).sort();
-    expect(names).toEqual(['CLM00001_folder', 'CLM00002_folder']);
+    expect(names).toEqual(['CLM00001_folder', 'CLM00002_folder', 'CLM00003_file.pdf']);
   });
 
   it('lists only files for FILE target', async () => {

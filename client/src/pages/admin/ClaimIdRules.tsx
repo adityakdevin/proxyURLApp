@@ -36,11 +36,13 @@ interface Rule {
   scanTarget: 'FOLDER' | 'FILE';
   scanLocation: string;
   status: 'ACTIVE' | 'INACTIVE';
+  lastScan: { totalEntries: number; status: string; finishedAt: string | null } | null;
 }
 
 interface ScanJobView {
   id: string;
   status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  scanTarget: 'FOLDER' | 'FILE';
   totalEntries: number;
   createdCount: number;
   skippedCount: number;
@@ -212,6 +214,12 @@ export default function ClaimIdRules() {
     { accessorKey: 'scanTarget', header: 'Target' },
     { accessorKey: 'scanLocation', header: 'Location' },
     {
+      id: 'filesScanned',
+      header: 'Total Scanned Files',
+      cell: ({ row }) =>
+        row.original.lastScan ? row.original.lastScan.totalEntries : '—',
+    },
+    {
       accessorKey: 'status',
       header: 'Status',
       cell: ({ row }) => (
@@ -330,6 +338,12 @@ export default function ClaimIdRules() {
             {scanJob.totalEntries} processed · created {scanJob.createdCount} · skipped{' '}
             {scanJob.skippedCount} · errors {scanJob.errorCount}
           </p>
+          {scanJob.status === 'COMPLETED' && scanJob.totalEntries === 0 && (
+            <p className="text-sm text-amber-600 mt-1">
+              Nothing found at this location. Check the path is correct and reachable from
+              the server{scanJob.scanTarget === 'FILE' && ', or switch the rule to “Folder names” to also scan sub-folders'}.
+            </p>
+          )}
           {scanJob.status === 'FAILED' && scanJob.message && (
             <p className="text-sm text-destructive mt-1">{scanJob.message}</p>
           )}

@@ -163,6 +163,26 @@ export class ClaimIdRuleService {
       }),
       this.prisma.claimIdRule.count({ where }),
     ]);
-    return { data, total, page, limit };
+
+    // Attach each rule's most-recent scan totals (for the "Files Scanned" column).
+    // One query for the page; jobs come back newest-first so the first per rule wins.
+    const ruleIds = data.map((r) => r.id);
+    const jobs = ruleIds.length
+      ? await this.prisma.scanJob.findMany({
+          where: { claimIdRuleId: { in: ruleIds } },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            claimIdRuleId: true,
+            totalEntries: true,
+            status: true,
+            finishedAt: true,
+          },
+        })
+      : [];
+    const latest = new Map<string, (typeof jobs)[number]>();
+    for (const j of jobs) if (!latest.has(j.claimIdRuleId)) latest.set(j.claimIdRuleId, j);
+    const withScan = data.map((r) => ({ ...r, lastScan: latest.get(r.id) ?? null }));
+
+    return { data: withScan, total, page, limit };
   }
 }

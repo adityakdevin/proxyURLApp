@@ -179,8 +179,8 @@ export class ScanService {
                 const dr = await this.documentService.discoverForClaim(claimForDocs, actorId);
                 docsCreated += dr.created;
                 docsSkipped += dr.skipped;
-                // Re-validate only when docs actually changed (dr.created > 0) and
-                // only after a successful discovery.
+                // Auto-validate whenever docs were newly discovered for this claim.
+                // A doc-less re-scan creates nothing → no redundant re-validation.
                 if (dr.created > 0 && this.onClaimIngested) {
                   this.onClaimIngested(claimForDocs.id, actorId || undefined);
                 }
