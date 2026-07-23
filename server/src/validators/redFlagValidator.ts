@@ -13,6 +13,7 @@
  */
 import { Validator, ValidatorContext, FindingInput } from './types.js';
 import { segment, DocInstance } from './segment.js';
+import { crossDocFieldFindings } from './crossDocLogic.js';
 import { readPdfInfo } from '../lib/pdfExtractor.js';
 import {
   checkPan,
@@ -93,6 +94,14 @@ export const redFlagValidator: Validator = {
         for (const f of checkEditorWatermark(info.Producer, info.Creator)) findings.push(toFinding(doc.id, f));
       }
     }
+
+    // Cross-document field consistency (Phase 1 High) — claim-wide, across every
+    // classified page. Findings already carry their own documentId (the outlier's).
+    findings.push(
+      ...crossDocFieldFindings(
+        instances.map((i) => ({ documentId: i.documentId, page: i.page, text: i.text, govtCode: i.govtCode }))
+      )
+    );
 
     const errors = findings.filter((f) => f.severity === 'ERROR').length;
     const warnings = findings.length - errors;

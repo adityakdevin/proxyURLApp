@@ -1,13 +1,5 @@
-import { Validator, FindingInput, WordBox } from './types.js';
-import { intraOutcome, normalizeText, matchesClaimId, crossDocMismatches } from './logic.js';
-
-/** Best-effort: find the word box for a field value (by its first token) to anchor a highlight. */
-function findValueBox(boxes: WordBox[] | undefined, value: string): WordBox | undefined {
-  if (!boxes || boxes.length === 0) return undefined;
-  const first = normalizeText(value.split(/\s+/)[0] ?? '');
-  if (!first) return undefined;
-  return boxes.find((b) => normalizeText(b.text) === first);
-}
+import { Validator, FindingInput } from './types.js';
+import { intraOutcome, normalizeText, matchesClaimId } from './logic.js';
 
 export const intraValidator: Validator = {
   key: 'INTRA',
@@ -32,34 +24,10 @@ export const intraValidator: Validator = {
       }
     }
 
+    // Cross-document field mismatches moved to the REDFLAG validator (crossDocLogic) —
+    // INTRA now only checks Claim-ID presence.
     const outcome = intraOutcome(found, entries.length);
-    const findings: FindingInput[] = [];
-    if (outcome.status === 'FAILED') findings.push(...missing);
-
-    // Cross-document field mismatches (VIN / customer name) — a pasted-details fraud signal.
-    const mismatches = crossDocMismatches(entries.map(([documentId, text]) => ({ documentId, text })));
-    for (const mm of mismatches) {
-      const expected = mm.values[0].value;
-      for (const v of mm.values) {
-        if (v.value === expected) continue;
-        const box = findValueBox(ctx.wordBoxes.get(v.documentId), v.value);
-        findings.push({
-          documentId: v.documentId,
-          code: 'INTRA_FIELD_MISMATCH',
-          severity: 'ERROR',
-          message: `${mm.field} "${v.value}" does not match "${expected}" found elsewhere in this claim.`,
-          page: box?.page ?? null,
-          bbox: box?.bbox ?? null,
-          data: { field: mm.field, expected, actual: v.value },
-        });
-      }
-    }
-    if (mismatches.length > 0) {
-      outcome.status = 'FAILED';
-      outcome.summary = `${outcome.summary} ${mismatches.length} cross-document field mismatch(es).`.trim();
-    }
-
-    if (findings.length > 0) outcome.findings = findings;
+    if (outcome.status === 'FAILED') outcome.findings = missing;
     return outcome;
   },
 };
