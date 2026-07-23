@@ -58,7 +58,7 @@ function pageType(p: CrossPage): DocTypeCode | 'UNKNOWN' {
 }
 
 // ── Name handling ────────────────────────────────────────────────────────────────
-const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'shri', 'smt', 'sri', 'sri', 'dr', 'master', 'kum', 'm/s', 'ms/']);
+const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'shri', 'smt', 'sri', 'thiru', 'dr', 'master', 'kum', 'm/s', 'ms/']);
 
 /** Lowercase alnum tokens, honorifics dropped. "Mr. Rajesh Kumar" → ["rajesh","kumar"]. */
 export function nameTokens(raw: string): string[] {
@@ -80,10 +80,18 @@ export function nameMatches(a: string, b: string): boolean {
   let sa = nameTokens(a);
   let sb = nameTokens(b);
   if (sa.length === 0 || sb.length === 0) return true; // nothing to compare → not a mismatch
+  // OCR token merge/split: "Rajeshkumar Sharma" vs "Rajesh Kumar Sharma" — compare the
+  // whitespace-free forms (order-preserving, which is how OCR joins/splits words).
+  if (sa.join('') === sb.join('')) return true;
   if (sa.length > sb.length) [sa, sb] = [sb, sa];
   const used = new Array(sb.length).fill(false);
   const aligns = (x: string, y: string) =>
-    x === y || (x.length === 1 && y[0] === x) || (y.length === 1 && x[0] === y);
+    x === y ||
+    (x.length === 1 && y[0] === x) ||
+    (y.length === 1 && x[0] === y) ||
+    // OCR drift inside a longer token ("Kumar" vs "Kumr"): tolerate one edit. Bounded to
+    // 4+ char tokens so genuinely-distinct short tokens don't collapse.
+    (x.length >= 4 && y.length >= 4 && within1(x, y));
   for (const t of sa) {
     const i = sb.findIndex((u, idx) => !used[idx] && aligns(t, u));
     if (i < 0) return false;
@@ -158,13 +166,29 @@ export function extractRelationNames(text: string): string[] {
   return allMatches(text, RELATION_RE);
 }
 
-const NAME_RE =
-  /(?:customer|insured|proposer|applicant|employee|policy\s*holder|holder)?\s*name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
+// The word right before "Name" that denotes a NON-person entity — its value is not a
+// customer/employee name (e.g. "Bank Name: HDFC", "Company Name: Maruti"). Person
+// qualifiers (customer/insured/…) and relation labels (father/…, handled separately)
+// are NOT here, so they still count.
+const NON_PERSON_NAME_LABEL = new Set([
+  'bank', 'company', 'firm', 'dealer', 'dealership', 'branch', 'nominee',
+  'product', 'scheme', 'plan', 'trade', 'showroom', 'brand', 'make', 'model', 'group',
+]);
 
-/** Customer/employee names, with relation names (father/mother/spouse) removed. */
+// Group 1 = the single word immediately before "Name" (if any); group 2 = the value.
+const NAME_RE =
+  /(?:([A-Za-z]+)\s+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
+
+/** Customer/employee names, with non-person "X Name" labels and relation names removed. */
 export function extractNames(text: string): string[] {
   const relations = extractRelationNames(text);
-  return allMatches(text, NAME_RE).filter((n) => !relations.some((r) => nameMatches(n, r)));
+  const out: string[] = [];
+  for (const m of text.matchAll(NAME_RE)) {
+    if ((m[1] ?? '').toLowerCase() && NON_PERSON_NAME_LABEL.has((m[1] ?? '').toLowerCase())) continue;
+    const v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
+    if (v) out.push(v);
+  }
+  return [...new Set(out)].filter((n) => !relations.some((r) => nameMatches(n, r)));
 }
 
 const VEHICLE_PLACEHOLDER = /^(new|applied|apply|tba|temp|na|nil|pending)/i;
@@ -176,9 +200,12 @@ export function extractVehicleNos(text: string): string[] {
   return allMatches(text, VEHICLE_RE).filter((v) => !VEHICLE_PLACEHOLDER.test(v.replace(/\s/g, '')));
 }
 
+// CHASSIS/ENGINE require an explicit separator ([:\-] or newline) so a run-on OCR of a
+// two-column header ("Chassis No Engine No <val1> <val2>") can't attach a value across the
+// wrong label. Values must contain a digit (below), so a bare label word ("Engine") is rejected.
 const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
-  CHASSIS: /chassis\s*(?:no|number)?\s*[:\-]?\s*([A-Z0-9]{6,20})/gi,
-  ENGINE: /engine\s*(?:no|number)?\s*[:\-]?\s*([A-Z0-9]{5,20})/gi,
+  CHASSIS: /chassis\s*(?:no|number)?\s*[:\-\n]\s*([A-Z0-9]{6,20})/gi,
+  ENGINE: /engine\s*(?:no|number)?\s*[:\-\n]\s*([A-Z0-9]{5,20})/gi,
   MODEL: /(?:model|variant|make\s*(?:&|and)?\s*model)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/gi,
   EMP_CODE: /(?:emp(?:loyee)?\.?\s*(?:code|id|no|number)|staff\s*(?:id|code|no))\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/]{1,20})/gi,
 };
@@ -188,7 +215,11 @@ function extractField(field: CrossField, text: string): string[] {
   if (field === 'RELATION_NAME') return extractRelationNames(text);
   if (field === 'VEHICLE_NO') return extractVehicleNos(text);
   const re = FIELD_RE[field];
-  return re ? allMatches(text, re) : [];
+  if (!re) return [];
+  const vals = allMatches(text, re);
+  // A real chassis/engine number always carries a digit; this drops a stray label word
+  // ("Engine", "Model") that slipped through as a value.
+  return field === 'CHASSIS' || field === 'ENGINE' ? vals.filter((v) => /\d/.test(v)) : vals;
 }
 
 // ── Consistency checks ───────────────────────────────────────────────────────────
