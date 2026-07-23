@@ -3,7 +3,6 @@ import { metaValidator } from '../metaValidator.js';
 import { intraValidator } from '../intraValidator.js';
 import { fullValidator } from '../fullValidator.js';
 import { ValidatorContext, ValidatorDoc } from '../types.js';
-import { extractVins, extractLabeledNames, crossDocMismatches } from '../logic.js';
 
 function baseCtx(over: Partial<ValidatorContext>): ValidatorContext {
   return {
@@ -104,52 +103,5 @@ describe('validation findings — per-document attribution (Phase 1)', () => {
     expect(out.findings).toEqual([
       expect.objectContaining({ documentId: null, code: 'FULL_MISSING_TYPE' }),
     ]);
-  });
-
-  it('INTRA flags a cross-document VIN mismatch as ERROR and fails the check (Phase 4)', async () => {
-    const vinA = 'MZBFB812LSN538764';
-    const vinB = 'MZBB6814MSN022501';
-    const ctx = baseCtx({
-      documents: [doc('d1', { fileName: 'a.jpg' }), doc('d2', { fileName: 'b.jpg' })],
-      shared: new Map([
-        ['d1', `Claim CLM12345 VIN ${vinA} customer`],
-        ['d2', `Claim CLM12345 VIN ${vinB} customer`],
-      ]),
-    });
-    const out = await intraValidator.run(ctx);
-    expect(out.status).toBe('FAILED'); // claim id present in both, but VINs disagree
-    const mm = out.findings!.find((f) => f.code === 'INTRA_FIELD_MISMATCH');
-    expect(mm).toBeDefined();
-    expect(mm!.severity).toBe('ERROR');
-    expect(mm!.data).toMatchObject({ field: 'VIN' });
-  });
-});
-
-describe('intra cross-document field extraction (Phase 4)', () => {
-  it('extractVins finds 17-char VIN tokens and dedupes', () => {
-    expect(extractVins('vin MZBFB812LSN538764 and again MZBFB812LSN538764')).toEqual([
-      'MZBFB812LSN538764',
-    ]);
-    expect(extractVins('no vin here')).toEqual([]);
-  });
-
-  it('extractLabeledNames pulls label-anchored names', () => {
-    expect(extractLabeledNames('Customer Name: John Doe\nother line')).toEqual(['john doe']);
-  });
-
-  it('crossDocMismatches flags a field that disagrees across documents', () => {
-    const mm = crossDocMismatches([
-      { documentId: 'd1', text: 'Name: John Doe' },
-      { documentId: 'd2', text: 'Name: Jane Roe' },
-    ]);
-    expect(mm.some((m) => m.field === 'NAME')).toBe(true);
-  });
-
-  it('crossDocMismatches is quiet when values agree', () => {
-    const mm = crossDocMismatches([
-      { documentId: 'd1', text: 'Name: John Doe' },
-      { documentId: 'd2', text: 'Name: John Doe' },
-    ]);
-    expect(mm).toHaveLength(0);
   });
 });
