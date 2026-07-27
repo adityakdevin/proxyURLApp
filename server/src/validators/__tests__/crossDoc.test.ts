@@ -155,4 +155,89 @@ describe('crossDocFieldFindings (consistency engine)', () => {
     ]);
     expect(f.some((x) => x.code === 'CROSS_NAME_MISMATCH' && x.severity === 'ERROR')).toBe(true);
   });
+
+  it('flags an engine-number mismatch (invoice vs insurance) as ERROR', () => {
+    const f = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nEngine No: ABCDE12345'),
+      page('d2', 'Policy No 9 Insured X Premium 1 Sum Insured 2\nEngine Number: ZZZZZ99999'),
+    ]);
+    expect(f.some((x) => x.code === 'CROSS_ENGINE_MISMATCH' && x.severity === 'ERROR')).toBe(true);
+  });
+
+  it('flags a model mismatch (invoice vs RC) as ERROR', () => {
+    const f = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nModel: Swift VXI'),
+      page('d2', 'Certificate of Registration Registering Authority\nModel: Baleno ZXI'),
+    ]);
+    expect(f.some((x) => x.code === 'CROSS_MODEL_MISMATCH' && x.severity === 'ERROR')).toBe(true);
+  });
+
+  it('flags an employee-code mismatch (staff id vs payslip) as ERROR', () => {
+    const f = crossDocFieldFindings([
+      page('d1', 'Staff ID Identity Card\nEmp Code: EMP001'),
+      page('d2', 'Salary Slip Net Pay 1 Basic Pay 1\nEmployee Code: EMP999'),
+    ]);
+    expect(f.some((x) => x.code === 'CROSS_EMP_CODE_MISMATCH' && x.severity === 'ERROR')).toBe(true);
+  });
+
+  it('compares across pages that share one documentId (bundled PDF)', () => {
+    const f = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Rajesh Kumar', { page: 1 }),
+      page('d1', 'Certificate of Registration Registering Authority\nName: Suresh Kumar', { page: 2 }),
+    ]);
+    expect(f.some((x) => x.code === 'CROSS_NAME_MISMATCH' && x.severity === 'ERROR')).toBe(true);
+  });
+
+  // ── Regression guards for the false-positive fixes ──────────────────────────────
+  it('does NOT treat a non-person "Bank/Company Name" label as the customer name', () => {
+    const f = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Rajesh Kumar\nCompany Name: Maruti Suzuki'),
+      page('d2', 'Policy No 9 Insured X Premium 1 Sum Insured 2\nInsured Name: Rajesh Kumar\nBank Name: HDFC Bank'),
+    ]);
+    expect(f.filter((x) => x.code === 'CROSS_NAME_MISMATCH')).toHaveLength(0);
+  });
+
+  it('does NOT flag a name that differs only by OCR drift (dropped char / merged tokens)', () => {
+    const dropped = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Rajesh Kumar'),
+      page('d2', 'Salary Slip Net Pay 1 Basic Pay 1\nEmployee Name: Rajesh Kumr'),
+    ]);
+    expect(dropped.filter((x) => x.code === 'CROSS_NAME_MISMATCH')).toHaveLength(0);
+    const merged = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Rajeshkumar Sharma'),
+      page('d2', 'Salary Slip Net Pay 1 Basic Pay 1\nEmployee Name: Rajesh Kumar Sharma'),
+    ]);
+    expect(merged.filter((x) => x.code === 'CROSS_NAME_MISMATCH')).toHaveLength(0);
+  });
+
+  it('does NOT emit chassis/engine flags from a run-on two-column OCR header', () => {
+    // No separators between labels and values → cannot safely attribute → extract nothing.
+    const f = crossDocFieldFindings([
+      page('d1', 'Certificate of Registration Registering Authority\nChassis No Engine No MAT1234567890 ENG987654321'),
+      page('d2', 'TAX INVOICE Invoice No 1\nChassis No: MAT1234567890'),
+    ]);
+    expect(f.some((x) => x.code === 'CROSS_CHASSIS_MISMATCH' || x.code === 'CROSS_ENGINE_MISMATCH')).toBe(false);
+  });
+});
+
+describe('extractNames / extractRelationNames label handling', () => {
+  it('excludes non-person "X Name" labels but keeps person qualifiers', () => {
+    expect(extractNames('Bank Name: HDFC Bank')).toEqual([]);
+    expect(extractNames('Dealer Name: ABC Motors')).toEqual([]);
+    expect(extractNames('Customer Name: Rajesh Kumar')).toEqual(['Rajesh Kumar']);
+    expect(extractNames('Name: Rajesh Kumar')).toEqual(['Rajesh Kumar']);
+  });
+
+  it('extractRelationNames handles s/o and d/o and w/o forms', () => {
+    expect(extractRelationNames('S/O: Mohan Kumar')).toEqual(['Mohan Kumar']);
+    expect(extractRelationNames('D/O Hariram Kumar')).toEqual(['Hariram Kumar']);
+    expect(extractRelationNames('W/O: Rajesh Kumar')).toEqual(['Rajesh Kumar']);
+  });
+});
+
+describe('idMatches unequal-length (dropped/extra char)', () => {
+  it('matches a single dropped char but not two', () => {
+    expect(idMatches('ABCD1234', 'ABC1234')).toBe(true); // one char dropped
+    expect(idMatches('ABCD1234', 'ABCD99')).toBe(false); // length differs by 2
+  });
 });
