@@ -132,7 +132,9 @@ export default function SpellTerms() {
         <div>
           <h1 className="text-2xl font-bold">Spell Dictionary</h1>
           <p className="text-sm text-muted-foreground">
-            Expected vocabulary the spell-check flags misspellings of (domain terms + brand/place names).
+            Expected vocabulary the spell-check flags misspellings of. Keep to form and domain
+            words. Avoid place and brand names — scanners read them worst, so they produce
+            false alarms on correctly printed documents.
           </p>
         </div>
         <Button onClick={handleCreate}><Plus className="mr-2 h-4 w-4" />Add Term</Button>
