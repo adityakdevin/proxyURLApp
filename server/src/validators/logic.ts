@@ -148,19 +148,23 @@ export function matchesClaimId(text: string, claimId: string): boolean {
   return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(text);
 }
 
-/** Spell-check candidates: 3+ letter alphabetic tokens with CASE PRESERVED, minus
- *  all-caps acronyms/codes (PAN, HDFC, VIN prefixes).
+/** Spell-check candidates: 3+ letter alphabetic tokens with CASE PRESERVED.
  *  Case is kept so the caller can test proper-noun capitalisation against the
  *  dictionary — dictionary-en holds many proper nouns only in capitalised form
  *  ("India" is known, "india" is not), so lowercasing everything (as the old
- *  tokenizer did) flagged every name as misspelled. */
+ *  tokenizer did) flagged every name as misspelled.
+ *
+ *  The boundaries do the filtering that an all-caps skip used to do, without its cost:
+ *   - `(?<![A-Za-z])` … `(?![A-Za-z\d])` drops the letter prefix of an alphanumeric code
+ *     (VIN "MZBFB812LSN", PAN "GROPS2837J") while keeping a word that merely FOLLOWS a
+ *     number ("30Dayes" → "Dayes").
+ *   - `'` / `’` in the lookahead drops the stem of a contraction, which used to be
+ *     reported as its own misspelling ("doesn't" → "doesn" flagged as "does").
+ *  Dropping every ALL-CAPS token (the old rule) made SPELL structurally blind to Indian
+ *  ID cards, salary slips and government forms — they are printed entirely in capitals,
+ *  so a card reading "STAF NO" yielded no candidates at all. */
 export function spellCandidates(text: string): string[] {
-  const out: string[] = [];
-  for (const w of text.match(/[A-Za-z]{3,}/g) ?? []) {
-    if (/^[A-Z]{2,}$/.test(w)) continue; // acronym / all-caps code
-    out.push(w);
-  }
-  return out;
+  return text.match(/(?<![A-Za-z])[A-Za-z]{3,}(?![A-Za-z\d'’])/g) ?? [];
 }
 
 /** Vocabulary the forged forms are expected to contain (salary slips, ID cards,
@@ -200,11 +204,15 @@ export const EXPECTED_TERMS: string[] = [
   // common form vocabulary reviewers flag
   'ninety', 'three', 'does', 'require', 'required', 'days', 'letterhead', 'declaration',
   'certificate', 'special',
+  // pay-period vocabulary — "Quartarly" was cited by reviewers and had no term to miss
+  'quarterly', 'monthly', 'weekly', 'annual', 'annually', 'yearly', 'period',
   // months
   'january', 'february', 'march', 'april', 'june', 'july', 'august', 'september',
   'october', 'november', 'december',
-  // entity gazetteer (brands / orgs / places reviewers name) — extend via admin CRUD
-  'bajaj', 'jindal', 'prudential', 'lucknow', 'flipkart',
+  // NO proper-noun gazetteer here by design. Place and brand names are the worst OCR
+  // class (they carry no language model) and legitimately vary in spelling, so entries
+  // like 'lucknow' produced the reviewers' loudest false positives ("lucnow"). They stay
+  // available as admin-managed SpellTerm rows for anyone who wants them back.
 ];
 
 /** Damerau (optimal string alignment) edit distance, capped: returns `cap + 1` as
@@ -239,6 +247,63 @@ export function editDistanceCapped(a: string, b: string, cap: number): number {
 export interface TermMisspelling {
   token: string;
   term: string;
+  /** True when OCR alone can explain the difference — see `ocrIndistinguishable`. */
+  doubtful: boolean;
+}
+
+/** Glyph groups a scanner routinely confuses in printed Latin text. Multi-character
+ *  pairs run first (they change length); the rest fold each group to one representative.
+ *  Deliberately EXCLUDES a↔e — "Retantion"/"Quartarly" are the real misspellings the
+ *  reviewers cited, and folding those vowels together would silence them. */
+const OCR_MULTI: [RegExp, string][] = [
+  [/rn/g, 'm'],
+  [/vv/g, 'w'],
+];
+// Groups measured against the reviewer sample: c/e/o/u (round glyphs), i/l/j/t (stems),
+// n/h/r (arches), g/q, v/y. 'a' is deliberately in NO group — every misspelling the
+// reviewers confirmed ("Retantion", "Quartarly", "Ansent") turns on an a↔e swap.
+const OCR_GROUPS = ['ceou', 'iljt', 'nhr', 'gq', 'vy'];
+const OCR_CHAR: Record<string, string> = Object.fromEntries(
+  OCR_GROUPS.flatMap((g) => [...g].map((c) => [c, g[0]]))
+);
+
+/** Fold a word to the form a scanner cannot distinguish. */
+export function ocrFold(w: string): string {
+  let s = w.toLowerCase();
+  for (const [re, to] of OCR_MULTI) s = s.replace(re, to);
+  return [...s].map((c) => OCR_CHAR[c] ?? c).join('');
+}
+
+/**
+ * Could a scanner have produced `token` from a correctly-printed `term`? When the two
+ * fold to the same string the difference is pure glyph confusion ("Novernber"→November,
+ * "cierk"→clerk), so the page is more likely a poor scan than a forged document. Such a
+ * hit is reported as DOUBTFUL — still highlighted for the reviewer, but it never fails
+ * the check on its own. A genuine typo ("Quartarly", "Retantion") does not fold away.
+ */
+export function ocrIndistinguishable(token: string, term: string): boolean {
+  return ocrFold(token) === ocrFold(term);
+}
+
+/** One word is a truncation of the other ("Signatu"/"Authoris" for "signature"/
+ *  "authorised"). Scanners and text layers clip words at column and line breaks; a
+ *  forger writes a wrong word, never half a word. */
+export function isTruncation(token: string, term: string): boolean {
+  return (
+    term.startsWith(token) || token.startsWith(term) || term.endsWith(token) || token.endsWith(term)
+  );
+}
+
+/**
+ * Is this hit too weak to fail a claim on? Measured against the reviewer sample, the
+ * false positives fall into three shapes, and every confirmed forgery misspelling is a
+ * SINGLE non-glyph edit ("Retantion", "Quartarly", "Profesion", "Ansent", "Dayes"):
+ *   - two or more edits    → scanner garbage ("engincar", "sighatopy", "govemment")
+ *   - a truncation         → clipped word ("signatu", "authoris", "doesn")
+ *   - a pure glyph swap    → indistinguishable print ("novernber", "cierk", "costomer")
+ */
+export function isDoubtfulHit(token: string, term: string, distance: number): boolean {
+  return distance >= 2 || isTruncation(token, term) || ocrIndistinguishable(token, term);
 }
 
 /**
@@ -254,7 +319,7 @@ export function findTermMisspellings(
   isRealWord: (w: string) => boolean,
   terms: string[] = EXPECTED_TERMS
 ): TermMisspelling[] {
-  const hits = new Map<string, string>(); // token -> matched term (dedupes repeats)
+  const hits = new Map<string, { term: string; doubtful: boolean }>(); // token -> best match
   const seen = new Set<string>(); // skip re-checking an identical token (same header word on every page)
   for (const raw of candidates) {
     if (seen.has(raw)) continue;
@@ -262,6 +327,10 @@ export function findTermMisspellings(
     const token = raw.toLowerCase();
     if (token.length < 4 || hits.has(token)) continue;
     if (isRealWord(raw)) continue; // a genuine word (e.g. "cleaner" near "clerk") is fine
+    // Keep the CLOSEST term, not the first one within the cap. Taking the first made the
+    // reported "expected" word depend on term order (EXPECTED_TERMS order, or unordered
+    // SpellTerm rows), so "novernber" could be reported as a misspelling of "number".
+    let best: { term: string; d: number } | null = null;
     for (const term of terms) {
       if (term.length < 4 || token === term) continue;
       // Require the first letter to match. Real misspellings alter an INTERIOR
@@ -270,13 +339,14 @@ export function findTermMisspellings(
       if (token[0] !== term[0]) continue;
       const cap = term.length >= 6 ? 2 : 1;
       const d = editDistanceCapped(token, term, cap);
-      if (d >= 1 && d <= cap) {
-        hits.set(token, term);
-        break;
+      if (d >= 1 && d <= cap && (!best || d < best.d)) {
+        best = { term, d };
+        if (d === 1) break; // can't do better
       }
     }
+    if (best) hits.set(token, { term: best.term, doubtful: isDoubtfulHit(token, best.term, best.d) });
   }
-  return [...hits].map(([token, term]) => ({ token, term }));
+  return [...hits].map(([token, { term, doubtful }]) => ({ token, term, doubtful }));
 }
 
 // Cross-document field comparison moved to crossDocLogic.ts (doc-type-aware,

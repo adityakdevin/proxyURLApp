@@ -171,6 +171,14 @@ function parseQrFields(value: string): [string, string][] {
   return pairs.filter(([label]) => label).length >= 2 ? pairs : [];
 }
 
+/** PAN / Aadhaar Secure QR payloads are issuer-encrypted binary; qrValue() base64s them
+ *  with a `binary:` prefix. Showing that blob to a reviewer is useless — say what to do. */
+const OPAQUE_QR_PREFIX = 'binary:';
+const OPAQUE_QR_HELP =
+  'This QR code is encrypted by the issuing authority, so its contents cannot be expanded here. ' +
+  'For a PAN card please use the PAN QR Code Reader App, and for Aadhaar the Aadhaar QR Scanner App, ' +
+  'to generate the QR code result.';
+
 const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof ClaimDetail }[] = [
   { key: 'SPELL', label: 'Spell', column: 'spellCheckStatus' },
   { key: 'QR', label: 'QR', column: 'qrStatus' },
@@ -438,6 +446,25 @@ export default function ClaimUpdate() {
     return byKey;
   }, [valResults]);
 
+  // Every finding for a document, across ALL validators — what the viewer should show
+  // whenever a document is opened. Opening a file from the extracted-documents list used
+  // to pass an empty array, so the viewer said "0 findings" and drew no highlights even
+  // when that same document had flagged words under Spell Check.
+  const findingsByDoc = useMemo(() => {
+    const m = new Map<string, Finding[]>();
+    for (const res of valResults) {
+      for (const f of res.findings ?? []) {
+        if (!f.documentId) continue;
+        const list = m.get(f.documentId);
+        if (list) list.push(f);
+        else m.set(f.documentId, [f]);
+      }
+    }
+    return m;
+  }, [valResults]);
+  const openDoc = (documentId: string, fileName: string) =>
+    setViewer({ documentId, fileName, findings: findingsByDoc.get(documentId) ?? [] });
+
   const [rules, setRules] = useState<RuleEval[]>([]);
   const [rulesPassed, setRulesPassed] = useState({ passed: 0, total: 0 });
 
@@ -567,7 +594,7 @@ export default function ClaimUpdate() {
                         type="button"
                         className="text-sm font-medium text-blue-600 hover:underline"
                         onClick={() =>
-                          setViewer({ documentId: e.documentId, fileName: e.fileName, findings: [] })
+                          openDoc(e.documentId, e.fileName)
                         }
                       >
                         {e.fileName}
@@ -641,7 +668,7 @@ export default function ClaimUpdate() {
                           type="button"
                           className="text-blue-600 hover:underline"
                           onClick={() =>
-                            setViewer({ documentId: d.id, fileName: d.fileName, findings: [] })
+                            openDoc(d.id, d.fileName)
                           }
                         >
                           {d.fileName}
@@ -914,6 +941,7 @@ export default function ClaimUpdate() {
               <div className="max-h-[70vh] space-y-4 overflow-y-auto text-sm">
                 {qrView.map((q, i) => {
                   const fields = parseQrFields(q.value);
+                  const opaque = q.value.startsWith(OPAQUE_QR_PREFIX);
                   return (
                     <div key={i}>
                       <div className="font-medium">
@@ -922,7 +950,19 @@ export default function ClaimUpdate() {
                           <span className="ml-2 font-normal text-gray-400">page {q.page}</span>
                         )}
                       </div>
-                      {fields.length > 0 ? (
+                      {opaque ? (
+                        <>
+                          <p className="mt-1 rounded border border-amber-300 bg-amber-50 p-2 text-amber-900">
+                            {OPAQUE_QR_HELP}
+                          </p>
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-xs text-gray-400">
+                              Raw QR payload
+                            </summary>
+                            <div className="mt-1 break-all text-xs text-gray-500">{q.value}</div>
+                          </details>
+                        </>
+                      ) : fields.length > 0 ? (
                         <>
                           <table className="mt-1 w-full">
                             <tbody className="divide-y">

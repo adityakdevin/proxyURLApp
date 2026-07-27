@@ -8,6 +8,7 @@ import {
   checkAadhaar,
   checkVoterId,
   checkSignature,
+  checkSignatoryWord,
   checkEditorWatermark,
   checkDates,
   ocrAdjacent,
@@ -17,8 +18,39 @@ import {
 const codes = (fs: { code: string }[]) => fs.map((f) => f.code);
 
 describe('PAN', () => {
-  it('passes a valid PAN and surfaces no finding', () => {
-    expect(checkPan('PAN: ABCPD1234E')).toEqual([]);
+  // Client UAT: "Employee id card is not scanned by portal.. 'Auth. Sing' written".
+  it('flags a misspelt signature block, stays quiet on correct ones', () => {
+    const typo = checkSignatoryWord('For ABC Motors\nAuth. Sing\nEmployee ID Card');
+    expect(codes(typo)).toEqual(['REDFLAG_SIGNATORY_TYPO']);
+    expect(typo[0].severity).toBe('ERROR');
+    expect(typo[0].message).toContain('is not "sign"');
+
+    // Correct forms — every one of these appears on genuine Indian paperwork.
+    expect(checkSignatoryWord('Authorised Signatory')).toEqual([]);
+    expect(checkSignatoryWord('AUTHORIZED SIGNATURE')).toEqual([]);
+    expect(checkSignatoryWord('Auth. Sign')).toEqual([]);
+    expect(checkSignatoryWord('Authorised Signatories')).toEqual([]);
+    // Not a signature block at all.
+    expect(checkSignatoryWord('Authorised Dealer of Bajaj Auto')).toEqual([]);
+    expect(checkSignatoryWord('the author of this report')).toEqual([]);
+  });
+
+  it('keeps an OCR-garbled signature block advisory, not a red flag', () => {
+    // Real tokens from the reviewer sample; failing these would re-break two claims.
+    for (const garbled of ['Authorised Sighatopy', 'Authorised Signotiry']) {
+      const fs = checkSignatoryWord(garbled);
+      expect(codes(fs)).toEqual(['REDFLAG_SIGNATORY_UNREADABLE']);
+      expect(fs[0].severity).toBe('WARNING');
+    }
+  });
+
+  it('records a valid PAN as an INFO note naming the holder category', () => {
+    // Reviewers reported "basic checks are not getting identified as 4 letter is P" —
+    // a passing check used to produce nothing at all, so it looked like it never ran.
+    const fs = checkPan('PAN: ABCPD1234E');
+    expect(codes(fs)).toEqual(['REDFLAG_PAN_OK']);
+    expect(fs[0].severity).toBe('INFO');
+    expect(fs[0].message).toContain("4th letter 'P' = Individual");
   });
   it('flags a 9-char PAN as malformed', () => {
     const fs = checkPan('PAN No ABCD1234E');

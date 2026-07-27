@@ -207,8 +207,10 @@ export const metaValidator: Validator = {
       }
     }
     const outcome = metaOutcome(withText, ctx.documents.length);
-    // AI findings always surface; no-text findings only when the check itself failed.
-    const findings = [...aiFindings, ...(outcome.status === 'FAILED' ? noText : [])];
+    // Every unreadable document surfaces, even when other documents DID yield text.
+    // Hiding them on an overall pass is what made a skipped employee ID card look like
+    // the portal had simply never scanned it — with nothing in the UI to say so.
+    const findings = [...aiFindings, ...noText.map((f) => ({ ...f, severity: 'WARNING' as const }))];
     if (findings.length > 0) outcome.findings = findings;
     if (extracted.length > 0) outcome.details = { extracted };
     return outcome;

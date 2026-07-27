@@ -18,7 +18,20 @@
 import type { FindingInput } from './types.js';
 
 export type DocTypeCode = 'INVOICE' | 'RC' | 'INSURANCE' | 'KYC' | 'PAYSLIP' | 'STAFF_ID' | 'DMS';
-export type CrossField = 'NAME' | 'RELATION_NAME' | 'CHASSIS' | 'ENGINE' | 'VEHICLE_NO' | 'MODEL' | 'EMP_CODE';
+/** Relation names are compared PER RELATION — a mother's name and a father's name are
+ *  different people, so they must never land in the same comparison bucket. */
+export type RelationKind = 'FATHER' | 'MOTHER' | 'SPOUSE' | 'GUARDIAN';
+export type CrossField =
+  | 'NAME'
+  | 'RELATION_FATHER'
+  | 'RELATION_MOTHER'
+  | 'RELATION_SPOUSE'
+  | 'RELATION_GUARDIAN'
+  | 'CHASSIS'
+  | 'ENGINE'
+  | 'VEHICLE_NO'
+  | 'MODEL'
+  | 'EMP_CODE';
 
 export interface CrossPage {
   documentId: string;
@@ -159,25 +172,71 @@ function allMatches(text: string, re: RegExp): string[] {
   return [...new Set(out)];
 }
 
+// Group 1 = the relation word, group 2 = its value; group 3 = the s/o-style prefix,
+// group 4 = its value. Keeping the relation word captured is what lets a mother's name
+// be compared only against other MOTHERS' names (see RELATION_OF).
 const RELATION_RE =
-  /(?:father|mother|husband|guardian|spouse)(?:'?s)?\s*name\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})|(?:s\/o|d\/o|w\/o|c\/o)\s*[:\-]?\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
+  /(father|mother|husband|wife|guardian|spouse)(?:'?s)?\s*name\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})|(s\/o|d\/o|w\/o|c\/o)\s*[:\-]?\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
 
+/** Which person a relation label refers to. s/o and d/o name the FATHER; w/o names the
+ *  SPOUSE; c/o names a GUARDIAN. Labels that denote the same person share a kind so
+ *  "Spouse Name" on one doc and "Husband Name" on another still compare. */
+const RELATION_OF: Record<string, RelationKind> = {
+  father: 'FATHER',
+  's/o': 'FATHER',
+  'd/o': 'FATHER',
+  mother: 'MOTHER',
+  husband: 'SPOUSE',
+  wife: 'SPOUSE',
+  spouse: 'SPOUSE',
+  'w/o': 'SPOUSE',
+  guardian: 'GUARDIAN',
+  'c/o': 'GUARDIAN',
+};
+
+/** Relation names tagged with WHOSE name it is. */
+export function extractRelationNamesByKind(text: string): { kind: RelationKind; value: string }[] {
+  const out: { kind: RelationKind; value: string }[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(RELATION_RE)) {
+    const label = (m[1] ?? m[3] ?? '').toLowerCase();
+    const value = (m[2] ?? m[4] ?? '').trim().replace(/\s+/g, ' ');
+    const kind = RELATION_OF[label];
+    if (!kind || !value) continue;
+    const key = `${kind}:${value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ kind, value });
+  }
+  return out;
+}
+
+/** Every relation name, relation-blind — used only to subtract them from customer names. */
 export function extractRelationNames(text: string): string[] {
-  return allMatches(text, RELATION_RE);
+  return [...new Set(extractRelationNamesByKind(text).map((r) => r.value))];
 }
 
 // The word right before "Name" that denotes a NON-person entity — its value is not a
 // customer/employee name (e.g. "Bank Name: HDFC", "Company Name: Maruti"). Person
 // qualifiers (customer/insured/…) and relation labels (father/…, handled separately)
 // are NOT here, so they still count.
+// Intermediaries (broker/agent/surveyor/…) belong here too: a motor policy prints the
+// BROKER's name in the same "X Name:" shape as the insured's, and treating it as the
+// customer's name is what made every such claim report a bogus name mismatch.
 const NON_PERSON_NAME_LABEL = new Set([
   'bank', 'company', 'firm', 'dealer', 'dealership', 'branch', 'nominee',
   'product', 'scheme', 'plan', 'trade', 'showroom', 'brand', 'make', 'model', 'group',
+  'broker', 'agent', 'intermediary', 'surveyor', 'workshop', 'garage', 'financier',
+  'financer', 'insurer', 'insurance', 'employer', 'hypothecation', 'organisation',
+  'organization', 'institution', 'hospital', 'school', 'college', 'university',
 ]);
 
 // Group 1 = the single word immediately before "Name" (if any); group 2 = the value.
+// The `(?:'?s)?` after the label word catches the possessive form — without it
+// "Nominee's Name: X" captured a bare "s" as the label, which is in no blocklist, so
+// the nominee leaked through as the customer's name.
 const NAME_RE =
-  /(?:([A-Za-z]+)\s+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
+  /(?:([A-Za-z]+)(?:'?s)?\s+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
 
 /** Customer/employee names, with non-person "X Name" labels and relation names removed. */
 export function extractNames(text: string): string[] {
@@ -212,7 +271,10 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
 
 function extractField(field: CrossField, text: string): string[] {
   if (field === 'NAME') return extractNames(text);
-  if (field === 'RELATION_NAME') return extractRelationNames(text);
+  if (field.startsWith('RELATION_')) {
+    const kind = field.slice('RELATION_'.length) as RelationKind;
+    return extractRelationNamesByKind(text).filter((r) => r.kind === kind).map((r) => r.value);
+  }
   if (field === 'VEHICLE_NO') return extractVehicleNos(text);
   const re = FIELD_RE[field];
   if (!re) return [];
@@ -233,7 +295,13 @@ interface Check {
 
 const CHECKS: Check[] = [
   { field: 'NAME', scope: ALL_TYPES, match: nameMatches },
-  { field: 'RELATION_NAME', scope: ALL_TYPES, match: nameMatches },
+  // One check PER RELATION. Pooling them meant a PAN card printing "Mother's Name" was
+  // compared against another document's "Father's Name" — two different people, reported
+  // as a mismatch on every claim whose ID card carries the mother's name.
+  { field: 'RELATION_FATHER', scope: ALL_TYPES, match: nameMatches },
+  { field: 'RELATION_MOTHER', scope: ALL_TYPES, match: nameMatches },
+  { field: 'RELATION_SPOUSE', scope: ALL_TYPES, match: nameMatches },
+  { field: 'RELATION_GUARDIAN', scope: ALL_TYPES, match: nameMatches },
   { field: 'CHASSIS', scope: ['INVOICE', 'RC', 'INSURANCE'], match: idMatches },
   { field: 'ENGINE', scope: ['INVOICE', 'RC', 'INSURANCE'], match: idMatches },
   { field: 'VEHICLE_NO', scope: ['RC', 'INSURANCE'], match: idMatches },
@@ -243,7 +311,10 @@ const CHECKS: Check[] = [
 
 const FIELD_LABEL: Record<CrossField, string> = {
   NAME: 'Customer name',
-  RELATION_NAME: 'Relation name',
+  RELATION_FATHER: "Father's name",
+  RELATION_MOTHER: "Mother's name",
+  RELATION_SPOUSE: "Spouse's name",
+  RELATION_GUARDIAN: "Guardian's name",
   CHASSIS: 'Chassis number',
   ENGINE: 'Engine number',
   VEHICLE_NO: 'Vehicle number',

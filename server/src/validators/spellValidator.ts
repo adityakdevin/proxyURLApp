@@ -22,18 +22,25 @@ async function loadExpectedTerms(prisma: PrismaClient): Promise<string[]> {
 }
 
 /** Index a document's word boxes by their normalized text, as consumable queues,
- *  so repeated occurrences of a word map to distinct boxes in reading order. */
+ *  so repeated occurrences of a word map to distinct boxes in reading order.
+ *  A box is indexed under EVERY letter run it contains, mirroring how spellCandidates
+ *  tokenizes the text: collapsing "Quartarly Retantion" (one merged OCR/pdfjs box) or
+ *  "30Dayes" to a single key meant the lookup missed and the finding lost its highlight. */
 function indexBoxes(boxes: WordBox[]): Map<string, WordBox[]> {
   const idx = new Map<string, WordBox[]>();
   for (const b of boxes) {
-    const key = b.text.toLowerCase().replace(/[^a-z]/g, '');
-    if (!key) continue;
-    const arr = idx.get(key);
-    if (arr) arr.push(b);
-    else idx.set(key, [b]);
+    for (const key of b.text.toLowerCase().match(/[a-z]+/g) ?? []) {
+      const arr = idx.get(key);
+      if (arr) arr.push(b);
+      else idx.set(key, [b]);
+    }
   }
   return idx;
 }
+
+/** Tesseract word confidence (0-100) below which a hit is treated as doubtful rather
+ *  than as a misspelling. Digital PDF text has no confidence and is never softened. */
+const LOW_OCR_CONFIDENCE = 70;
 
 interface Spell {
   correct(word: string): boolean;
@@ -72,8 +79,10 @@ export const spellValidator: Validator = {
     let spell: Spell | null = null;
     const terms = await loadExpectedTerms(ctx.prisma);
     const sample: string[] = []; // details.suspect: "token→term" (<=50)
+    const doubtfulSample: string[] = [];
     const findings: FindingInput[] = [];
     const distinct = new Set<string>();
+    const doubtful = new Set<string>();
     for (const [documentId, text] of ctx.shared) {
       const words = spellCandidates(text);
       if (words.length === 0) continue;
@@ -83,30 +92,40 @@ export const spellValidator: Validator = {
       const isRealWord = (w: string) => s.correct(w) || s.correct(w.toLowerCase());
       // OCR word boxes let us anchor each hit to a region on an image (Phase 2).
       const boxIndex = indexBoxes(ctx.wordBoxes.get(documentId) ?? []);
-      for (const { token, term } of findTermMisspellings(words, isRealWord, terms)) {
-        distinct.add(token);
-        if (sample.length < 50) sample.push(`${token}→${term}`);
+      for (const hit of findTermMisspellings(words, isRealWord, terms)) {
+        const { token, term } = hit;
         const box = boxIndex.get(token)?.shift();
+        // A low-confidence OCR read is itself grounds for doubt, whatever the glyphs say.
+        const soft = hit.doubtful || (box?.conf !== undefined && box.conf < LOW_OCR_CONFIDENCE);
+        (soft ? doubtful : distinct).add(token);
+        const into = soft ? doubtfulSample : sample;
+        if (into.length < 50) into.push(`${token}→${term}`);
         findings.push({
           documentId,
-          code: 'SPELL_SUSPECT',
-          message: `Misspelled "${token}" (expected "${term}")`,
+          code: soft ? 'SPELL_DOUBTFUL' : 'SPELL_SUSPECT',
+          severity: soft ? 'WARNING' : 'ERROR',
+          message: soft
+            ? `Doubtful "${token}" (expected "${term}") — the scan quality can account for this, please confirm visually`
+            : `Misspelled "${token}" (expected "${term}")`,
           page: box?.page ?? null,
           bbox: box?.bbox ?? null,
-          data: { word: token, expected: term },
+          data: { word: token, expected: term, doubtful: soft },
         });
       }
     }
 
+    // Only CONFIDENT misspellings fail the check. Doubtful ones are still reported and
+    // highlighted — reviewers asked to see them, but a poor scan must not fail a claim.
     const status = distinct.size >= SPELL_MIN_TERM_HITS ? 'FAILED' : 'PASSED';
+    const parts: string[] = [];
+    if (distinct.size) parts.push(`${distinct.size} expected-term misspelling(s): ${sample.slice(0, 8).join(', ')}`);
+    if (doubtful.size) parts.push(`${doubtful.size} doubtful (possible scan misread): ${doubtfulSample.slice(0, 8).join(', ')}`);
     return {
       status,
-      summary: distinct.size
-        ? `${distinct.size} expected-term misspelling(s): ${sample.slice(0, 8).join(', ')}`
-        : 'No expected-term misspellings found.',
-      details: { suspect: sample },
-      // Surface the per-word findings only on a FAIL (avoid noise on a pass).
-      findings: status === 'FAILED' ? findings.slice(0, 200) : [],
+      summary: parts.length ? parts.join('. ') : 'No expected-term misspellings found.',
+      details: { suspect: sample, doubtful: doubtfulSample },
+      // Both tiers surface: a doubtful word still needs the reviewer's eye on the page.
+      findings: findings.slice(0, 200),
     };
   },
 };
