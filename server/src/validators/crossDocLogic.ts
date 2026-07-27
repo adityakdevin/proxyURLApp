@@ -194,6 +194,24 @@ const RELATION_OF: Record<string, RelationKind> = {
   'c/o': 'GUARDIAN',
 };
 
+/** Words that are FORM LABELS, never people. Indian ID cards print each label above its
+ *  value, so once OCR flattens the page the NEXT LABEL lands where the value should be —
+ *  "S/O: Address: Government of India" on an Aadhaar card yielded a father's name of
+ *  "Address", which then mismatched the real father's name on the policy page. */
+const FIELD_LABEL_WORD = new Set([
+  'address', 'date', 'dob', 'birth', 'gender', 'name', 'pin', 'pincode', 'phone', 'mobile',
+  'email', 'district', 'state', 'city', 'town', 'village', 'signature', 'photo', 'year',
+  'issue', 'issued', 'download', 'downloaded', 'enrolment', 'enrollment', 'vid', 'uid',
+  'aadhaar', 'aadhar', 'pan', 'father', 'mother', 'husband', 'wife', 'guardian', 'spouse',
+  'age', 'occupation', 'nationality', 'sex', 'mob', 'tel',
+]);
+
+/** Does this captured value just repeat a form label instead of naming a person? */
+function isLabelValue(v: string): boolean {
+  const first = v.trim().toLowerCase().split(/[\s.]+/)[0];
+  return first.length === 0 || FIELD_LABEL_WORD.has(first);
+}
+
 /** Relation names tagged with WHOSE name it is. */
 export function extractRelationNamesByKind(text: string): { kind: RelationKind; value: string }[] {
   const out: { kind: RelationKind; value: string }[] = [];
@@ -202,7 +220,7 @@ export function extractRelationNamesByKind(text: string): { kind: RelationKind; 
     const label = (m[1] ?? m[3] ?? '').toLowerCase();
     const value = (m[2] ?? m[4] ?? '').trim().replace(/\s+/g, ' ');
     const kind = RELATION_OF[label];
-    if (!kind || !value) continue;
+    if (!kind || !value || isLabelValue(value)) continue;
     const key = `${kind}:${value}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -245,7 +263,7 @@ export function extractNames(text: string): string[] {
   for (const m of text.matchAll(NAME_RE)) {
     if ((m[1] ?? '').toLowerCase() && NON_PERSON_NAME_LABEL.has((m[1] ?? '').toLowerCase())) continue;
     const v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
-    if (v) out.push(v);
+    if (v && !isLabelValue(v)) out.push(v);
   }
   return [...new Set(out)].filter((n) => !relations.some((r) => nameMatches(n, r)));
 }

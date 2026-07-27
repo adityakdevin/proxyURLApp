@@ -246,6 +246,19 @@ describe('extractNames / extractRelationNames label handling', () => {
     expect(extractNames('Insured Name: Rajesh Kumar')).toEqual(['Rajesh Kumar']);
   });
 
+  // Found by /qa 2026-07-27 on MZBFF811VSN579886 page 2: an Aadhaar card OCRs to
+  // "S/O: Address: Government of India" because label and value sit on separate lines,
+  // and "Address" was compared as the father's name against the policy's real one.
+  it('does not take the NEXT form label as a relation or customer name', () => {
+    expect(extractRelationNamesByKind('Dowrioad Date 01 03 203 S/O: Address: Government of In')).toEqual([]);
+    expect(extractRelationNamesByKind('Father Name: Date of Birth')).toEqual([]);
+    expect(extractNames('Name: Gender')).toEqual([]);
+    // a real value on the same line still parses
+    expect(extractRelationNamesByKind("Insured's Address : S/O BANTA SINGH 464/1")).toEqual([
+      { kind: 'FATHER', value: 'BANTA SINGH' },
+    ]);
+  });
+
   it('tags relation names with whose name it is', () => {
     expect(extractRelationNamesByKind("Mother's Name: SUNITA YADAV")).toEqual([
       { kind: 'MOTHER', value: 'SUNITA YADAV' },
