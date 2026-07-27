@@ -124,6 +124,12 @@ export function DocumentViewer({
   const [pdfFailed, setPdfFailed] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
+  // Counts pages whose canvas has actually painted. react-pdf reports numPages long
+  // before it renders them, and until a page paints its container is ~0px tall — so a
+  // scroll issued at that moment lands at the top of the document instead of on the
+  // finding. Re-running the scroll as each page paints is what makes "jump to the first
+  // mistake" work on a multi-page bundle, where the flagged page is typically page 5+.
+  const [renderedPages, setRenderedPages] = useState(0);
   const [missing, setMissing] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -136,6 +142,7 @@ export function DocumentViewer({
     setPdfFailed(false);
     setImgFailed(false);
     setImgLoaded(false);
+    setRenderedPages(0);
     setZoom(1);
     // Open ON the first mistake instead of at the top of the document — a reviewer
     // opening a Spell Check result wants the first flagged word, not page 1.
@@ -167,8 +174,9 @@ export function DocumentViewer({
     scrollRef.current
       ?.querySelector(`[data-fid="${CSS.escape(activeId)}"]`)
       ?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-    // imgLoaded matters: before the image paints, the overlay has no height to scroll to.
-  }, [activeId, zoom, numPages, imgLoaded]);
+    // imgLoaded / renderedPages matter: before the page paints, the overlay has no
+    // height to scroll to, so the scroll has to be re-issued once it does.
+  }, [activeId, zoom, numPages, imgLoaded, renderedPages]);
 
   // Keep the cursor's document point fixed while Ctrl/Cmd-wheel zooming.
   useLayoutEffect(() => {
@@ -294,6 +302,7 @@ export function DocumentViewer({
                       width={pageWidth}
                       renderTextLayer={false}
                       renderAnnotationLayer={false}
+                      onRenderSuccess={() => setRenderedPages((n) => n + 1)}
                     />
                     <Highlights
                       findings={pageFindings}
