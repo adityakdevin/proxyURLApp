@@ -161,8 +161,19 @@ router.get(
       });
       if (!doc) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
       const resolved = await docSvc(req).resolveServingPath(doc.id);
-      if (!resolved) return res.status(404).json({ error: 'File not found', code: 'FILE_NOT_FOUND' });
-      const stat = await fs.stat(resolved.absolutePath).catch(() => null);
+      // Log the path we actually tried: a claim can hold a valid RESULT from an earlier
+      // run while the file itself has since moved on the scan share, and without this the
+      // 404 is undiagnosable from the server logs.
+      if (!resolved) {
+        console.warn(
+          `[documents] ${doc.id} (${doc.source}) path rejected: storagePath=${JSON.stringify(doc.storagePath)} CLAIMS_SCAN_ROOT=${process.env.CLAIMS_SCAN_ROOT ?? '<unset>'}`
+        );
+        return res.status(404).json({ error: 'File not found', code: 'FILE_NOT_FOUND' });
+      }
+      const stat = await fs.stat(resolved.absolutePath).catch((e) => {
+        console.warn(`[documents] ${doc.id} stat failed for ${resolved.absolutePath}: ${(e as Error).message}`);
+        return null;
+      });
       if (!stat) return res.status(404).json({ error: 'File not found', code: 'FILE_NOT_FOUND' });
       res.setHeader('Content-Type', resolved.mimeType);
       res.setHeader('Content-Length', String(stat.size));

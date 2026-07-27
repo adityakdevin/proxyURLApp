@@ -9,6 +9,8 @@ import {
   matchesClaimId,
   editDistanceCapped,
   findTermMisspellings,
+  ocrFold,
+  ocrIndistinguishable,
 } from '../logic.js';
 
 describe('validator logic', () => {
@@ -44,6 +46,36 @@ describe('validator logic', () => {
       'lucnow->lucknow',
     ]); // 'toyota' is near neither term
   });
+  // Client UAT: six claims reported "wrong identified as spelling of X is wrong" where the
+  // word is printed correctly and the scanner misread one glyph. Those become DOUBTFUL
+  // (shown + highlighted, never failing the check); genuine typos stay confident.
+  it('marks glyph-confusable near-misses as doubtful, real typos as confident', () => {
+    const notReal = () => false;
+    const flag = (token: string, term: string) =>
+      findTermMisspellings([token], notReal, [term])[0];
+
+    // Scanner-explainable: rn/m, c/e, i/l glyph pairs.
+    expect(flag('novernber', 'november').doubtful).toBe(true);
+    expect(flag('manaqer', 'manager').doubtful).toBe(true);
+    // A leading m→rn misread ("rnanager") never reaches this tier at all: the
+    // first-letter rule in findTermMisspellings already drops edge-glyph OCR noise.
+    expect(flag('rnanager', 'manager')).toBeUndefined();
+    expect(flag('cierk', 'clerk').doubtful).toBe(true);
+    expect(flag('englneer', 'engineer').doubtful).toBe(true);
+    expect(flag('nincty', 'ninety').doubtful).toBe(true);
+
+    // Genuine misspellings the reviewers DO want flagged — a↔e is never folded away.
+    expect(flag('quartarly', 'quarterly').doubtful).toBe(false);
+    expect(flag('retantion', 'retention').doubtful).toBe(false);
+    expect(flag('profesion', 'profession').doubtful).toBe(false); // dropped char, not a glyph swap
+  });
+
+  it('ocrFold leaves a/e distinct so real typos survive', () => {
+    expect(ocrIndistinguishable('november', 'novernber')).toBe(true);
+    expect(ocrIndistinguishable('retention', 'retantion')).toBe(false);
+    expect(ocrFold('clerk')).toBe(ocrFold('cierk'));
+  });
+
   it('qrOutcome', () => {
     expect(qrOutcome(0, 0, []).status).toBe('PASSED');
     expect(qrOutcome(0, 2, []).status).toBe('FAILED');

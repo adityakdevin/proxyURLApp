@@ -44,11 +44,16 @@ function Highlights({
         .filter((f) => f.bbox)
         .map((f) => {
           const active = f.id === activeId;
+          const soft = f.severity !== 'ERROR'; // doubtful / advisory — amber, not red
           // When something is selected, fade the others so the active box stands out.
           const cls = active
             ? 'border-2 border-yellow-500 ring-2 ring-yellow-400 bg-yellow-300/40 animate-pulse z-10'
             : activeId
-            ? 'border-2 border-red-500/30 bg-red-500/10'
+            ? soft
+              ? 'border-2 border-dashed border-amber-500/40 bg-amber-400/10'
+              : 'border-2 border-red-500/30 bg-red-500/10'
+            : soft
+            ? 'border-2 border-dashed border-amber-500 bg-amber-400/20'
             : 'border-2 border-red-500 bg-red-500/20';
           return (
             <div
@@ -66,7 +71,7 @@ function Highlights({
             >
               <span
                 className={`absolute -top-4 -left-0.5 rounded px-1 text-[10px] font-semibold leading-4 text-white ${
-                  active ? 'bg-yellow-600' : 'bg-red-600'
+                  active ? 'bg-yellow-600' : soft ? 'bg-amber-500' : 'bg-red-600'
                 }`}
               >
                 {numberOf.get(f.id)}
@@ -118,6 +123,14 @@ export function DocumentViewer({
   const [numPages, setNumPages] = useState(0);
   const [pdfFailed, setPdfFailed] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  // Counts pages whose canvas has actually painted. react-pdf reports numPages long
+  // before it renders them, and until a page paints its container is ~0px tall — so a
+  // scroll issued at that moment lands at the top of the document instead of on the
+  // finding. Re-running the scroll as each page paints is what makes "jump to the first
+  // mistake" work on a multi-page bundle, where the flagged page is typically page 5+.
+  const [renderedPages, setRenderedPages] = useState(0);
+  const [missing, setMissing] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -128,9 +141,26 @@ export function DocumentViewer({
     setNumPages(0);
     setPdfFailed(false);
     setImgFailed(false);
-    setActiveId(null);
+    setImgLoaded(false);
+    setRenderedPages(0);
     setZoom(1);
-  }, [documentId]);
+    // Open ON the first mistake instead of at the top of the document — a reviewer
+    // opening a Spell Check result wants the first flagged word, not page 1.
+    setActiveId(boxed[0]?.id ?? null);
+  }, [documentId, boxed]);
+
+  // One HEAD probe tells us the file is gone BEFORE a render branch falls back to an
+  // iframe, which would otherwise paint the API's raw {"error":"File not found"} JSON.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch(contentUrl, { method: 'HEAD', credentials: 'include' })
+      .then((r) => !cancelled && setMissing(!r.ok))
+      .catch(() => !cancelled && setMissing(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [contentUrl, open]);
 
   // Clicking a finding snaps to a legible zoom, then centers its box.
   const selectFinding = (id: string) => {
@@ -144,7 +174,9 @@ export function DocumentViewer({
     scrollRef.current
       ?.querySelector(`[data-fid="${CSS.escape(activeId)}"]`)
       ?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-  }, [activeId, zoom, numPages]);
+    // imgLoaded / renderedPages matter: before the page paints, the overlay has no
+    // height to scroll to, so the scroll has to be re-issued once it does.
+  }, [activeId, zoom, numPages, imgLoaded, renderedPages]);
 
   // Keep the cursor's document point fixed while Ctrl/Cmd-wheel zooming.
   useLayoutEffect(() => {
@@ -188,7 +220,7 @@ export function DocumentViewer({
           <DialogTitle className="truncate">{fileName}</DialogTitle>
         </DialogHeader>
 
-        {((isImage && !imgFailed) || (isPdf && !pdfFailed)) && (
+        {!missing && ((isImage && !imgFailed) || (isPdf && !pdfFailed)) && (
           <div className="flex items-center gap-1 text-sm">
             <button
               type="button"
@@ -218,7 +250,13 @@ export function DocumentViewer({
           </div>
         )}
 
-        {isImage && imgFailed ? (
+        {missing ? (
+          <p className="p-4 text-sm text-red-600">
+            This document could not be opened — the file is no longer readable at its stored
+            location on the server. The findings below came from an earlier scan, when the
+            file was still there.
+          </p>
+        ) : isImage && imgFailed ? (
           <p className="p-4 text-sm text-red-600">
             This document is unavailable (the file may be missing on the server).
           </p>
@@ -229,6 +267,7 @@ export function DocumentViewer({
                 src={contentUrl}
                 alt={fileName}
                 className="block w-full h-auto"
+                onLoad={() => setImgLoaded(true)}
                 onError={() => setImgFailed(true)}
               />
               <Highlights
@@ -263,6 +302,7 @@ export function DocumentViewer({
                       width={pageWidth}
                       renderTextLayer={false}
                       renderAnnotationLayer={false}
+                      onRenderSuccess={() => setRenderedPages((n) => n + 1)}
                     />
                     <Highlights
                       findings={pageFindings}
@@ -300,7 +340,7 @@ export function DocumentViewer({
                     {f.bbox ? (
                       <span
                         className={`mt-px inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-[10px] font-semibold text-white ${
-                          active ? 'bg-yellow-600' : 'bg-red-600'
+                          active ? 'bg-yellow-600' : f.severity !== 'ERROR' ? 'bg-amber-500' : 'bg-red-600'
                         }`}
                       >
                         {numberOf.get(f.id)}

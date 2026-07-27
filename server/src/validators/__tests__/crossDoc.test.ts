@@ -7,6 +7,7 @@ import {
   modelMatches,
   extractNames,
   extractRelationNames,
+  extractRelationNamesByKind,
   extractVehicleNos,
   crossDocFieldFindings,
   CrossPage,
@@ -232,6 +233,70 @@ describe('extractNames / extractRelationNames label handling', () => {
     expect(extractRelationNames('S/O: Mohan Kumar')).toEqual(['Mohan Kumar']);
     expect(extractRelationNames('D/O Hariram Kumar')).toEqual(['Hariram Kumar']);
     expect(extractRelationNames('W/O: Rajesh Kumar')).toEqual(['Rajesh Kumar']);
+  });
+
+  // Client UAT: "Findings are wrong as details are matching with broker name instead of
+  // qr person" / "...nominee name instead of insured person".
+  it('excludes intermediary and possessive non-person labels', () => {
+    expect(extractNames('Broker Name: RAJESH TRADERS PVT LTD')).toEqual([]);
+    expect(extractNames('Agent Name: SUNIL VERMA')).toEqual([]);
+    expect(extractNames("Nominee's Name: SUNITA DEVI")).toEqual([]);
+    expect(extractNames('Surveyor Name: A K SINGH')).toEqual([]);
+    // person qualifiers still survive
+    expect(extractNames('Insured Name: Rajesh Kumar')).toEqual(['Rajesh Kumar']);
+  });
+
+  // Found by /qa 2026-07-27 on MZBFF811VSN579886 page 2: an Aadhaar card OCRs to
+  // "S/O: Address: Government of India" because label and value sit on separate lines,
+  // and "Address" was compared as the father's name against the policy's real one.
+  it('does not take the NEXT form label as a relation or customer name', () => {
+    expect(extractRelationNamesByKind('Dowrioad Date 01 03 203 S/O: Address: Government of In')).toEqual([]);
+    expect(extractRelationNamesByKind('Father Name: Date of Birth')).toEqual([]);
+    expect(extractNames('Name: Gender')).toEqual([]);
+    // a real value on the same line still parses
+    expect(extractRelationNamesByKind("Insured's Address : S/O BANTA SINGH 464/1")).toEqual([
+      { kind: 'FATHER', value: 'BANTA SINGH' },
+    ]);
+  });
+
+  it('tags relation names with whose name it is', () => {
+    expect(extractRelationNamesByKind("Mother's Name: SUNITA YADAV")).toEqual([
+      { kind: 'MOTHER', value: 'SUNITA YADAV' },
+    ]);
+    expect(extractRelationNamesByKind('S/O: Mohan Kumar')).toEqual([
+      { kind: 'FATHER', value: 'Mohan Kumar' },
+    ]);
+    expect(extractRelationNamesByKind('W/O: Rajesh Kumar')).toEqual([
+      { kind: 'SPOUSE', value: 'Rajesh Kumar' },
+    ]);
+  });
+});
+
+describe('relation names are compared per relation', () => {
+  // Client UAT screenshot: a PAN card printing the MOTHER's name was compared against
+  // another document's FATHER name and reported as a mismatch.
+  it('does NOT flag a mother name against a father name', () => {
+    const f = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Lokesh Yadav\nMother Name: Sunita Yadav'),
+      page('d2', 'Policy No 9 Insured X Premium 1 Sum Insured 2\nName: Lokesh Yadav\nFather Name: Naresh Kumar'),
+    ]);
+    expect(f.filter((x) => x.code.startsWith('CROSS_RELATION_'))).toHaveLength(0);
+  });
+
+  it('still flags two different FATHER names across documents', () => {
+    const f = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nFather Name: Naresh Kumar'),
+      page('d2', 'Policy No 9 Insured X Premium 1 Sum Insured 2\nFather Name: Mohan Lal'),
+    ]);
+    expect(f.some((x) => x.code === 'CROSS_RELATION_FATHER_MISMATCH' && x.severity === 'ERROR')).toBe(true);
+  });
+
+  it('a broker name on the policy does not become a customer-name mismatch', () => {
+    const f = crossDocFieldFindings([
+      page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Lokesh Yadav'),
+      page('d2', 'Policy No 9 Insured X Premium 1 Sum Insured 2\nInsured Name: Lokesh Yadav\nBroker Name: Marsh India Insurance Brokers'),
+    ]);
+    expect(f.filter((x) => x.code === 'CROSS_NAME_MISMATCH')).toHaveLength(0);
   });
 });
 

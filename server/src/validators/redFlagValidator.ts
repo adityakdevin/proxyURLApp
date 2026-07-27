@@ -25,6 +25,7 @@ import {
   checkAadhaar,
   checkVoterId,
   checkSignature,
+  checkSignatoryWord,
   checkEditorWatermark,
   checkDates,
   RedFlagFinding,
@@ -86,6 +87,7 @@ export const redFlagValidator: Validator = {
       // File-level "Every Doc" rules (spec decision 3): whole-document text.
       const fileText = pages.map((p) => p.text).join('\n');
       for (const f of checkSignature(fileText)) findings.push(toFinding(doc.id, f));
+      for (const f of checkSignatoryWord(fileText)) findings.push(toFinding(doc.id, f));
       for (const f of checkDates(fileText)) findings.push(toFinding(doc.id, f));
 
       // Editor/AI watermark — read the PDF Producer/Creator (I/O; PDFs only).
@@ -104,7 +106,10 @@ export const redFlagValidator: Validator = {
     );
 
     const errors = findings.filter((f) => f.severity === 'ERROR').length;
-    const warnings = findings.length - errors;
+    const warnings = findings.filter((f) => f.severity === 'WARNING').length;
+    // INFO findings record checks that PASSED (e.g. a valid PAN and its holder category);
+    // they are never a red flag, but they are what tells a reviewer the check ran.
+    const notes = findings.length - errors - warnings;
     if (errors > 0) {
       return {
         status: 'FAILED',
@@ -114,8 +119,12 @@ export const redFlagValidator: Validator = {
     }
     return {
       status: 'PASSED',
-      summary: warnings ? `No red flags; ${warnings} advisory note(s).` : 'No red flags found.',
-      findings: warnings ? findings : undefined,
+      summary: warnings
+        ? `No red flags; ${warnings} advisory note(s).`
+        : notes
+        ? `No red flags; ${notes} check(s) verified.`
+        : 'No red flags found.',
+      findings: findings.length > 0 ? findings : undefined,
     };
   },
 };

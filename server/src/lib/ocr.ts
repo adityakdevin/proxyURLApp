@@ -45,6 +45,10 @@ function collectWords(data: unknown, width: number, height: number, page = 1): W
 // writes `<lang>.traineddata` into the process cwd (the repo's server/ dir).
 const OCR_CACHE_PATH = process.env.OCR_CACHE_DIR || path.join(os.tmpdir(), 'claims-ocr-cache');
 
+/** Upper bound when the caller names the pages to OCR (mixed digital/scanned PDF).
+ *  Still bounded — a 200-page bundle of scans should not stall a run. */
+const MAX_OCR_TARGETED_PAGES = 40;
+
 export class TesseractOcrPort implements OcrPort {
   private worker: Worker | null = null;
 
@@ -97,8 +101,12 @@ export class TesseractOcrPort implements OcrPort {
       // pages, and OCRing a long PDF serially on one worker is the slow path.
       // onlyPages narrows to specific pages (mixed digital/scanned PDFs OCR just
       // the pages that have no text layer).
-      let pages = await rasterizePdf(absolutePath, 12);
-      if (onlyPages) pages = pages.filter((p) => onlyPages.includes(p.page));
+      // The 12-page cap bounds a BLIND whole-document OCR. When the caller already knows
+      // exactly which pages lack a text layer, honour that list instead — applying the cap
+      // first meant an ID-card page at position 13+ of a bundled claim PDF was never read.
+      const pages = onlyPages
+        ? await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, 2, onlyPages)
+        : await rasterizePdf(absolutePath, 12);
       if (pages.length === 0) return { text: '', words: [] };
       const worker = await this.getWorker();
       const parts: string[] = [];
