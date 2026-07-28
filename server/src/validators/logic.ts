@@ -71,10 +71,30 @@ export function completenessOutcome(
  *  predicate needs wording that appears ON the card itself and not in insurance
  *  legalese. ponytail: extend inline; move to a DocumentTypeMaster alias column
  *  if reviewers need to tune these without a deploy. */
+/**
+ * The FRONT of an Aadhaar card, which prints the holder's name, date of birth, gender and
+ * the 12-digit number — and nowhere the word "Aadhaar" or "UIDAI" (those live on the back,
+ * with the address). Without this the front side classified as nothing at all, so the one
+ * page carrying the actual identity data was invisible to every per-type check.
+ *
+ * Both signals are required: the Aadhaar-shaped digit group AND a birth-date or gender
+ * word. A toll-free number on an insurance page matches the digits alone, so the digits
+ * alone are not enough. The digit group must not sit behind a phone-style label either.
+ */
+function aadhaarFrontSide(t: string): boolean {
+  if (!/\b(?:dob|date\s*of\s*birth|male|female|जन्म)\b/i.test(t)) return false;
+  const m = /\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/.exec(t);
+  if (!m) return false;
+  return !/(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax)[^0-9]{0,12}$/i.test(
+    t.slice(Math.max(0, m.index - 30), m.index)
+  );
+}
+
 export const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
   AADHAR: (t) =>
     /(^|[^a-z])(uidai|aad?haa?r)([^a-z]|$)/i.test(t) ||
-    /unique\s+identification\s+authority/i.test(t),
+    /unique\s+identification\s+authority/i.test(t) ||
+    aadhaarFrontSide(t),
   // OCR of blurry cards drops spaces ("INCOMETAX DEPARTMENT") — keep \s* loose.
   PAN: (t) => /income\s*tax\s*depart/i.test(t) || /permanent\s*account\s*number/i.test(t),
   // Cards carry a DL number / class-of-vehicle codes; policy clauses just say
