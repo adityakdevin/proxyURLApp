@@ -87,12 +87,15 @@ function CopyButton({ text, what }: { text: string; what: string }) {
 function FieldRow({ label, value }: DocField) {
   return (
     <div className="group flex items-start gap-3 border-b border-gray-100 py-2 last:border-0">
-      <span className="w-32 shrink-0 pt-0.5 text-xs font-medium text-gray-500">{label}</span>
+      <span className="w-28 shrink-0 pt-0.5 text-xs font-medium text-gray-500">{label}</span>
       {value ? (
         <>
+          {/* Identifiers get a smaller monospace face rather than a mid-token line break:
+              "UK401K20250020 / 4" split across two lines reads as two different numbers,
+              which is the one thing a reviewer comparing IDs must not see. */}
           <span
             className={`min-w-0 flex-1 break-words text-sm text-gray-900 ${
-              isIdentifier(label) ? 'font-mono tracking-tight' : ''
+              isIdentifier(label) ? 'font-mono text-[13px] leading-5 tracking-tight' : ''
             }`}
           >
             {value}
