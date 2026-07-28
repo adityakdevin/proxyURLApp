@@ -101,6 +101,21 @@ describe('documentFields', () => {
     expect(valueOf(f, 'Model')).toBe('SYROS');
   });
 
+  // QA 2026-07-28: the KIA invoice labels the buyer "Bill To", never "Name", so the shared
+  // name extractor read nothing and Customer Name showed as absent.
+  it('reads the customer name off a "Bill To" invoice', () => {
+    const f = documentFields(INVOICE_TEXT, 'INVOICE');
+    expect(valueOf(f, 'Customer Name')).toBe('JAGJEET SINGH');
+  });
+
+  it('stops the Bill To name at the next label', () => {
+    const f = documentFields(
+      'Vehicle Tax Invoice\nBill To : RAVI KUMAR Address : 163 KHURBURA MOHALLA',
+      'INVOICE'
+    );
+    expect(valueOf(f, 'Customer Name')).toBe('RAVI KUMAR');
+  });
+
   it('reads an insurance policy', () => {
     const f = documentFields(INSURANCE_TEXT, 'INSURANCE');
     expect(valueOf(f, 'Policy No')).toBe('D210959291');

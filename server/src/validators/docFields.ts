@@ -117,6 +117,21 @@ function cardName(text: string, kind: 'HOLDER' | 'FATHER' | 'MOTHER'): string | 
   return null;
 }
 
+// A vehicle invoice never labels the buyer "Name" — it says "Bill To" or "Sold To", so the
+// shared name extractor (which anchors on "…Name:") read nothing and Customer Name showed
+// as absent on an invoice that plainly carries it.
+const BILL_TO_RE = /\b(?:bill(?:ed)?\s*to|sold\s*to|buyer)\b\s*[:\-]?\s*/i;
+
+function billToName(text: string): string | null {
+  const m = BILL_TO_RE.exec(text);
+  if (!m) return null;
+  const at = m.index + m[0].length;
+  const v = CAPS_NAME_RE.exec(text.slice(at, at + 60));
+  if (!v) return null;
+  const value = v[1].trim().replace(/\s+/g, ' ');
+  return isBoilerplate(value) ? null : value;
+}
+
 /** A relation name, from the shared label-anchored extractor first (it handles "S/o X" and
  *  "Father's Name: X"), falling back to the card-table reading. */
 const relation = (text: string, kind: 'FATHER' | 'MOTHER' | 'SPOUSE') =>
@@ -167,7 +182,7 @@ export function documentFields(text: string, type: FieldDocType): DocField[] {
         { label: 'Invoice No', value: one(text, INVOICE_NO_RE) },
         { label: 'Invoice Date', value: one(text, INVOICE_DATE_RE) },
         { label: 'Customer Id', value: one(text, CUSTOMER_ID_RE) },
-        { label: 'Customer Name', value: first(extractNames(text)) },
+        { label: 'Customer Name', value: first(extractNames(text)) ?? billToName(text) },
         { label: 'Chassis No', value: one(text, CHASSIS_RE) },
         { label: 'Engine No', value: one(text, ENGINE_RE) },
         { label: 'Model', value: one(text, MODEL_RE) },
