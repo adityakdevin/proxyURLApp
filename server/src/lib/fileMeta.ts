@@ -11,8 +11,9 @@ export interface FileMeta {
   aiSignals: string[];
 }
 
-/** Software/tool strings that indicate AI image generation. */
-const AI_RE = /gemini|dall[- ]?e|midjourney|stable ?diffusion|firefly|openai|chatgpt|ideogram/i;
+/** Software/tool strings that indicate AI image generation. Also used by the REDFLAG
+ *  editor/AI watermark rule, which reads the same names out of a PDF's Producer/Creator. */
+export const AI_RE = /gemini|dall[- ]?e|midjourney|stable ?diffusion|firefly|openai|chatgpt|ideogram/i;
 
 const str = (v: unknown): string | undefined => {
   if (v === null || v === undefined) return undefined;

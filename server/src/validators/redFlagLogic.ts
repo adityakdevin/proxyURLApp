@@ -14,6 +14,7 @@
  *                                                   └─ clean but invalid → ERROR   "malformed" (red flag)
  */
 import { editDistanceCapped, isDoubtfulHit } from './logic.js';
+import { AI_RE } from '../lib/fileMeta.js';
 
 export interface RedFlagFinding {
   code: string;
@@ -177,6 +178,65 @@ export function checkPassportFileNo(text: string, page: number | null = null): R
   return [err('REDFLAG_PASSPORT_FILENO', `Passport file no. "${cand}" is ${cand.length} chars, not 12-15`, page, { fileNo: cand })];
 }
 
+/** Passport number must be identical wherever it appears in one file — the spec's
+ *  "right corner of page 1 = below the barcode on page 2". Positional layout isn't
+ *  available from flat text, so this compares every passport-shaped token in the file;
+ *  a genuine passport repeats the same number, a spliced one does not. */
+export function checkPassportPages(pages: { page: number; text: string }[]): RedFlagFinding[] {
+  const nums = new Set<string>();
+  let firstPage: number | null = null;
+  for (const p of pages) {
+    for (const m of p.text.toUpperCase().matchAll(/\b[A-PR-WY][0-9]{7}\b/g)) {
+      nums.add(m[0]);
+      if (firstPage === null) firstPage = p.page;
+    }
+  }
+  if (nums.size <= 1) return [];
+  return [
+    err('REDFLAG_PASSPORT_MISMATCH', `Passport number differs across pages (${[...nums].join(', ')})`, firstPage, {
+      values: [...nums],
+    }),
+  ];
+}
+
+/** Label-anchored digit run following an Aadhaar/VID label. Group 1 = the text between
+ *  label and number (used to reject a number that actually belongs to a nearby label). */
+const labelledDigits = (text: string, label: string): RegExpExecArray | null =>
+  new RegExp(`\\b(?:${label})\\b([^0-9]{0,24})((?:\\d[\\s-]?){7,20}\\d)`, 'i').exec(text);
+
+/** Aadhaar number must be 12 digits. Separate from checkAadhaar (which compares front
+ *  vs back): aadhaarNumbers only matches EXACTLY 12 digits, so an 11- or 13-digit number
+ *  was invisible to it — the document simply looked like it carried no Aadhaar at all. */
+export function checkAadhaarFormat(text: string, page: number | null = null): RedFlagFinding[] {
+  const m = labelledDigits(text, 'aadha?a?r|uidai');
+  if (!m) return [];
+  // The number after an Aadhaar label may belong to the VID or the enrolment no. printed
+  // beside it; those have their own lengths and their own rule.
+  if (/\b(?:vid|enrol)/i.test(m[1])) return [];
+  const digits = stripSep(m[2]);
+  if (digits.length === 12) return [];
+  return [
+    err('REDFLAG_AADHAAR_FORMAT', `Aadhaar number "${m[2].trim()}" is ${digits.length} digits, not 12`, page, {
+      aadhaar: digits,
+    }),
+  ];
+}
+
+// ponytail: 14 per the client spec of 2026-07-28. UIDAI publishes a 16-digit VID —
+// if genuine cards start red-flagging, this constant is the one thing to change.
+const VID_DIGITS = 14;
+
+/** Virtual ID (VID) printed beside the Aadhaar number must be VID_DIGITS long. */
+export function checkVid(text: string, page: number | null = null): RedFlagFinding[] {
+  const m = labelledDigits(text, 'V\\.?I\\.?D|virtual\\s*id');
+  if (!m) return [];
+  const digits = stripSep(m[2]);
+  if (digits.length === VID_DIGITS) return [];
+  return [
+    err('REDFLAG_VID_FORMAT', `VID "${m[2].trim()}" is ${digits.length} digits, not ${VID_DIGITS}`, page, { vid: digits }),
+  ];
+}
+
 /** Extract distinct 12-digit Aadhaar numbers from one page's text (spaces optional). */
 export function aadhaarNumbers(text: string): string[] {
   const out = new Set<string>();
@@ -209,6 +269,11 @@ export function checkVoterId(pages: { page: number; text: string }[]): RedFlagFi
       epics.add(m[0]);
       if (firstPage === null) firstPage = p.page;
     }
+  }
+  if (epics.size === 1 && pages.length < 2) {
+    // Spec: report "Back side NA" rather than passing silently — a one-sided upload is
+    // not a clean cross-check, and a silent pass looked identical to a verified match.
+    return [info('REDFLAG_VOTER_BACK_NA', 'Back side NA — Voter ID back side not available to cross-check', firstPage)];
   }
   if (epics.size <= 1) return [];
   return [err('REDFLAG_VOTER_MISMATCH', `Voter ID differs across sides (${[...epics].join(', ')})`, firstPage, { values: [...epics] })];
@@ -268,8 +333,16 @@ export function checkSignatoryWord(fileText: string, page: number | null = null)
 }
 
 const EDITOR_RE = /itext|ilovepdf|pdfsam|pdf24|smallpdf|nitro|foxit|sejda|soda\s*pdf|libreoffice|reportlab|tcpdf|dompdf|wkhtmltopdf/i;
-/** Editor/AI watermark: the PDF Producer/Creator names a document editor. */
+/**
+ * Editor/AI watermark: the PDF Producer/Creator names a document editor OR a known AI
+ * generator. AI_RE is shared with the image path (lib/fileMeta) so a tool added there is
+ * caught on PDFs too — the image path alone missed them, and claim documents are mostly PDFs.
+ */
 export function checkEditorWatermark(producer?: string | null, creator?: string | null): RedFlagFinding[] {
+  const ai = [producer, creator].find((v) => v && AI_RE.test(v));
+  if (ai) {
+    return [err('REDFLAG_AI_WATERMARK', `Document produced by AI tool "${ai.trim()}"`, null, { tool: ai.trim() })];
+  }
   const hit = [producer, creator].find((v) => v && EDITOR_RE.test(v));
   return hit ? [err('REDFLAG_EDITOR_WATERMARK', `Document produced/edited by "${hit.trim()}"`, null, { tool: hit.trim() })] : [];
 }

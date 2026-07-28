@@ -5,7 +5,10 @@ import {
   checkUdyam,
   checkPassportNumber,
   checkPassportFileNo,
+  checkPassportPages,
   checkAadhaar,
+  checkAadhaarFormat,
+  checkVid,
   checkVoterId,
   checkSignature,
   checkSignatoryWord,
@@ -152,9 +155,52 @@ describe('Aadhaar cross-page', () => {
   });
 });
 
+describe('Aadhaar / VID format', () => {
+  it('passes a 12-digit Aadhaar and flags a wrong-length one', () => {
+    expect(checkAadhaarFormat('Aadhaar No: 2345 6789 0123')).toEqual([]);
+    const short = checkAadhaarFormat('Aadhaar No: 2345 6789 012');
+    expect(codes(short)).toEqual(['REDFLAG_AADHAAR_FORMAT']);
+    expect(short[0].severity).toBe('ERROR');
+    expect(short[0].message).toContain('11 digits, not 12');
+    // 13 digits — the case aadhaarNumbers() could never see.
+    expect(codes(checkAadhaarFormat('AADHAR 2345 6789 01234'))).toEqual(['REDFLAG_AADHAAR_FORMAT']);
+  });
+
+  it('does not read the VID or enrolment number as the Aadhaar number', () => {
+    expect(checkAadhaarFormat('Aadhaar VID : 1234 5678 9012 3456')).toEqual([]);
+    expect(checkAadhaarFormat('Aadhaar Enrolment No 1234/56789/01234')).toEqual([]);
+  });
+
+  it('stays silent when the page carries no Aadhaar label', () => {
+    expect(checkAadhaarFormat('Invoice 2345 6789 0123')).toEqual([]);
+  });
+
+  it('checks the VID digit count', () => {
+    expect(checkVid('VID: 1234 5678 9012 34')).toEqual([]); // 14 per client spec
+    expect(codes(checkVid('VID: 1234 5678 9012 3456'))).toEqual(['REDFLAG_VID_FORMAT']);
+    expect(checkVid('no virtual id here')).toEqual([]);
+  });
+});
+
+describe('Passport cross-page', () => {
+  it('passes when the same number repeats across pages', () => {
+    expect(checkPassportPages([{ page: 1, text: 'A1234567' }, { page: 2, text: 'barcode A1234567' }])).toEqual([]);
+  });
+  it('flags a number that differs between pages', () => {
+    const fs = checkPassportPages([{ page: 1, text: 'A1234567' }, { page: 2, text: 'B7654321' }]);
+    expect(codes(fs)).toEqual(['REDFLAG_PASSPORT_MISMATCH']);
+    expect(fs[0].severity).toBe('ERROR');
+  });
+});
+
 describe('Voter ID', () => {
   it('passes a single consistent EPIC', () => {
     expect(checkVoterId([{ page: 1, text: 'ABC1234567' }, { page: 2, text: 'ABC1234567' }])).toEqual([]);
+  });
+  it('reports Back side NA when only the front was uploaded', () => {
+    const fs = checkVoterId([{ page: 1, text: 'ABC1234567' }]);
+    expect(codes(fs)).toEqual(['REDFLAG_VOTER_BACK_NA']);
+    expect(fs[0].severity).toBe('INFO'); // a note, never a red flag
   });
   it('flags EPIC differing across sides', () => {
     expect(codes(checkVoterId([{ page: 1, text: 'ABC1234567' }, { page: 2, text: 'XYZ7654321' }]))).toEqual([
@@ -179,6 +225,11 @@ describe('Every-doc rules', () => {
   });
   it('passes a clean Producer', () => {
     expect(checkEditorWatermark('Adobe PDF Library 15.0')).toEqual([]);
+  });
+  // Was previously image-only, so an AI-generated PDF passed clean.
+  it('flags an AI tool named in the Producer or Creator of a PDF', () => {
+    expect(codes(checkEditorWatermark('ChatGPT'))).toEqual(['REDFLAG_AI_WATERMARK']);
+    expect(codes(checkEditorWatermark(null, 'Gemini'))).toEqual(['REDFLAG_AI_WATERMARK']);
   });
 });
 
