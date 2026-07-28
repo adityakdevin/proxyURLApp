@@ -237,10 +237,28 @@ export function checkVid(text: string, page: number | null = null): RedFlagFindi
   ];
 }
 
-/** Extract distinct 12-digit Aadhaar numbers from one page's text (spaces optional). */
+/** Twelve digits in three groups — the Aadhaar shape. `(?!\s?\d)` stops the first three
+ *  groups of a 16-digit VID matching as an Aadhaar number. */
+export const AADHAAR_GROUP_RE = /\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/g;
+/** A label right before the digits means they belong to THAT label. An insurer's toll-free
+ *  number ("Toll Free No: 1800 2666 9666") is Aadhaar-shaped, and reading it as one made a
+ *  legitimate claim hard-fail with "Aadhaar number differs across pages". */
+export const AADHAAR_COMPETING_LABEL =
+  /(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax|\bph\b|enrol|\bvid\b)[^0-9]{0,12}$/i;
+
+/** Distinct 12-digit Aadhaar numbers on one page, excluding phone-shaped lookalikes. */
 export function aadhaarNumbers(text: string): string[] {
   const out = new Set<string>();
-  for (const m of text.matchAll(/\b\d{4}\s?\d{4}\s?\d{4}\b/g)) out.add(stripSep(m[0]));
+  for (const m of text.matchAll(AADHAAR_GROUP_RE)) {
+    const runUp = text.slice(Math.max(0, m.index - 30), m.index);
+    if (AADHAAR_COMPETING_LABEL.test(runUp)) continue;
+    // Digits immediately before mean this is the tail of a longer run — the last three
+    // groups of a 16-digit VID, which the lookahead alone cannot reject. Same LINE only:
+    // a card prints its number on its own line under the date of birth, and treating that
+    // line break as a continuation rejected the real Aadhaar number.
+    if (/\d[ \t-]?$/.test(runUp)) continue;
+    out.add(stripSep(m[1]));
+  }
   return [...out];
 }
 

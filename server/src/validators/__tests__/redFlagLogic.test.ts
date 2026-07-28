@@ -153,6 +153,24 @@ describe('Aadhaar cross-page', () => {
   it('extracts distinct 12-digit numbers', () => {
     expect(aadhaarNumbers('a 234567890123 b 2345 6789 0123')).toEqual(['234567890123']);
   });
+
+  // QA 2026-07-28: a Go Digit policy prints "Toll Free No: 1800 2666 9666" on the page
+  // after the Aadhaar card. Reading it as a second Aadhaar number raised a hard
+  // REDFLAG_AADHAAR_MISMATCH — a fraud flag on a legitimate claim.
+  it('ignores a toll-free number that happens to be Aadhaar-shaped', () => {
+    const bundle = 'Aadhaar 2111 2163 1736\nToll Free No: 1800 2666 9666';
+    expect(aadhaarNumbers(bundle)).toEqual(['211121631736']);
+    expect(
+      checkAadhaar([
+        { page: 4, text: '2111 2163 1736' },
+        { page: 6, text: 'Help Desk 1800 2666 9666' },
+      ])
+    ).toEqual([]);
+  });
+
+  it('does not read the first 12 digits of a 16-digit VID as an Aadhaar number', () => {
+    expect(aadhaarNumbers('VID : 9876 5432 1098 7654')).toEqual([]);
+  });
 });
 
 describe('Aadhaar / VID format', () => {

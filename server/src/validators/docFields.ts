@@ -9,6 +9,7 @@
  */
 import { classifyPage } from './segment.js';
 import { classifyDocType, extractNames, extractRelationNamesByKind } from './crossDocLogic.js';
+import { aadhaarNumbers } from './redFlagLogic.js';
 
 export interface DocField {
   label: string;
@@ -49,11 +50,6 @@ const POLICY_NO_RE = /policy\s*(?:no|number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]
 const CHASSIS_RE = /chassis\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{6,20})/i;
 const ENGINE_RE = /engine\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{5,20})/i;
 const MODEL_RE = /(?:model|variant)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/i;
-// A 12-digit group that is NOT part of a longer digit run — the 16-digit VID prints as four
-// groups of four, whose first three would otherwise read as an Aadhaar number.
-const AADHAAR_NO_RE = /(?<![\d\s]\d)\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/;
-// A label right before the digits means they belong to THAT label, not to Aadhaar.
-const COMPETING_LABEL = /(?:toll|free|phone|mobile|help\s*desk|contact|fax|\bph\b|enrol|\bvid\b)[^0-9]{0,12}$/i;
 const VID_RE = /\bV\.?I\.?D\.?\s*[:\-]?\s*((?:\d[\s-]?){13,15}\d)/i;
 
 /**
@@ -61,14 +57,12 @@ const VID_RE = /\bV\.?I\.?D\.?\s*[:\-]?\s*((?:\d[\s-]?){13,15}\d)/i;
  *
  * Deliberately NOT anchored to the word "Aadhaar": a real card prints the number on its own
  * in large digits, with the word nowhere near it, so requiring the label found nothing. The
- * page classification is the anchor; the label check only rejects a number sitting behind a
- * competing label (a helpline or an enrolment number printed on the same card).
+ * page classification is the anchor. Uses the SAME reader as the REDFLAG mismatch rule, so
+ * the pane and the fraud check can never disagree about what the Aadhaar number is.
  */
 function aadhaarNumber(text: string): string | null {
-  const m = AADHAAR_NO_RE.exec(text);
-  if (!m) return null;
-  if (COMPETING_LABEL.test(text.slice(Math.max(0, m.index - 30), m.index))) return null;
-  return m[1].trim().replace(/\s+/g, ' ');
+  const digits = aadhaarNumbers(text)[0];
+  return digits ? digits.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3') : null;
 }
 
 // PAN is its own proof: five letters, four digits, a letter. Scanning the shape beats
