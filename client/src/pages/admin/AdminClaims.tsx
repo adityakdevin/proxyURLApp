@@ -195,7 +195,7 @@ export default function AdminClaims() {
       cell: ({ row }) => (
         <button
           className="text-primary underline-offset-2 hover:underline"
-          onClick={() => navigate(`/admin/claims/${row.original.id}`)}
+          onClick={() => navigate(`/admin/claims/${row.original.id}`, { state: { siblings: data.map((c) => c.id) } })}
         >
           {row.original.claimId}
         </button>

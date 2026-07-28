@@ -5,6 +5,11 @@ import { clamp01 } from './bbox.js';
 
 /** Cap pages scanned per PDF so a giant document can't dominate a run. */
 const MAX_PDF_PAGES = 50;
+// Horizontal bands a page is divided into when judging how much of it the text layer
+// actually covers, and the fraction below which the page is treated as mostly picture and
+// sent for OCR even though it does carry some text.
+const BANDS = 10;
+const MIXED_PAGE_COVERAGE = 0.4;
 
 type Matrix = number[]; // [a, b, c, d, e, f]
 
@@ -103,12 +108,20 @@ export async function extractPdf(
         const content = await page.getTextContent();
         let pageHasText = false;
         const pageParts: string[] = [];
+        // Which horizontal bands of the page carry text. A page whose text sits in a couple
+        // of bands is mostly picture — see the coverage check below.
+        const bands = new Set<number>();
         for (const item of content.items as PdfTextItem[]) {
           const str = typeof item.str === 'string' ? item.str : '';
           if (str.trim() === '' || !item.transform) continue;
           pageHasText = true;
           parts.push(str);
           pageParts.push(str);
+          // item.transform[5] is the text's y in PDF space (origin bottom-left).
+          const y = (item.transform as Matrix)[5];
+          if (viewport.height > 0) {
+            bands.add(Math.min(BANDS - 1, Math.max(0, Math.floor((y / viewport.height) * BANDS))));
+          }
           words.push(
             ...runToWords(
               str,
@@ -123,7 +136,13 @@ export async function extractPdf(
           );
         }
         pageTexts[p - 1] = pageParts.join(' ').trim();
-        if (!pageHasText) textlessPages.push(p);
+        // A page counts as needing OCR when it has NO text layer, or when what text it has
+        // covers only a small band of the page. The second case is the e-PAN / scanned-card
+        // page: the card itself is an image and only the legal footer is real text, so the
+        // page looked "digital" and its every field stayed invisible to the checks.
+        // ponytail: band coverage is a proxy for "mostly picture". If it starts OCRing
+        // legitimately sparse pages, gate it on an embedded-image check via getOperatorList.
+        if (!pageHasText || bands.size / BANDS < MIXED_PAGE_COVERAGE) textlessPages.push(p);
       }
     } finally {
       await doc.cleanup?.();

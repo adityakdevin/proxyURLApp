@@ -12,6 +12,7 @@ import { isInline, isAllowedUploadName } from '../lib/mimeTypes.js';
 import { enqueue } from '../services/validationQueue.js';
 import { registry } from '../validators/registry.js';
 import { validate, prismaOf } from '../lib/routeHelpers.js';
+import { docFieldPane } from '../validators/docFields.js';
 
 // mergeParams so :id from the parent /claims/:id mount is available here.
 const router = Router({ mergeParams: true });
@@ -204,6 +205,40 @@ router.delete(
       // Removing a doc changes the validatable set — re-run so columns aren't stale.
       enqueueValidation(req, req.params.id);
       res.json({ message: 'Deleted' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * Field pane for one document: the values a reviewer compares against DMS and digital
+ * verification. Derived on read from the text META already persisted in its result, so
+ * nothing new is stored and an already-validated claim gets a pane without re-running.
+ */
+router.get(
+  '/:documentId/fields',
+  [param('id').isUUID(), param('documentId').isUUID()],
+  validate,
+  requireView,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const prisma = prismaOf(req);
+      const run = await prisma.validationRun.findFirst({
+        where: { claimId: req.params.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      const meta = run
+        ? await prisma.validationResult.findFirst({ where: { runId: run.id, validatorKey: 'META' } })
+        : null;
+      const extracted =
+        (meta?.details as {
+          extracted?: { documentId: string; text: string; pages?: string[] }[];
+        } | null)?.extracted ?? [];
+      const doc = extracted.find((e) => e.documentId === req.params.documentId);
+      // No text yet (never validated, or an unreadable scan) → empty groups, not a 404:
+      // the viewer still has a document to show beside it.
+      res.json({ data: { groups: doc ? docFieldPane(doc.text, doc.pages) : [] } });
     } catch (err) {
       next(err);
     }

@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Finding } from '@/lib/claimTypes';
 
 // Bundle the pdfjs worker via Vite (react-pdf v9 uses pdfjs-dist v4).
@@ -10,21 +9,39 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 ).toString();
 
 interface DocumentViewerProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   claimId: string;
   documentId: string;
   fileName: string;
   findings: Finding[];
+  /** Scroll to this 1-based page when it changes. Bump `gotoNonce` to re-issue the same
+   *  page (clicking "Page 3" twice must scroll back both times). */
+  gotoPage?: number | null;
+  gotoNonce?: number;
+  /** Selection is owned by the page, because the findings list lives in the sidebar while
+   *  the highlight boxes live here — both have to agree on which finding is active. */
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  /** Finding id → badge number, so the number on the page matches the sidebar row. */
+  numberOf: Map<string, number>;
 }
 
 const IMAGE_RE = /\.(png|jpe?g|gif|bmp|webp|tiff?)$/i;
 const PDF_RE = /\.pdf$/i;
-const PDF_PAGE_WIDTH = 760;
+// Floor only. At zoom 1 a page fills the container instead of sitting at a fixed 760px with
+// dead margin either side — the reason the document looked small in a wide window.
+const PDF_MIN_PAGE_WIDTH = 320;
+const PDF_PAGE_GUTTER = 16;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 5;
 const CLICK_ZOOM = 2.5; // zoom level a clicked finding snaps to, so the word is legible
 const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+
+// Word boxes come back tight against the glyphs, which reads as a cramped sticker stuck to
+// the word. Padding them out — proportionally, so it scales with the text size — makes the
+// highlight legible without hiding the characters underneath.
+const BOX_PAD_X = 0.35; // × the box's own width
+const BOX_PAD_Y = 0.45; // × the box's own height
+const pct = (v: number) => `${Math.max(0, Math.min(1, v)) * 100}%`;
 
 /** Absolute, normalized-% highlight boxes over a rendered page/image. */
 function Highlights({
@@ -45,34 +62,44 @@ function Highlights({
         .map((f) => {
           const active = f.id === activeId;
           const soft = f.severity !== 'ERROR'; // doubtful / advisory — amber, not red
-          // When something is selected, fade the others so the active box stands out.
+          // Severity owns the colour in every state. The selected box used to turn yellow,
+          // which lost the one thing the reviewer is deciding on: is this a red flag or
+          // only an advisory? Selection is shown with a ring and a pulse instead.
+          // Outline only, never a fill: a tint over the word is exactly what the reviewer is
+          // trying to read, and on a scanned page it turns grey text to mud.
           const cls = active
-            ? 'border-2 border-yellow-500 ring-2 ring-yellow-400 bg-yellow-300/40 animate-pulse z-10'
-            : activeId
             ? soft
-              ? 'border-2 border-dashed border-amber-500/40 bg-amber-400/10'
-              : 'border-2 border-red-500/30 bg-red-500/10'
+              ? 'border-2 border-amber-500 ring-2 ring-amber-300/70 z-10'
+              : 'border-2 border-red-600 ring-2 ring-red-300/70 z-10'
+            : activeId
+            ? // Something else is selected — fade this one so the active box stands out.
+              soft
+              ? 'border-2 border-dashed border-amber-500/40'
+              : 'border-2 border-red-500/40'
             : soft
-            ? 'border-2 border-dashed border-amber-500 bg-amber-400/20'
-            : 'border-2 border-red-500 bg-red-500/20';
+            ? 'border-2 border-dashed border-amber-500'
+            : 'border-2 border-red-500';
+          const { x, y, w, h } = f.bbox!;
+          const padX = w * BOX_PAD_X;
+          const padY = h * BOX_PAD_Y;
           return (
             <div
               key={f.id}
               data-fid={f.id}
               title={f.message}
               onClick={() => onSelect(f.id)}
-              className={`absolute cursor-pointer ${cls}`}
+              className={`absolute cursor-pointer rounded-sm ${cls}`}
               style={{
-                left: `${f.bbox!.x * 100}%`,
-                top: `${f.bbox!.y * 100}%`,
-                width: `${f.bbox!.w * 100}%`,
-                height: `${f.bbox!.h * 100}%`,
+                left: pct(x - padX),
+                top: pct(y - padY),
+                width: pct(w + padX * 2),
+                height: pct(h + padY * 2),
               }}
             >
               <span
                 className={`absolute -top-4 -left-0.5 rounded px-1 text-[10px] font-semibold leading-4 text-white ${
-                  active ? 'bg-yellow-600' : soft ? 'bg-amber-500' : 'bg-red-600'
-                }`}
+                  soft ? 'bg-amber-500' : 'bg-red-600'
+                } ${active ? 'ring-1 ring-white' : ''}`}
               >
                 {numberOf.get(f.id)}
               </span>
@@ -84,17 +111,24 @@ function Highlights({
 }
 
 /**
- * In-app document viewer with highlight overlays. Images and PDFs render with normalized
- * ([0..1]) highlight boxes drawn as CSS % (so they track any rendered size). If PDF
- * rendering fails, it falls back to an iframe. Other file types use the iframe too.
+ * Document viewer with highlight overlays, sized to fill whatever container holds it.
+ * Images and PDFs render with normalized ([0..1]) highlight boxes drawn as CSS % (so they
+ * track any rendered size). If PDF rendering fails, it falls back to an iframe. Other file
+ * types use the iframe too.
+ *
+ * Rendered by the standalone /claims/:id/documents/:documentId window — a reviewer needs
+ * the document open beside the claim form, which a modal cannot do.
  */
-export function DocumentViewer({
-  open,
-  onOpenChange,
+export function DocumentViewerPanel({
   claimId,
   documentId,
   fileName,
   findings,
+  gotoPage,
+  gotoNonce,
+  activeId,
+  onSelect,
+  numberOf,
 }: DocumentViewerProps) {
   const contentUrl = `/api/claims/${claimId}/documents/${documentId}/content`;
   const isImage = IMAGE_RE.test(fileName);
@@ -102,13 +136,6 @@ export function DocumentViewer({
   // Memoize on `findings` so the derived maps below don't rebuild every render
   // (they feed zoom re-renders, which fire rapidly on Ctrl-wheel).
   const boxed = useMemo(() => findings.filter((f) => f.bbox), [findings]);
-
-  // Number every boxed finding so its label on the doc matches its row in the list.
-  const numberOf = useMemo(() => {
-    const m = new Map<string, number>();
-    boxed.forEach((f, i) => m.set(f.id, i + 1));
-    return m;
-  }, [boxed]);
 
   // Group boxed findings by page once, instead of re-filtering per page in the render loop.
   const byPage = useMemo(() => {
@@ -131,7 +158,9 @@ export function DocumentViewer({
   // mistake" work on a multi-page bundle, where the flagged page is typically page 5+.
   const [renderedPages, setRenderedPages] = useState(0);
   const [missing, setMissing] = useState(false);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // Width the scroll container gives us, so a page can fill it. Re-measured on resize
+  // because this view lives in a tab the reviewer resizes freely.
+  const [fitWidth, setFitWidth] = useState(0);
   const [zoom, setZoom] = useState(1);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Pending scroll adjustment so Ctrl-wheel zoom stays anchored under the cursor.
@@ -144,15 +173,11 @@ export function DocumentViewer({
     setImgLoaded(false);
     setRenderedPages(0);
     setZoom(1);
-    // Open ON the first mistake instead of at the top of the document — a reviewer
-    // opening a Spell Check result wants the first flagged word, not page 1.
-    setActiveId(boxed[0]?.id ?? null);
-  }, [documentId, boxed]);
+  }, [documentId]);
 
   // One HEAD probe tells us the file is gone BEFORE a render branch falls back to an
   // iframe, which would otherwise paint the API's raw {"error":"File not found"} JSON.
   useEffect(() => {
-    if (!open) return;
     let cancelled = false;
     fetch(contentUrl, { method: 'HEAD', credentials: 'include' })
       .then((r) => !cancelled && setMissing(!r.ok))
@@ -160,13 +185,20 @@ export function DocumentViewer({
     return () => {
       cancelled = true;
     };
-  }, [contentUrl, open]);
+  }, [contentUrl]);
 
-  // Clicking a finding snaps to a legible zoom, then centers its box.
-  const selectFinding = (id: string) => {
+  // Selecting a finding snaps to a legible zoom, then centers its box. The zoom is skipped
+  // for the auto-selection made when a document opens: landing at 250% on page 5 with no
+  // click behind it reads as the viewer being broken.
+  const seenDoc = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeId) return;
+    if (seenDoc.current !== documentId) {
+      seenDoc.current = documentId;
+      return;
+    }
     setZoom((z) => Math.max(z, CLICK_ZOOM));
-    setActiveId(id);
-  };
+  }, [activeId, documentId]);
 
   // Scroll the selected box to center when it, the zoom, or the page count changes.
   useEffect(() => {
@@ -177,6 +209,26 @@ export function DocumentViewer({
     // imgLoaded / renderedPages matter: before the page paints, the overlay has no
     // height to scroll to, so the scroll has to be re-issued once it does.
   }, [activeId, zoom, numPages, imgLoaded, renderedPages]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setFitWidth(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isImage, isPdf, pdfFailed, imgFailed, missing]);
+
+  // Jump to a page on request (a field group's "Page 3" chip). Clearing the active finding
+  // first stops the finding-scroll effect from yanking the view straight back to it.
+  useEffect(() => {
+    if (!gotoPage) return;
+    scrollRef.current
+      ?.querySelector(`[data-page="${gotoPage}"]`)
+      ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    // renderedPages: a page that has not painted yet has no height to scroll to.
+  }, [gotoPage, gotoNonce, renderedPages]);
 
   // Keep the cursor's document point fixed while Ctrl/Cmd-wheel zooming.
   useLayoutEffect(() => {
@@ -211,42 +263,43 @@ export function DocumentViewer({
   const pdfFile = useMemo(() => ({ url: contentUrl, withCredentials: true }), [contentUrl]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="flex flex-col"
-        style={{ width: '95vw', maxWidth: '95vw', height: '95vh' }}
-      >
-        <DialogHeader>
-          <DialogTitle className="truncate">{fileName}</DialogTitle>
-        </DialogHeader>
-
+    <div className="flex h-full min-h-0 flex-col">
         {!missing && ((isImage && !imgFailed) || (isPdf && !pdfFailed)) && (
-          <div className="flex items-center gap-1 text-sm">
-            <button
-              type="button"
-              onClick={() => setZoom((z) => clampZoom(z / 1.2))}
-              className="h-7 w-7 rounded border hover:bg-gray-100"
-              aria-label="Zoom out"
-            >
-              −
-            </button>
-            <span className="w-12 text-center tabular-nums text-gray-600">{Math.round(zoom * 100)}%</span>
-            <button
-              type="button"
-              onClick={() => setZoom((z) => clampZoom(z * 1.2))}
-              className="h-7 w-7 rounded border hover:bg-gray-100"
-              aria-label="Zoom in"
-            >
-              +
-            </button>
+          <div className="mb-2 flex shrink-0 items-center gap-2 border-b pb-2 text-sm">
+            <div className="flex items-center overflow-hidden rounded-md border">
+              <button
+                type="button"
+                onClick={() => setZoom((z) => clampZoom(z / 1.2))}
+                className="h-7 w-7 text-gray-600 hover:bg-gray-100"
+                aria-label="Zoom out"
+              >
+                −
+              </button>
+              <span className="w-14 border-x py-0.5 text-center text-xs tabular-nums text-gray-600">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                type="button"
+                onClick={() => setZoom((z) => clampZoom(z * 1.2))}
+                className="h-7 w-7 text-gray-600 hover:bg-gray-100"
+                aria-label="Zoom in"
+              >
+                +
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => setZoom(1)}
-              className="ml-1 h-7 rounded border px-2 hover:bg-gray-100"
+              className="h-7 rounded-md border px-2.5 text-xs text-gray-600 hover:bg-gray-100"
             >
-              Fit
+              Reset
             </button>
-            <span className="ml-2 text-xs text-gray-400">Ctrl/⌘ + scroll to zoom</span>
+            {numPages > 0 && (
+              <span className="text-xs tabular-nums text-gray-500">
+                {numPages} page{numPages === 1 ? '' : 's'}
+              </span>
+            )}
+            <span className="ml-auto text-xs text-gray-400">Ctrl/⌘ + scroll to zoom</span>
           </div>
         )}
 
@@ -274,7 +327,7 @@ export function DocumentViewer({
                 findings={findings}
                 activeId={activeId}
                 numberOf={numberOf}
-                onSelect={selectFinding}
+                onSelect={onSelect}
               />
             </div>
           </div>
@@ -290,10 +343,11 @@ export function DocumentViewer({
               {Array.from({ length: numPages }, (_, i) => {
                 const page = i + 1;
                 const pageFindings = byPage.get(page) ?? [];
-                const pageWidth = PDF_PAGE_WIDTH * zoom;
+                const pageWidth = Math.max(PDF_MIN_PAGE_WIDTH, fitWidth - PDF_PAGE_GUTTER) * zoom;
                 return (
                   <div
                     key={page}
+                    data-page={page}
                     className="relative mb-3 mx-auto"
                     style={{ width: pageWidth }}
                   >
@@ -308,7 +362,7 @@ export function DocumentViewer({
                       findings={pageFindings}
                       activeId={activeId}
                       numberOf={numberOf}
-                      onSelect={selectFinding}
+                      onSelect={onSelect}
                     />
                   </div>
                 );
@@ -319,46 +373,6 @@ export function DocumentViewer({
           <iframe src={contentUrl} title={fileName} className="w-full flex-1 min-h-0 border rounded" />
         )}
 
-        <div className="mt-2 border-t pt-2 shrink-0">
-          <p className="text-sm font-medium">
-            {findings.length} finding{findings.length === 1 ? '' : 's'}
-            {(isImage || isPdf) && boxed.length > 0 ? ` · ${boxed.length} highlighted` : ''}
-          </p>
-          <ul className="mt-1 max-h-32 overflow-auto space-y-0.5 text-xs text-gray-600">
-            {findings.map((f) => {
-              const active = f.id === activeId;
-              return (
-                <li key={f.id}>
-                  <button
-                    type="button"
-                    onClick={() => f.bbox && selectFinding(f.id)}
-                    disabled={!f.bbox}
-                    className={`flex w-full items-start gap-1.5 rounded px-1 py-0.5 text-left ${
-                      active ? 'bg-yellow-100' : f.bbox ? 'cursor-pointer hover:bg-gray-100' : 'cursor-default'
-                    }`}
-                  >
-                    {f.bbox ? (
-                      <span
-                        className={`mt-px inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-[10px] font-semibold text-white ${
-                          active ? 'bg-yellow-600' : f.severity !== 'ERROR' ? 'bg-amber-500' : 'bg-red-600'
-                        }`}
-                      >
-                        {numberOf.get(f.id)}
-                      </span>
-                    ) : (
-                      <span className="mt-px text-gray-400">—</span>
-                    )}
-                    <span>
-                      {f.message}
-                      {f.page ? ` (page ${f.page})` : ''}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      </DialogContent>
-    </Dialog>
+    </div>
   );
 }

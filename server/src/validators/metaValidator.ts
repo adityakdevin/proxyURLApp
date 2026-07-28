@@ -148,8 +148,23 @@ export const metaValidator: Validator = {
       fileName: string;
       text: string;
       truncated: boolean;
+      // Per-page text, under the same char budget as `text`. Persisted because a bundle PDF
+      // holds several document types, and reading fields off the joined text attributes an
+      // invoice's numbers to the Aadhaar page that follows it.
+      pages: string[];
       properties: Record<string, string>;
     }[] = [];
+    /** Trim page texts so their total stays inside the same budget as the joined text. */
+    const cappedPages = (pages: string[]): string[] => {
+      const out: string[] = [];
+      let left = MAX_DETAIL_CHARS;
+      for (const p of pages) {
+        if (left <= 0) break;
+        out.push(p.slice(0, left));
+        left -= Math.min(p.length, left);
+      }
+      return out;
+    };
     for (const doc of ctx.documents) {
       // Skip oversized files up front — never OCR/parse a 100 MB upload.
       let sizeBytes = 0;
@@ -183,6 +198,7 @@ export const metaValidator: Validator = {
           fileName: doc.fileName,
           text: text.slice(0, MAX_DETAIL_CHARS),
           truncated: text.length > MAX_DETAIL_CHARS,
+          pages: cappedPages(pageTexts),
           properties: await documentProperties(doc),
         });
       } else {

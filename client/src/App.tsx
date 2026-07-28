@@ -31,6 +31,7 @@ import SpellTerms from '@/pages/admin/SpellTerms';
 import AdminClaims from '@/pages/admin/AdminClaims';
 import ClaimDashboard from '@/pages/claims/ClaimDashboard';
 import ClaimUpdate from '@/pages/claims/ClaimUpdate';
+import DocumentView from '@/pages/claims/DocumentView';
 
 function ProtectedRoute({
   children,
@@ -107,6 +108,16 @@ function App() {
           <Route path="claims" element={<ClaimDashboard />} />
           <Route path="claims/:id" element={<ClaimUpdate />} />
         </Route>
+
+        {/* Document viewer — its own window, opened from the claim page (no layout) */}
+        <Route
+          path="/claims/:id/documents/:documentId"
+          element={
+            <ProtectedRoute>
+              <DocumentView />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Proxy view (full page, no layout) */}
         <Route

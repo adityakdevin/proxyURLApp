@@ -215,7 +215,7 @@ export default function ClaimDashboard() {
         canOpen(row.original) ? (
           <button
             className="text-primary underline-offset-2 hover:underline"
-            onClick={() => navigate(`/claims/${row.original.id}`)}
+            onClick={() => navigate(`/claims/${row.original.id}`, { state: { siblings: data.map((c) => c.id) } })}
           >
             {row.original.claimId}
           </button>
@@ -290,7 +290,7 @@ export default function ClaimDashboard() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate(`/claims/${row.original.id}`)}
+            onClick={() => navigate(`/claims/${row.original.id}`, { state: { siblings: data.map((c) => c.id) } })}
           >
             Open
           </Button>

@@ -281,8 +281,11 @@ export function extractVehicleNos(text: string): string[] {
 // two-column header ("Chassis No Engine No <val1> <val2>") can't attach a value across the
 // wrong label. Values must contain a digit (below), so a bare label word ("Engine") is rejected.
 const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
-  CHASSIS: /chassis\s*(?:no|number)?\s*[:\-\n]\s*([A-Z0-9]{6,20})/gi,
-  ENGINE: /engine\s*(?:no|number)?\s*[:\-\n]\s*([A-Z0-9]{5,20})/gi,
+  // `\.?` after the noise word: policy schedules print "Chassis No. : X" and "Chassis No.\nX",
+  // and without it the dot blocked the separator, so no chassis/engine was ever read off an
+  // insurance document — that side of the comparison silently had nothing to compare.
+  CHASSIS: /chassis\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{6,20})/gi,
+  ENGINE: /engine\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{5,20})/gi,
   MODEL: /(?:model|variant|make\s*(?:&|and)?\s*model)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/gi,
   EMP_CODE: /(?:emp(?:loyee)?\.?\s*(?:code|id|no|number)|staff\s*(?:id|code|no))\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/]{1,20})/gi,
 };

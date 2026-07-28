@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ChevronDown } from 'lucide-react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,6 @@ import {
 } from '@/lib/validationStatus';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { DocumentViewer } from '@/components/claims/DocumentViewer';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Finding } from '@/lib/claimTypes';
 import {
@@ -192,8 +191,52 @@ export default function ClaimUpdate() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
   const navigate = useNavigate();
+  // The claim ids the list was showing when this claim was opened, so a reviewer can walk
+  // the list without going back to it. Carried in router state rather than re-queried,
+  // because only the list knows the filters and sort the reviewer had applied.
+  // ponytail: lost on a hard refresh, which just hides the arrows. If that becomes
+  // annoying, add a /claims/:id/siblings endpoint that re-applies the same query.
+  const siblings = (useLocation().state as { siblings?: string[] } | null)?.siblings ?? [];
+  const siblingIndex = siblings.indexOf(id ?? '');
   const { user } = useAuthStore();
   const role = user?.role ?? 'USER';
+  // Admin and user reach this page on different routes, so stepping has to stay on the one
+  // the reviewer is actually on.
+  const claimPath = (claimUuid: string) => `${role === 'ADMIN' ? '/admin' : ''}/claims/${claimUuid}`;
+  const goToSibling = (delta: number) => {
+    const next = siblings[siblingIndex + delta];
+    if (next) navigate(claimPath(next), { state: { siblings } });
+  };
+
+  const [jumpQuery, setJumpQuery] = useState('');
+  const [jumpError, setJumpError] = useState('');
+
+  /** Look the typed claim id up through the same search the list uses, then open it. An
+   *  exact id wins; otherwise a single partial match is good enough to jump to. */
+  const jumpToClaim = async () => {
+    const q = jumpQuery.trim();
+    if (!q) return;
+    setJumpError('');
+    try {
+      const r = await api.get<{ data: { id: string; claimId: string }[] }>(
+        `/claims?search=${encodeURIComponent(q)}&limit=10`
+      );
+      const hits = r.data;
+      const exact = hits.find((c) => c.claimId.toLowerCase() === q.toLowerCase());
+      const target = exact ?? (hits.length === 1 ? hits[0] : null);
+      if (!target) {
+        setJumpError(hits.length ? `${hits.length} claims match — type the full ID` : 'No claim found');
+        setTimeout(() => setJumpError(''), 3000);
+        return;
+      }
+      setJumpQuery('');
+      // No siblings: this claim did not come from the list, so the arrows step nothing.
+      navigate(claimPath(target.id));
+    } catch {
+      setJumpError('Search failed');
+      setTimeout(() => setJumpError(''), 3000);
+    }
+  };
 
   const [claim, setClaim] = useState<ClaimDetail | null>(null);
   const [statuses, setStatuses] = useState<Status[]>([]);
@@ -352,11 +395,6 @@ export default function ClaimUpdate() {
 
   const [valRun, setValRun] = useState<ValRun | null>(null);
   const [valResults, setValResults] = useState<ValResult[]>([]);
-  const [viewer, setViewer] = useState<{
-    documentId: string;
-    fileName: string;
-    findings: Finding[];
-  } | null>(null);
   // META popup: 'properties' = PDF document metadata (created/modified/producer/…);
   // 'extracted' = key/value fields parsed from the body text (invoice/form fields).
   const [metaView, setMetaView] = useState<{
@@ -446,24 +484,17 @@ export default function ClaimUpdate() {
     return byKey;
   }, [valResults]);
 
-  // Every finding for a document, across ALL validators — what the viewer should show
-  // whenever a document is opened. Opening a file from the extracted-documents list used
-  // to pass an empty array, so the viewer said "0 findings" and drew no highlights even
-  // when that same document had flagged words under Spell Check.
-  const findingsByDoc = useMemo(() => {
-    const m = new Map<string, Finding[]>();
-    for (const res of valResults) {
-      for (const f of res.findings ?? []) {
-        if (!f.documentId) continue;
-        const list = m.get(f.documentId);
-        if (list) list.push(f);
-        else m.set(f.documentId, [f]);
-      }
-    }
-    return m;
-  }, [valResults]);
-  const openDoc = (documentId: string, fileName: string) =>
-    setViewer({ documentId, fileName, findings: findingsByDoc.get(documentId) ?? [] });
+  // The viewer is a separate tab, so it re-fetches its own findings — a tab has no shared
+  // React state with its opener. `validatorKey` scopes it to the card that was clicked:
+  // opening a file from Spell Check must show the spelling findings, not every finding the
+  // document has under every check. Target name includes the key so each card gets its own
+  // tab instead of stealing the one another card opened.
+  // No feature string: with one, browsers open a popup window instead of a tab.
+  const openDoc = (documentId: string, validatorKey?: ValResult['validatorKey']) =>
+    window.open(
+      `/claims/${id}/documents/${documentId}${validatorKey ? `?v=${validatorKey}` : ''}`,
+      `doc-${documentId}-${validatorKey ?? 'all'}`
+    );
 
   const [rules, setRules] = useState<RuleEval[]>([]);
   const [rulesPassed, setRulesPassed] = useState({ passed: 0, total: 0 });
@@ -513,14 +544,62 @@ export default function ClaimUpdate() {
 
   return (
     <div>
-      <Button
-        variant="ghost"
-        className="mb-4"
-        onClick={() => navigate(role === 'ADMIN' ? '/admin/claims' : '/claims')}
-      >
-        <ArrowLeft className="h-4 w-4 mr-1" />
-        Back
-      </Button>
+      <div className="mb-4 flex items-center gap-2">
+        <Button
+          variant="ghost"
+          onClick={() => navigate(role === 'ADMIN' ? '/admin/claims' : '/claims')}
+        >
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          Back to Claims
+        </Button>
+
+        {/* Jump straight to a claim by its id, instead of Back → find it → open. Matches the
+            same claim ids the list search does, and opens the only hit. */}
+        <div className="relative ml-auto">
+          <Search className="pointer-events-none absolute left-2 top-2.5 h-3.5 w-3.5 text-gray-400" />
+          <input
+            value={jumpQuery}
+            onChange={(e) => setJumpQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && jumpToClaim()}
+            placeholder="Go to claim ID…"
+            aria-label="Go to claim ID"
+            className="h-9 w-52 rounded-md border border-gray-200 pl-7 pr-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+          {jumpError && (
+            <p className="absolute left-0 top-9 z-10 whitespace-nowrap rounded bg-red-50 px-2 py-1 text-xs text-red-600 shadow">
+              {jumpError}
+            </p>
+          )}
+        </div>
+
+        {siblings.length > 1 && (
+          <div className="flex items-center gap-1">
+            <span className="mr-1 text-xs tabular-nums text-gray-500">
+              {siblingIndex + 1} of {siblings.length}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={siblingIndex <= 0}
+              onClick={() => goToSibling(-1)}
+              title="Previous claim"
+              aria-label="Previous claim"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1}
+              onClick={() => goToSibling(1)}
+              title="Next claim"
+              aria-label="Next claim"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+      </div>
 
       <div className="bg-white border rounded-md p-6 mb-6">
         <div className="flex items-start justify-between">
@@ -593,9 +672,7 @@ export default function ClaimUpdate() {
                       <button
                         type="button"
                         className="text-sm font-medium text-blue-600 hover:underline"
-                        onClick={() =>
-                          openDoc(e.documentId, e.fileName)
-                        }
+                        onClick={() => openDoc(e.documentId, v.key)}
                       >
                         {e.fileName}
                       </button>
@@ -667,9 +744,7 @@ export default function ClaimUpdate() {
                         <button
                           type="button"
                           className="text-blue-600 hover:underline"
-                          onClick={() =>
-                            openDoc(d.id, d.fileName)
-                          }
+                          onClick={() => openDoc(d.id, v.key)}
                         >
                           {d.fileName}
                         </button>
@@ -688,9 +763,7 @@ export default function ClaimUpdate() {
                           <button
                             type="button"
                             className="text-blue-600 hover:underline"
-                            onClick={() =>
-                              setViewer({ documentId: docId, fileName: name, findings: fs })
-                            }
+                            onClick={() => openDoc(docId, v.key)}
                           >
                             {name}
                           </button>
@@ -917,17 +990,6 @@ export default function ClaimUpdate() {
           </div>
         )}
       </div>
-
-      {viewer && (
-        <DocumentViewer
-          open={!!viewer}
-          onOpenChange={(o) => !o && setViewer(null)}
-          claimId={id!}
-          documentId={viewer.documentId}
-          fileName={viewer.fileName}
-          findings={viewer.findings}
-        />
-      )}
 
       <Dialog open={!!qrView} onOpenChange={(o) => !o && setQrView(null)}>
         <DialogContent className="max-w-2xl">
