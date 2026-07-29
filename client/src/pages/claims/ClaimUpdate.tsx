@@ -170,13 +170,25 @@ function parseQrFields(value: string): [string, string][] {
   return pairs.filter(([label]) => label).length >= 2 ? pairs : [];
 }
 
-/** PAN / Aadhaar Secure QR payloads are issuer-encrypted binary; qrValue() base64s them
- *  with a `binary:` prefix. Showing that blob to a reviewer is useless — say what to do. */
-const OPAQUE_QR_PREFIX = 'binary:';
+/**
+ * A payload the server could not expand into fields. Two shapes, and the second is the one
+ * that matters: a base64 blob prefixed `binary:`, OR a long run of DIGITS.
+ *
+ * An Aadhaar/PAN secure QR encodes its record as one huge number, which is printable text —
+ * so the old prefix-only test called it readable and this dialog printed a ~3,000-digit
+ * number at the reviewer. The server expands Aadhaar itself now; anything still numeric when
+ * it reaches here is one we genuinely cannot read.
+ */
+const isOpaqueQrValue = (v: string) => v.startsWith('binary:') || /^\d{200,}$/.test(v);
 const OPAQUE_QR_HELP =
-  'This QR code is encrypted by the issuing authority, so its contents cannot be expanded here. ' +
-  'For a PAN card please use the PAN QR Code Reader App, and for Aadhaar the Aadhaar QR Scanner App, ' +
-  'to generate the QR code result.';
+  'This QR code holds an encoded record that cannot be expanded here. Scan the physical card ' +
+  'with the official reader app — the PAN QR Code Reader app for a PAN card, or mAadhaar / ' +
+  'the Aadhaar QR Scanner app for an Aadhaar card.';
+
+/** Raw payloads are debugging detail. Elide long ones wherever they are shown, so no payload
+ *  shape — present or future — can put a wall of characters in front of a reviewer. */
+const rawPreview = (v: string) =>
+  v.length <= 300 ? v : `${v.slice(0, 300)}… (${v.length.toLocaleString()} characters)`;
 
 const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof ClaimDetail }[] = [
   { key: 'SPELL', label: 'Spell', column: 'spellCheckStatus' },
@@ -1012,7 +1024,7 @@ export default function ClaimUpdate() {
               <div className="max-h-[70vh] space-y-4 overflow-y-auto text-sm">
                 {qrView.map((q, i) => {
                   const fields = parseQrFields(q.value);
-                  const opaque = q.value.startsWith(OPAQUE_QR_PREFIX);
+                  const opaque = isOpaqueQrValue(q.value);
                   return (
                     <div key={i}>
                       <div className="font-medium">
@@ -1030,7 +1042,9 @@ export default function ClaimUpdate() {
                             <summary className="cursor-pointer text-xs text-gray-400">
                               Raw QR payload
                             </summary>
-                            <div className="mt-1 break-all text-xs text-gray-500">{q.value}</div>
+                            <div className="mt-1 break-all text-xs text-gray-500">
+                              {rawPreview(q.value)}
+                            </div>
                           </details>
                         </>
                       ) : fields.length > 0 ? (
@@ -1051,11 +1065,13 @@ export default function ClaimUpdate() {
                             <summary className="cursor-pointer text-xs text-gray-400">
                               Raw QR payload
                             </summary>
-                            <div className="mt-1 break-all text-xs text-gray-500">{q.value}</div>
+                            <div className="mt-1 break-all text-xs text-gray-500">
+                              {rawPreview(q.value)}
+                            </div>
                           </details>
                         </>
                       ) : (
-                        <div className="mt-1 break-all text-gray-600">{q.value}</div>
+                        <div className="mt-1 break-all text-gray-600">{rawPreview(q.value)}</div>
                       )}
                     </div>
                   );

@@ -6,7 +6,7 @@ import { Validator, FindingInput, ValidatorContext, ValidatorDoc } from './types
 import { qrOutcome } from './logic.js';
 import { classifyPage } from './segment.js';
 import { docFieldGroups } from './docFields.js';
-import { decodeAadhaarSecureQr, isNumericQrPayload } from './aadhaarSecureQr.js';
+import { aadhaarQrAsFields, isUnreadableQrPayload } from './aadhaarSecureQr.js';
 import { compareQrToFields, QrFieldComparison } from './qrCompare.js';
 import { rasterizePdf } from '../lib/pdfExtractor.js';
 
@@ -33,6 +33,22 @@ export function qrValue(text: string, bytes?: Uint8Array): string {
   return bytes && bytes.length > 0 ? `binary:${Buffer.from(bytes).toString('base64')}` : text.trim();
 }
 
+/**
+ * Turn a payload we DO understand into readable fields, at the single point where every
+ * decode passes through.
+ *
+ * An Aadhaar Secure QR arrives as a ~3,000-digit number. Expanding it here — into the same
+ * "Label:Value|Label:Value" shape the policy QRs already use — is what lets it flow through
+ * the rest of the system unchanged: the field comparison parses it, the reviewer's dialog
+ * renders it as rows, and the QR-vs-document check finally works on ID cards.
+ *
+ * Anything we cannot expand is returned untouched, and `isOpaqueQrValue` then keeps it away
+ * from the reviewer.
+ */
+function expandKnownPayload(value: string): string {
+  return aadhaarQrAsFields(value) ?? value;
+}
+
 /** Single-QR sync decode via jsQR — the fallback when the zxing wasm can't
  *  load (e.g. under jest, which can't do dynamic import()). */
 export function decodePixels(
@@ -47,7 +63,7 @@ export function decodePixels(
   // this fallback exists to catch. Route through qrValue so both shapes survive.
   const bytes = res.binaryData ? Uint8Array.from(res.binaryData) : undefined;
   const v = qrValue(res.data ?? '', bytes);
-  return v ? v : null;
+  return v ? expandKnownPayload(v) : null;
 }
 
 /** All QR values in one image. zxing-cpp (tryHarder + LocalAverage) reads
@@ -90,7 +106,7 @@ export async function decodeAll(
       { data, width, height },
       { formats: ['QRCode'], tryHarder: true, binarizer: 'LocalAverage', maxNumberOfSymbols: 4 }
     );
-    return results.filter((r) => r.isValid).map((r) => qrValue(r.text, r.bytes));
+    return results.filter((r) => r.isValid).map((r) => expandKnownPayload(qrValue(r.text, r.bytes)));
   } catch (e) {
     // Never silent: a failed wasm load turns every QR check in the system weak.
     console.warn(`[qr] zxing decode unavailable, falling back to jsQR: ${(e as Error).message}`);
@@ -139,17 +155,58 @@ export async function decodeQrPdf(
   return out;
 }
 
-/** A payload qrValue() could not render as text — PAN and Aadhaar Secure QR codes carry
- *  signed/compressed binary that only the issuer's own reader app can expand into fields. */
-export const isOpaqueQrValue = (v: string): boolean => v.startsWith('binary:');
+/**
+ * A payload we cannot turn into fields.
+ *
+ * Shared rather than redefined: "opaque" used to be `startsWith('binary:')` in three
+ * separate places, which missed the shape that actually matters — a long DIGIT string. An
+ * Aadhaar/PAN secure QR decodes to printable digits, so every one of those tests called it
+ * readable text and the reviewer was shown a ~3,000-digit number.
+ */
+export const isOpaqueQrValue = isUnreadableQrPayload;
 
-/** Guidance a reviewer can act on when the QR decodes but its contents stay opaque.
- *  ponytail: two constants; move to a master table if the wording needs tuning per client. */
+/**
+ * Guidance a reviewer can act on when a QR reads but its contents cannot be expanded.
+ *
+ * Deliberately no longer says "encrypted" — neither card's QR is. The Aadhaar Secure QR is
+ * gzipped and openly specified (UIDAI publishes it so agencies can verify offline), and we
+ * now expand it ourselves, so the AADHAR string is only reached when a payload is damaged.
+ * The enhanced PAN QR is signed and bit-packed with no public specification, so "we do not
+ * expand it here" is the honest position rather than a claim about cryptography.
+ */
 export const OPAQUE_QR_GUIDANCE: Record<string, string> = {
-  PAN: 'This PAN QR code is encrypted and cannot be expanded here. Please use the PAN QR Code Reader App to generate the QR code result.',
+  PAN: 'This PAN QR code holds a signed, compressed record that this tool does not expand. It carries the same PAN, name, parent name and date of birth printed on the card — check those against the card face, or scan the physical card with the official PAN QR Code Reader app.',
   AADHAR:
-    'This Aadhaar Secure QR code is encrypted and cannot be expanded here. Please use the Aadhaar QR Scanner App to generate the QR code result.',
+    'This Aadhaar QR code read, but its contents were not in the expected Secure QR format, so it could not be expanded. Scan the physical card with the mAadhaar or Aadhaar QR Scanner app.',
+  UNKNOWN:
+    "This QR code holds encoded data that this tool does not expand. Scan the physical document with the issuing authority's own reader app.",
 };
+
+/**
+ * Pages that read as a PAN or Aadhaar card but produced no QR of their own.
+ *
+ * These are the pages the client asked us to be explicit about. Reported as INFO, not a
+ * failure: MEASURED across the sample corpus, most older PAN and Aadhaar designs carry no
+ * QR at all, so treating absence as a fault would raise a false alarm on the majority of
+ * genuine ID pages.
+ */
+function idCardPagesWithoutQr(
+  doc: ValidatorDoc,
+  ctx: ValidatorContext,
+  hits: { page?: number }[]
+): { page: number; kind: string }[] {
+  const pages = ctx.pageTexts.get(doc.id);
+  if (!pages || pages.length === 0) return [];
+  const withQr = new Set(hits.map((h) => h.page).filter((p): p is number => p !== undefined));
+  const out: { page: number; kind: string }[] = [];
+  pages.forEach((text, i) => {
+    const code = classifyPage(text);
+    if ((code === 'PAN' || code === 'AADHAR') && !withQr.has(i + 1)) {
+      out.push({ page: i + 1, kind: code });
+    }
+  });
+  return out;
+}
 
 /** PAN / AADHAR, judged from the text META already extracted for this document. */
 function govtKindFor(doc: ValidatorDoc, ctx: ValidatorContext): string | null {
@@ -229,23 +286,41 @@ export const qrValidator: Validator = {
         }
         const opaque = hits.find((h) => isOpaqueQrValue(h.value));
         if (opaque) {
-          const kind = govtKindFor(doc, ctx);
-          if (kind) {
-            guidance.push({
-              documentId: doc.id,
-              code: 'QR_ENCRYPTED_PAYLOAD',
-              severity: 'INFO',
-              message: OPAQUE_QR_GUIDANCE[kind],
-              page: opaque.page ?? null,
-              data: { kind },
-            });
-          }
+          // Fall back to the generic wording rather than staying silent: the kind comes from
+          // OCR, and on a poorly-scanned card that returns nothing — which used to mean the
+          // reviewer was shown an unexplained payload and no guidance at all.
+          const kind = govtKindFor(doc, ctx) ?? 'UNKNOWN';
+          guidance.push({
+            documentId: doc.id,
+            code: 'QR_ENCRYPTED_PAYLOAD',
+            severity: 'INFO',
+            message: OPAQUE_QR_GUIDANCE[kind] ?? OPAQUE_QR_GUIDANCE.UNKNOWN,
+            page: opaque.page ?? null,
+            data: { kind },
+          });
         }
       } else {
         missing.push({
           documentId: doc.id,
           code: 'QR_MISSING',
           message: `No QR code found in ${doc.fileName}.`,
+        });
+      }
+
+      // Per-PAGE reporting for ID cards. The check above is per DOCUMENT, so one readable
+      // policy QR on page 2 of a bundle silenced the Aadhaar on page 20 entirely. A card
+      // page with no QR of its own is what a reviewer is actually being asked to judge.
+      for (const p of idCardPagesWithoutQr(doc, ctx, hits)) {
+        missing.push({
+          documentId: doc.id,
+          code: 'QR_MISSING',
+          severity: 'INFO',
+          message:
+            `No QR code was found on page ${p.page} of ${doc.fileName}, which reads as ` +
+            `${p.kind === 'PAN' ? 'a PAN card' : 'an Aadhaar card'}. Many older card designs ` +
+            `carry no QR code at all; if this one does, the scan may be too small or blurred to read it.`,
+          page: p.page,
+          data: { kind: p.kind },
         });
       }
     }

@@ -58,3 +58,57 @@ describe('Aadhaar Secure QR', () => {
     }
   });
 });
+
+// The gap that let the decoder sit imported-but-never-called: every test exercised the
+// decoder in isolation, so nothing noticed the validator never invoked it. These pin the
+// END-TO-END behaviour instead.
+import { isOpaqueQrValue } from '../qrValidator.js';
+import { compareQrToFields, parseQrPayload } from '../qrCompare.js';
+import { aadhaarQrAsFields, isUnreadableQrPayload } from '../aadhaarSecureQr.js';
+
+const REAL_SHAPE = encodeAadhaarSecureQr([
+  'V2', '2', '062920220320134721426', 'Ravi Shankar', '20-07-1994', 'M',
+  'C/O: Jay Singh', 'Hisar', '', 'Ward No 12', 'Durjanpur', '125052',
+  'Durjanpur', 'Haryana', 'Main Road', 'Hisar', 'Durjanpur', '',
+]);
+
+describe('Aadhaar Secure QR, end to end', () => {
+  it('renders as the shared Label:Value shape the rest of the system parses', () => {
+    const rendered = aadhaarQrAsFields(REAL_SHAPE)!;
+    expect(rendered).toContain('Name:Ravi Shankar');
+    expect(rendered).toContain('DOB:20-07-1994');
+    // "M" on the card vs "MALE" read off the printed face would read as a mismatch.
+    expect(rendered).toContain('Gender:MALE');
+
+    const parsed = parseQrPayload(rendered);
+    expect(parsed.get('name')).toBe('Ravi Shankar');
+    expect(parsed.get('gender')).toBe('MALE');
+  });
+
+  it('cross-checks a decoded card against the printed pane', () => {
+    const cmp = compareQrToFields(aadhaarQrAsFields(REAL_SHAPE)!, [
+      { label: 'Holder Name', value: 'Ravi Shankar' },
+      { label: 'Gender', value: 'MALE' },
+      { label: 'Date of Birth', value: '20-07-1994' },
+    ]);
+    expect(cmp.length).toBeGreaterThan(0);
+    expect(cmp.every((c) => c.verdict === 'MATCH')).toBe(true);
+
+    // And it still catches a forged card.
+    const forged = compareQrToFields(aadhaarQrAsFields(REAL_SHAPE)!, [
+      { label: 'Holder Name', value: 'Suresh Kumar' },
+    ]);
+    expect(forged[0].verdict).toBe('MISMATCH');
+  });
+
+  it('treats an unexpandable payload as opaque so it is never shown raw', () => {
+    const panLike = '9'.repeat(3600); // enhanced PAN QR: digits, but bit-packed not gzipped
+    expect(isUnreadableQrPayload(panLike)).toBe(true);
+    expect(isOpaqueQrValue(panLike)).toBe(true);
+    expect(parseQrPayload(panLike).size).toBe(0);
+    // A decodable Aadhaar payload is NOT opaque — it has real fields to show.
+    expect(isOpaqueQrValue(aadhaarQrAsFields(REAL_SHAPE)!)).toBe(false);
+    // Ordinary payloads are untouched.
+    expect(isOpaqueQrValue('Name:MR. RAVI SHANKAR|Pol.No.:OG-26-1021')).toBe(false);
+  });
+});

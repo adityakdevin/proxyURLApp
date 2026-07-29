@@ -109,6 +109,57 @@ export function decodeAadhaarSecureQr(payload: string): Record<string, string> |
   return Object.keys(out).length > 0 ? out : null;
 }
 
+/** A payload rendered as base64 by qrValue() because it carried no printable text. */
+export const isBinaryQrValue = (v: string): boolean => v.startsWith('binary:');
+
+/**
+ * A payload we cannot turn into fields, and must therefore never show a reviewer raw.
+ *
+ * Covers both shapes: the base64 blob, and a long digit run we could not expand — which is
+ * what an enhanced PAN QR is (bit-packed at 13 bits per 4 digits, no public specification).
+ * A digit string is printable, so the old `binary:` test called it readable text and the
+ * reviewer was shown a ~3,000-digit number.
+ */
+export function isUnreadableQrPayload(v: string): boolean {
+  return isBinaryQrValue(v) || (isNumericQrPayload(v) && decodeAadhaarSecureQr(v) === null);
+}
+
+/** Human labels for the fields worth showing, in reading order. */
+const FIELD_LABELS: Record<string, string> = {
+  name: 'Name',
+  dob: 'DOB',
+  gender: 'Gender',
+  careOf: 'Care of',
+  house: 'House',
+  street: 'Street',
+  vtc: 'Village/Town/City',
+  district: 'District',
+  state: 'State',
+  pincode: 'PIN',
+  referenceId: 'Reference Id',
+};
+
+/**
+ * An Aadhaar Secure QR re-rendered as the "Label:Value|Label:Value" shape every other QR in
+ * this system already uses, or null if the payload is not one.
+ *
+ * Emitting the SHARED shape rather than a bespoke structure is what makes the decoded card
+ * flow through the existing machinery unchanged — the field comparison parses it, and the
+ * reviewer's QR dialog renders it as rows instead of a wall of digits.
+ */
+export function aadhaarQrAsFields(payload: string): string | null {
+  const d = decodeAadhaarSecureQr(payload);
+  if (!d) return null;
+  // The card stores a single letter; the pane reads MALE/FEMALE off the printed face, and a
+  // comparison of "M" against "MALE" would read as a mismatch on a genuine card.
+  const gender = d.gender === 'M' ? 'MALE' : d.gender === 'F' ? 'FEMALE' : d.gender;
+  const out = { ...d, ...(gender ? { gender } : {}) };
+  const parts = Object.entries(FIELD_LABELS)
+    .filter(([key]) => out[key])
+    .map(([key, label]) => `${label}:${out[key]}`);
+  return parts.length > 0 ? parts.join('|') : null;
+}
+
 /**
  * Build a Secure QR payload from demographic fields. Exists so the decoder can be tested
  * against a payload assembled to the spec, rather than only against whatever a scan happens

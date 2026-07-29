@@ -8,12 +8,13 @@
  * Pure (no I/O, no prisma) so it unit-tests with string fixtures, same discipline as
  * redFlagLogic and docFields.
  *
- * PAN and Aadhaar Secure QR codes are issuer-encrypted and decode to opaque binary, so
- * nothing here can compare them — qrValidator surfaces its "use the issuer's app" guidance
- * for those instead. What IS comparable: plaintext policy QRs, and the older Aadhaar XML
- * QR whose attributes are readable.
+ * Comparable payloads: plaintext policy QRs, the older Aadhaar XML QR, and — since
+ * qrValidator now expands it before we see it — the Aadhaar Secure QR, which arrives here
+ * already rendered as "Label:Value|…". The enhanced PAN QR is signed and bit-packed with no
+ * public specification, so it stays unreadable and qrValidator shows guidance instead.
  */
 import { DocField } from './docFields.js';
+import { isUnreadableQrPayload } from './aadhaarSecureQr.js';
 import { nameMatches } from './crossDocLogic.js';
 import { editDistanceCapped } from './logic.js';
 
@@ -92,12 +93,15 @@ const NAME_LABELS = new Set(["Insured's Name", 'Holder Name', 'Customer Name', "
  *
  * Two shapes in the wild: the pipe-delimited "Label:Value" a policy QR carries, and the
  * XML of an older Aadhaar QR. Returns an empty map for anything else (including the
- * `binary:` blob an encrypted Secure QR decodes to), so the caller compares nothing rather
+ * `binary:` blob, or a still-unexpanded digit run), so the caller compares nothing rather
  * than comparing noise.
  */
 export function parseQrPayload(value: string): Map<string, string> {
   const out = new Map<string, string>();
-  if (!value || value.startsWith('binary:')) return out;
+  // Shared predicate, not a local prefix test: a payload we could not expand is a long
+  // DIGIT string as often as a base64 blob, and splitting it on commas below would produce
+  // junk "fields" rather than an honest "nothing to compare".
+  if (!value || isUnreadableQrPayload(value)) return out;
 
   if (value.trimStart().startsWith('<')) {
     for (const m of value.matchAll(/([A-Za-z_][\w-]*)="([^"]*)"/g)) {
