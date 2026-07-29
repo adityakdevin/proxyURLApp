@@ -1,15 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ExternalLink, Loader2, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import {
+  AlertTriangle,
+  ExternalLink,
+  Loader2,
+  PanelRightClose,
+  PanelRightOpen,
+  RotateCw,
+} from 'lucide-react';
 import { DocumentViewerPanel } from '@/components/claims/DocumentViewer';
-import { FieldPanes, FieldGroup } from '@/components/claims/FieldPanes';
+import { FieldPanes, FieldGroup, QrFieldCheck } from '@/components/claims/FieldPanes';
 import { api } from '@/lib/api';
 import { Finding } from '@/lib/claimTypes';
 
 interface ValResult {
   validatorKey: string;
   findings?: Finding[];
+  /** QR carries per-field verdicts against the page the code is printed on, and the
+   *  codes it decoded — the QR tab counts codes, not findings. */
+  details?: {
+    comparisons?: (QrFieldCheck & { documentId: string })[];
+    decoded?: { documentId: string; page?: number }[];
+  } | null;
 }
+interface ValRun {
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+}
+const RUNNING_STATES = new Set(['QUEUED', 'RUNNING']);
 
 const CHECK_LABEL: Record<string, string> = {
   META: 'Meta',
@@ -44,9 +61,17 @@ export default function DocumentView() {
   const [groups, setGroups] = useState<FieldGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [running, setRunning] = useState(false);
   // Selection lives here because the findings list is in the sidebar while the highlight
   // boxes are in the viewer; both read the same active id.
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Counts REVIEWER picks only. The viewer zooms in on a pick; the auto-selection below
+  // must not, or opening a document lands at 250% with nothing having been clicked.
+  const [pickNonce, setPickNonce] = useState(0);
+  const pickFinding = useCallback((fid: string) => {
+    setActiveId(fid);
+    setPickNonce((n) => n + 1);
+  }, []);
   // nonce so clicking the same page chip twice scrolls back both times.
   const [goto, setGoto] = useState<{ page: number; nonce: number } | null>(null);
   const jumpToPage = useCallback((page: number) => {
@@ -89,16 +114,23 @@ export default function DocumentView() {
 
   // Document + validation: fetched once per document, NOT per check — the check switcher
   // only re-filters what is already here.
+  const loadValidation = useCallback(async () => {
+    const r = await api.get<{ data: { run: ValRun | null; results: ValResult[] } }>(
+      `/claims/${id}/validation`
+    );
+    setResults(r.data.results);
+    setRunning(RUNNING_STATES.has(r.data.run?.status ?? ''));
+  }, [id]);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([
       api.get<{ data: { id: string; fileName: string }[] }>(`/claims/${id}/documents`),
-      api.get<{ data: { results: ValResult[] } }>(`/claims/${id}/validation`),
+      loadValidation(),
     ])
-      .then(([docsRes, valRes]) => {
+      .then(([docsRes]) => {
         if (cancelled) return;
         setFileName(docsRes.data.find((d) => d.id === documentId)?.fileName ?? '');
-        setResults(valRes.data.results);
       })
       .catch(() => {
         /* the panel reports an unreadable file on its own; findings just stay empty */
@@ -107,7 +139,25 @@ export default function DocumentView() {
     return () => {
       cancelled = true;
     };
-  }, [id, documentId]);
+  }, [id, documentId, loadValidation]);
+
+  // While a run is in flight, poll so the findings on screen become the NEW ones without the
+  // reviewer reloading the tab. Stops as soon as the run leaves QUEUED/RUNNING.
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => loadValidation().catch(() => undefined), 2000);
+    return () => clearInterval(t);
+  }, [running, loadValidation]);
+
+  const revalidate = async () => {
+    setRunning(true);
+    try {
+      await api.post(`/claims/${id}/validate`, {});
+      await loadValidation();
+    } catch {
+      setRunning(false); // the run never started — let the reviewer try again
+    }
+  };
 
   // Field panes are only rendered for the QR check, so they are only fetched for it.
   useEffect(() => {
@@ -123,6 +173,48 @@ export default function DocumentView() {
       cancelled = true;
     };
   }, [id, documentId, compare]);
+
+  // Pages of THIS document that a QR code was actually read from.
+  const qrPages = useMemo(
+    () =>
+      (results.find((r) => r.validatorKey === 'QR')?.details?.decoded ?? []).filter(
+        (d) => d.documentId === documentId
+      ),
+    [results, documentId]
+  );
+
+  // The QR tab shows only the documents a QR was FOUND on — an invoice with no code has
+  // nothing for this check to say, and listing it invites the reader to look for a verdict
+  // that can never appear. Groups with no page info (a plain image, or a claim validated
+  // before per-page text was stored) are kept: there is no page to match them on.
+  const qrGroups = useMemo(
+    () =>
+      groups.filter(
+        (g) =>
+          g.pages.length === 0 ||
+          qrPages.some((d) => d.page === undefined || g.pages.includes(d.page))
+      ),
+    [groups, qrPages]
+  );
+
+  // QR verdicts for THIS document, shown against the matching rows of the field panes.
+  const qrChecks = useMemo(
+    () =>
+      (results.find((r) => r.validatorKey === 'QR')?.details?.comparisons ?? []).filter(
+        (c) => c.documentId === documentId
+      ),
+    [results, documentId]
+  );
+
+  // QR codes decoded in THIS document. The other tabs count findings — i.e. problems — but
+  // a QR check with nothing wrong still has a result worth showing: how many codes it read.
+  const qrCount = useMemo(
+    () =>
+      (results.find((r) => r.validatorKey === 'QR')?.details?.decoded ?? []).filter(
+        (d) => d.documentId === documentId
+      ).length,
+    [results, documentId]
+  );
 
   const checkLabel = check ? CHECK_LABEL[check] ?? check : null;
 
@@ -157,12 +249,19 @@ export default function DocumentView() {
         <nav className="flex shrink-0 items-center gap-0.5 rounded-lg bg-gray-100 p-0.5">
           {CHECK_TABS.map((key) => {
             const activeTab = key === (check ?? 'ALL');
-            const count = key === 'ALL' ? null : countByCheck.get(key) ?? 0;
+            const count = key === 'ALL' ? null : key === 'QR' ? qrCount : countByCheck.get(key) ?? 0;
             return (
               <button
                 key={key}
                 type="button"
                 onClick={() => setParams(key === 'ALL' ? {} : { v: key }, { replace: true })}
+                title={
+                  key === 'ALL'
+                    ? 'Every finding on this document'
+                    : key === 'QR'
+                      ? `${qrCount} QR code${qrCount === 1 ? '' : 's'} read from this document`
+                      : `${countByCheck.get(key) ?? 0} finding(s) on this document`
+                }
                 className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition ${
                   activeTab
                     ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
@@ -196,6 +295,23 @@ export default function DocumentView() {
               {warnings} advisory
             </span>
           )}
+          {/* Re-run every check on this claim without going back to the claim page — the
+              reviewer who just fixed a scan wants the new findings in the tab they are in. */}
+          <button
+            type="button"
+            onClick={revalidate}
+            disabled={running}
+            title={running ? 'Validation in progress…' : 'Re-validate this claim'}
+            aria-label={running ? 'Validation in progress' : 'Re-validate this claim'}
+            className="flex items-center gap-1 rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {running ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCw className="h-3.5 w-3.5" />
+            )}
+            {running ? 'Validating…' : 'Re-validate'}
+          </button>
           <a
             href={`/claims/${id}`}
             target={`claim-${id}`}
@@ -208,14 +324,16 @@ export default function DocumentView() {
             type="button"
             onClick={() => setPanelOpen((o) => !o)}
             title={panelOpen ? 'Hide the panel — give the document the full width' : 'Show the panel'}
-            className="flex items-center gap-1 rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+            className="flex items-center rounded border p-1.5 text-gray-600 hover:bg-gray-100"
           >
             {panelOpen ? (
               <PanelRightClose className="h-3.5 w-3.5" />
             ) : (
               <PanelRightOpen className="h-3.5 w-3.5" />
             )}
-            {panelOpen ? 'Hide panel' : 'Show panel'}
+            {/* The icon carries the meaning and the tooltip spells it out; the label stays in
+                the accessibility tree so the button is still announced. */}
+            <span className="sr-only">{panelOpen ? 'Hide panel' : 'Show panel'}</span>
           </button>
         </div>
       </header>
@@ -235,20 +353,22 @@ export default function DocumentView() {
             findings={findings}
             numberOf={numberOf}
             activeId={activeId}
-            onSelect={setActiveId}
+            onSelect={pickFinding}
+            selectNonce={pickNonce}
             gotoPage={goto?.page ?? null}
             gotoNonce={goto?.nonce}
           />
         </div>
         {panelOpen && (
           <FieldPanes
-            groups={groups}
+            groups={qrGroups}
             findings={findings}
             numberOf={numberOf}
             activeId={activeId}
-            onSelect={setActiveId}
+            onSelect={pickFinding}
             onJumpToPage={jumpToPage}
             showFields={compare}
+            qrChecks={qrChecks}
           />
         )}
       </main>

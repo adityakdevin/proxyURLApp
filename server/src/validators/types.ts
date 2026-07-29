@@ -33,7 +33,15 @@ export interface OcrPort {
   extractPdf?(
     absolutePath: string,
     onlyPages?: number[]
-  ): Promise<{ text: string; words: WordBox[] }>;
+  ): Promise<{
+    text: string;
+    words: WordBox[];
+    /** Per-page text with its LINE BREAKS intact, keyed by 1-based page. Rebuilding page
+     *  text by space-joining word boxes loses them, and the ID-card extractors depend on
+     *  them: a PAN card's holder name is identified as the line above the father label,
+     *  and an Aadhaar's as the line above its date of birth. */
+    pages?: { page: number; text: string }[];
+  }>;
   /** Release any underlying resources (e.g. a reused OCR worker). Optional. */
   close?(): Promise<void>;
 }

@@ -5,6 +5,9 @@ import jsQR from 'jsqr';
 import { Validator, FindingInput, ValidatorContext, ValidatorDoc } from './types.js';
 import { qrOutcome } from './logic.js';
 import { classifyPage } from './segment.js';
+import { docFieldGroups } from './docFields.js';
+import { decodeAadhaarSecureQr, isNumericQrPayload } from './aadhaarSecureQr.js';
+import { compareQrToFields, QrFieldComparison } from './qrCompare.js';
 import { rasterizePdf } from '../lib/pdfExtractor.js';
 
 // Policy QR codes decode at scale 3; dense ones (Aadhaar Secure QR is ~330
@@ -38,9 +41,13 @@ export function decodePixels(
   height: number
 ): string | null {
   const res = jsQR(data, width, height);
-  // jsQR can locate a QR but decode a 0-byte payload on low-res rasters —
-  // that's a failed decode, not a value.
-  return res && res.data ? res.data : null;
+  if (!res) return null;
+  // jsQR reports a BYTE-mode payload as data:'' with the bytes in binaryData, so testing
+  // `res.data` alone threw away every binary QR it managed to read — including the ones
+  // this fallback exists to catch. Route through qrValue so both shapes survive.
+  const bytes = res.binaryData ? Uint8Array.from(res.binaryData) : undefined;
+  const v = qrValue(res.data ?? '', bytes);
+  return v ? v : null;
 }
 
 /** All QR values in one image. zxing-cpp (tryHarder + LocalAverage) reads
@@ -155,6 +162,25 @@ function govtKindFor(doc: ValidatorDoc, ctx: ValidatorContext): string | null {
   return null;
 }
 
+/**
+ * The field pane for the page a QR sits on. A bundle holds several documents, so the QR on
+ * the policy page must be checked against the POLICY's fields — not against everything the
+ * file contains, which would compare a policy number to an Aadhaar.
+ */
+function fieldsForQrPage(doc: ValidatorDoc, ctx: ValidatorContext, page?: number) {
+  const pages = ctx.pageTexts.get(doc.id);
+  if (!pages || pages.length === 0) return [];
+  const groups = docFieldGroups(pages);
+  // No page number (a plain image is one page) → the file's only group, if it has one.
+  const group =
+    page === undefined
+      ? groups.length === 1
+        ? groups[0]
+        : undefined
+      : groups.find((g) => g.pages.includes(page));
+  return group?.fields ?? [];
+}
+
 export const qrValidator: Validator = {
   key: 'QR',
   column: 'qrStatus',
@@ -168,6 +194,10 @@ export const qrValidator: Validator = {
     const missing: FindingInput[] = [];
     // INFO-level guidance: the QR was read, but its payload is issuer-encrypted.
     const guidance: FindingInput[] = [];
+    // Field-by-field verdicts, persisted so the QR tab can show matched/not matched, and
+    // ERROR findings for the ones that disagree.
+    const comparisons: (QrFieldComparison & { documentId: string; page?: number })[] = [];
+    const mismatches: FindingInput[] = [];
     for (const doc of scannable) {
       const hits: { page?: number; value: string }[] =
         doc.mimeType === 'application/pdf'
@@ -182,6 +212,20 @@ export const qrValidator: Validator = {
             value: h.value,
             ...(h.page !== undefined ? { page: h.page } : {}),
           });
+          // Does the QR agree with what is printed on the same page?
+          for (const c of compareQrToFields(h.value, fieldsForQrPage(doc, ctx, h.page))) {
+            comparisons.push({ ...c, documentId: doc.id, ...(h.page !== undefined ? { page: h.page } : {}) });
+            if (c.verdict === 'MISMATCH') {
+              mismatches.push({
+                documentId: doc.id,
+                code: 'QR_FIELD_MISMATCH',
+                severity: 'ERROR',
+                message: `QR code says ${c.label} is "${c.qrValue}", but ${doc.fileName} reads "${c.documentValue}".`,
+                page: h.page ?? null,
+                data: { label: c.label, qrValue: c.qrValue, documentValue: c.documentValue },
+              });
+            }
+          }
         }
         const opaque = hits.find((h) => isOpaqueQrValue(h.value));
         if (opaque) {
@@ -206,14 +250,21 @@ export const qrValidator: Validator = {
       }
     }
     const outcome = qrOutcome(values.length, scannable.length, values);
+    // A QR that disagrees with its own page fails the check outright: the point of reading
+    // it is to confirm the printed values, so "found a QR" is not a pass on its own.
+    if (mismatches.length > 0) {
+      outcome.status = 'FAILED';
+      outcome.summary = `${mismatches.length} field(s) do not match the QR code.`;
+    }
     // Documents that decoded nothing are always listed. Hiding them whenever ANY other
     // document had a QR is what made a claim read "1 QR code(s) found across 6" with no
     // hint as to which five were empty.
     outcome.findings = [
+      ...mismatches,
       ...guidance,
-      ...(outcome.status === 'FAILED' ? missing : missing.map((f) => ({ ...f, severity: 'INFO' as const }))),
+      ...(values.length === 0 ? missing : missing.map((f) => ({ ...f, severity: 'INFO' as const }))),
     ];
-    if (decoded.length > 0) outcome.details = { values, decoded };
+    if (decoded.length > 0) outcome.details = { values, decoded, comparisons };
     return outcome;
   },
 };

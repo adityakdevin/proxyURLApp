@@ -410,6 +410,14 @@ export default function ClaimUpdate() {
   );
   const [isValidating, setIsValidating] = useState(false);
 
+  const validatorStatuses = VALIDATORS.map((v) => String(claim?.[v.column] ?? 'PENDING'));
+  const validationRunning =
+    isValidating ||
+    valRun?.status === 'RUNNING' ||
+    valRun?.status === 'QUEUED' ||
+    validatorStatuses.includes('IN_PROGRESS');
+  const validatedOnce = validatorStatuses.some((s) => s !== 'PENDING' && s !== 'IN_PROGRESS');
+
   const fetchValidation = async () => {
     try {
       const r = await api.get<{ data: { run: ValRun | null; results: ValResult[] } }>(
@@ -428,14 +436,15 @@ export default function ClaimUpdate() {
   }, [claim?.id]);
 
   useEffect(() => {
-    if (!valRun || valRun.status === 'COMPLETED' || valRun.status === 'FAILED') return;
+    const runActive = valRun && valRun.status !== 'COMPLETED' && valRun.status !== 'FAILED';
+    if (!runActive && !validatorStatuses.includes('IN_PROGRESS')) return;
     const t = setInterval(() => {
       fetchValidation();
       refreshClaim();
     }, 1500);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [valRun?.status]);
+  }, [valRun?.status, validatorStatuses.includes('IN_PROGRESS')]);
 
   const handleValidate = async () => {
     setIsValidating(true);
@@ -646,9 +655,9 @@ export default function ClaimUpdate() {
               size="sm"
               variant="outline"
               onClick={handleValidate}
-              disabled={isValidating || valRun?.status === 'RUNNING' || valRun?.status === 'QUEUED'}
+              disabled={validationRunning}
             >
-              {valRun?.status === 'RUNNING' || valRun?.status === 'QUEUED' ? 'Validating…' : 'Validate'}
+              {validationRunning ? 'Validating…' : validatedOnce ? 'Re-validate' : 'Validate'}
             </Button>
           )}
         </div>

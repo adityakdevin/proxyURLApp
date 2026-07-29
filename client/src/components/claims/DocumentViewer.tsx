@@ -21,6 +21,9 @@ interface DocumentViewerProps {
    *  the highlight boxes live here — both have to agree on which finding is active. */
   activeId: string | null;
   onSelect: (id: string) => void;
+  /** Bumped by the page each time the reviewer PICKS a finding. Only a bump zooms in —
+   *  the auto-selection of the first finding must leave the document at 100%. */
+  selectNonce?: number;
   /** Finding id → badge number, so the number on the page matches the sidebar row. */
   numberOf: Map<string, number>;
 }
@@ -31,7 +34,9 @@ const PDF_RE = /\.pdf$/i;
 // dead margin either side — the reason the document looked small in a wide window.
 const PDF_MIN_PAGE_WIDTH = 320;
 const PDF_PAGE_GUTTER = 16;
-const ZOOM_MIN = 0.5;
+// 0.5 was too high a floor on a bundle: at 100% one page already fills the container, so a
+// reviewer skimming an 8-page claim could not pull back far enough to see a page whole.
+const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 5;
 const CLICK_ZOOM = 2.5; // zoom level a clicked finding snaps to, so the word is legible
 const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
@@ -128,6 +133,7 @@ export function DocumentViewerPanel({
   gotoNonce,
   activeId,
   onSelect,
+  selectNonce = 0,
   numberOf,
 }: DocumentViewerProps) {
   const contentUrl = `/api/claims/${claimId}/documents/${documentId}/content`;
@@ -187,18 +193,16 @@ export function DocumentViewerPanel({
     };
   }, [contentUrl]);
 
-  // Selecting a finding snaps to a legible zoom, then centers its box. The zoom is skipped
-  // for the auto-selection made when a document opens: landing at 250% on page 5 with no
+  // CLICKING a finding snaps to a legible zoom, then centers its box. Keyed on the caller's
+  // pick counter, not on activeId: the document also auto-selects its first finding (on open,
+  // and again whenever the check filter re-derives the list), and landing at 250% with no
   // click behind it reads as the viewer being broken.
-  const seenDoc = useRef<string | null>(null);
+  const lastPick = useRef(selectNonce);
   useEffect(() => {
-    if (!activeId) return;
-    if (seenDoc.current !== documentId) {
-      seenDoc.current = documentId;
-      return;
-    }
+    if (selectNonce === lastPick.current) return;
+    lastPick.current = selectNonce;
     setZoom((z) => Math.max(z, CLICK_ZOOM));
-  }, [activeId, documentId]);
+  }, [selectNonce]);
 
   // Scroll the selected box to center when it, the zoom, or the page count changes.
   useEffect(() => {

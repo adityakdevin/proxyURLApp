@@ -117,6 +117,140 @@ function cardName(text: string, kind: 'HOLDER' | 'FATHER' | 'MOTHER'): string | 
   return null;
 }
 
+// ── Reading names off a card by LINE POSITION ─────────────────────────────────────────
+// The label-anchored readers above need a label to survive OCR. On a photographed card the
+// labels are bilingual, and the Devanagari half comes back as noise that swallows the Latin
+// half with it ("नाम / Name" → "Te PAT A CAI a NE"). What DOES survive is the layout: the
+// holder's name is the line above the father label on a PAN card, and the line above the
+// date of birth on an Aadhaar. That position is what these read.
+
+/** A person-name run: Title Case or ALL CAPS words, 2+ of them, no digits. */
+const NAME_RUN_RE = /([A-Z][A-Za-z]{1,}(?:[ \t]+[A-Z][A-Za-z]{1,})+)/g;
+
+/**
+ * The name on one line, taken as the LAST name-shaped run so leading OCR debris
+ * ("° ~~) Ravi Shankar") is skipped rather than read as part of the name.
+ */
+function nameOnLine(line: string): string | null {
+  const runs = [...line.matchAll(NAME_RUN_RE)].map((m) => m[1].trim().replace(/\s+/g, ' '));
+  for (const run of runs.reverse()) {
+    if (isBoilerplate(run)) continue;
+    const words = run.split(' ');
+    // The Devanagari label on the row below often bleeds a fragment onto the name's line
+    // ("RAVI SHANKAR ATA" — "ATA" is what "नाम" OCR'd to). Drop a short trailing fragment,
+    // but only when a two-word name still remains, so "RAVI KUMAR" is never truncated.
+    // ponytail: costs a genuine 3-word name ending in a 3-letter word its last word. If
+    // that shows up, compare the run against the other documents in the claim instead.
+    if (words.length > 2 && words[words.length - 1].length <= 3) words.pop();
+    if (words.length >= 2) return words.join(' ');
+  }
+  return null;
+}
+
+/** The nearest name-carrying line ABOVE the first line matching `anchor`. */
+function nameAboveLine(text: string, anchor: RegExp): string | null {
+  const lines = text.split(/\r?\n/);
+  const at = lines.findIndex((l) => anchor.test(l));
+  if (at < 1) return null;
+  // Two lines of look-back: the row directly above is sometimes pure debris.
+  for (let i = at - 1; i >= Math.max(0, at - 2); i--) {
+    const v = nameOnLine(lines[i]);
+    if (v) return v;
+  }
+  return null;
+}
+
+// Aadhaar prints the date of birth directly UNDER the holder's name, so the DOB row is the
+// anchor for the name — the card carries no "Name" label at all, in either script.
+const AADHAAR_DOB_LINE_RE = /(?:date\s*of\s*birth|\bdob\b|जन्म)/i;
+
+// Gender is printed on its own, unlabelled. FEMALE must be tried before MALE — it contains
+// it — and Aadhaar prints the Hindi alongside, which survives OCR more often than not.
+const GENDER_RE = /\b(FEMALE|MALE|TRANSGENDER)\b|(महिला|पुरुष|स्त्री)/i;
+
+function gender(text: string): string | null {
+  const m = GENDER_RE.exec(text);
+  if (!m) return null;
+  if (m[2]) return m[2] === 'पुरुष' ? 'MALE' : 'FEMALE';
+  return m[1].toUpperCase();
+}
+
+// An Aadhaar carries the father's name only as the address's care-of line. W/O is
+// deliberately NOT matched: that names a husband, and reporting one as the father is worse
+// than leaving the field blank.
+const CARE_OF_RE = /\b(?:C\s*\/\s*O|S\s*\/\s*O|D\s*\/\s*O|care\s*of)\b\s*[:\-]?\s*([A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z.]*)*)/;
+
+function careOfName(text: string): string | null {
+  const m = CARE_OF_RE.exec(text);
+  if (!m?.[1]) return null;
+  const v = m[1].trim().replace(/\s+/g, ' ');
+  return isBoilerplate(v) || v.split(' ').length < 2 ? null : v;
+}
+
+// ── Policy schedule ───────────────────────────────────────────────────────────────────
+// A schedule prints "Insured's Name" against an OCR-mangled separator (the ':' comes back
+// as '+', '©' or '~'), and the generic "…Name:" extractor needs a real colon. It also has
+// several other names on the page — insurer, broker, MISP, nominee — so anchoring on THE
+// insured label rather than taking the first name found is what keeps the dealership out.
+const INSURED_LABEL_RE = /insured'?s?\s*name\s*[:\-+©~*]?\s*/i;
+// Case-SENSITIVE, and deliberately not folded into the label regex: an /i there would let
+// the value run straight on into the next column ("RAVI SHANKAR Period of Third Party…").
+// Each token needs two+ capitals, which is what stops it at the "P" of "Period".
+// ponytail: costs a single-letter initial ("R SHANKAR" → "SHANKAR"). Widen if a schedule
+// that abbreviates the first name shows up.
+const CAPS_VALUE_RE = /^([A-Z][A-Z_.]+(?:[ \t]+[A-Z][A-Z_.]+)*)/;
+// Salutations arrive fused to the name by OCR ("MR_RAVI SHANKAR").
+const SALUTATION_RE = /^(?:MR|MRS|MS|M\/S|SHRI|SMT|DR)[_.\s]+/i;
+
+function insuredName(text: string): string | null {
+  const m = INSURED_LABEL_RE.exec(text);
+  if (!m) return null;
+  const at = m.index + m[0].length;
+  const v0 = CAPS_VALUE_RE.exec(text.slice(at, at + 60));
+  if (!v0) return null;
+  const v = v0[1].replace(SALUTATION_RE, '').trim().replace(/[_\s]+/g, ' ');
+  return !v || isBoilerplate(v) ? null : v;
+}
+
+/**
+ * Tokens of the row directly beneath the header line matching `header`.
+ *
+ * Vehicle details on a policy schedule are a TWO-LINE TABLE — the column headers on one
+ * line, their values on the next — so chassis, engine and model have no "Label: value"
+ * anchor anywhere on the page, which is why all three read as absent.
+ */
+function rowUnder(text: string, header: RegExp): string[] {
+  const lines = text.split(/\r?\n/);
+  const i = lines.findIndex((l) => header.test(l));
+  if (i < 0) return [];
+  return (lines[i + 1] ?? '').trim().split(/\s+/).filter(Boolean);
+}
+
+/** An identifier-shaped token: letters AND digits, so a header word or a bare number in the
+ *  same row is never mistaken for a chassis or engine number. */
+const idToken = (t: string, min: number, max: number) =>
+  t.length >= min && t.length <= max && /^[A-Z0-9]+$/.test(t) && /[A-Z]/.test(t) && /[0-9]/.test(t);
+
+const VEHICLE_ROW_RE = /chassis\s*no/i;
+
+function chassisFromRow(text: string): string | null {
+  return rowUnder(text, VEHICLE_ROW_RE).find((t) => idToken(t, 15, 20)) ?? null;
+}
+
+function engineFromRow(text: string): string | null {
+  const row = rowUnder(text, VEHICLE_ROW_RE);
+  const chassis = row.find((t) => idToken(t, 15, 20));
+  return row.find((t) => t !== chassis && idToken(t, 8, 14)) ?? null;
+}
+
+/** "Make Model Variant …" over "KIA SYROS SYROS D1.5 6MT HTK(O) …" — the model is the
+ *  column after the make. ponytail: positional, so a schedule that drops the Make column
+ *  would read the variant instead; the label-anchored MODEL_RE is still tried first. */
+function modelFromRow(text: string): string | null {
+  const row = rowUnder(text, /\bmake\b[\s\S]{0,40}?\bmodel\b/i);
+  return row[1] ?? null;
+}
+
 // A vehicle invoice never labels the buyer "Name" — it says "Bill To" or "Sold To", so the
 // shared name extractor (which anchors on "…Name:") read nothing and Customer Name showed
 // as absent on an invoice that plainly carries it.
@@ -160,21 +294,40 @@ export function documentFields(text: string, type: FieldDocType): DocField[] {
   switch (type) {
     // ID cards are tables of bilingual labels beside their values, so each field falls back
     // to the card reading when the shared "Label: Value" extractors find nothing.
-    case 'PAN':
+    case 'PAN': {
+      // A PAN card prints a father's OR a mother's name, never both — so show the ONE row
+      // the card carries instead of a pair with a permanently empty half.
+      const mother = relation(text, 'MOTHER');
+      const parent = mother
+        ? { label: "Mother's Name", value: mother }
+        : { label: "Father's Name", value: relation(text, 'FATHER') };
       return [
         { label: 'PAN Number', value: one(text.toUpperCase(), PAN_SHAPE_RE) },
-        { label: 'Holder Name', value: first(extractNames(text)) ?? cardName(text, 'HOLDER') },
-        // A PAN card prints one or the other, never both.
-        { label: "Father's Name", value: relation(text, 'FATHER') },
-        { label: "Mother's Name", value: relation(text, 'MOTHER') },
+        {
+          label: 'Holder Name',
+          value:
+            first(extractNames(text)) ??
+            cardName(text, 'HOLDER') ??
+            nameAboveLine(text, CARD_LABEL.FATHER) ??
+            nameAboveLine(text, CARD_LABEL.MOTHER),
+        },
+        parent,
         { label: 'Date of Birth', value: one(text, DOB_RE) ?? anyDate(text) },
       ];
+    }
     case 'AADHAR':
       return [
         { label: 'Aadhaar Number', value: aadhaarNumber(text) },
         { label: 'VID', value: one(text, VID_RE) },
-        { label: 'Holder Name', value: first(extractNames(text)) ?? cardName(text, 'HOLDER') },
-        { label: "Father's Name", value: relation(text, 'FATHER') },
+        {
+          label: 'Holder Name',
+          value:
+            first(extractNames(text)) ??
+            cardName(text, 'HOLDER') ??
+            nameAboveLine(text, AADHAAR_DOB_LINE_RE),
+        },
+        { label: 'Gender', value: gender(text) },
+        { label: "Father's Name", value: relation(text, 'FATHER') ?? careOfName(text) },
         { label: 'Date of Birth', value: one(text, DOB_RE) ?? anyDate(text) },
       ];
     case 'INVOICE':
@@ -190,10 +343,12 @@ export function documentFields(text: string, type: FieldDocType): DocField[] {
     case 'INSURANCE':
       return [
         { label: 'Policy No', value: one(text, POLICY_NO_RE) },
-        { label: "Insured's Name", value: first(extractNames(text)) },
-        { label: 'Chassis No', value: one(text, CHASSIS_RE) },
-        { label: 'Engine No', value: one(text, ENGINE_RE) },
-        { label: 'Model', value: one(text, MODEL_RE) },
+        // The insured's own label first: a schedule names the insurer, broker, MISP and
+        // nominee too, and the generic extractor returns whichever it meets first.
+        { label: "Insured's Name", value: insuredName(text) ?? first(extractNames(text)) },
+        { label: 'Chassis No', value: one(text, CHASSIS_RE) ?? chassisFromRow(text) },
+        { label: 'Engine No', value: one(text, ENGINE_RE) ?? engineFromRow(text) },
+        { label: 'Model', value: one(text, MODEL_RE) ?? modelFromRow(text) },
       ];
   }
 }

@@ -3,11 +3,14 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  ChevronsDownUp,
+  ChevronsUpDown,
   CornerDownLeft,
   Copy,
   FileText,
   ListChecks,
   Search,
+  X,
 } from 'lucide-react';
 import { Finding } from '@/lib/claimTypes';
 
@@ -24,6 +27,15 @@ export interface FieldGroup {
    *  were stored, where the whole file yields one group. */
   pages: number[];
   fields: DocField[];
+}
+
+/** One field checked against the QR code printed on the same page. */
+export interface QrFieldCheck {
+  label: string;
+  qrValue: string;
+  documentValue: string;
+  verdict: 'MATCH' | 'MISMATCH';
+  page?: number;
 }
 
 const TYPE_LABEL: Record<FieldDocType, string> = {
@@ -83,37 +95,103 @@ function CopyButton({ text, what }: { text: string; what: string }) {
   );
 }
 
-/** One field row: label, value, and a copy button on hover. */
-function FieldRow({ label, value }: DocField) {
+/** The QR verdict for one field, if the code sits on a page this group covers. */
+function checkFor(qrChecks: QrFieldCheck[], group: FieldGroup, label: string) {
+  return qrChecks.find(
+    (c) => c.label === label && (c.page === undefined || group.pages.includes(c.page))
+  );
+}
+
+/** One field row: label, value, a copy button on hover, and — where the page carries a QR
+ *  code that names the same field — whether the two agree. */
+function FieldRow({ label, value, check }: DocField & { check?: QrFieldCheck }) {
+  const mismatch = check?.verdict === 'MISMATCH';
   return (
-    <div className="group flex items-start gap-3 border-b border-gray-100 py-2 last:border-0">
-      <span className="w-28 shrink-0 pt-0.5 text-xs font-medium text-gray-500">{label}</span>
+    <div
+      className={`group relative flex flex-wrap items-start gap-2 border-b border-gray-100 bg-white py-2 last:border-0 ${
+        mismatch ? '-mx-3 border-b-red-100 !bg-red-50 px-3' : ''
+      }`}
+    >
+      <span className="w-24 shrink-0 pt-0.5 text-xs font-medium leading-4 text-gray-500">
+        {label}
+        {mismatch && (
+          <span className="mt-1 flex w-fit items-center gap-0.5 rounded bg-red-100 px-1 py-px text-[10px] font-semibold text-red-700 ring-1 ring-red-200">
+            <X className="h-2.5 w-2.5" />
+            QR differs
+          </span>
+        )}
+      </span>
       {value ? (
         <>
-          {/* Identifiers get a smaller monospace face rather than a mid-token line break:
-              "UK401K20250020 / 4" split across two lines reads as two different numbers,
-              which is the one thing a reviewer comparing IDs must not see. */}
-          <span
-            className={`min-w-0 flex-1 break-words text-sm text-gray-900 ${
-              isIdentifier(label) ? 'font-mono text-[13px] leading-5 tracking-tight' : ''
-            }`}
-          >
-            {value}
+          <span className="flex min-w-0 flex-1 items-start gap-1">
+            {/* The tick leads the VALUE, not the label: what was verified against the QR is
+                the value, and reading down the column shows at a glance which ones agree. */}
+            {check && !mismatch && (
+              <span
+                title={`Matches the QR code on this page ("${check.qrValue}")`}
+                aria-label="Matches the QR code"
+                className="flex shrink-0 pt-0.5"
+              >
+                <Check className="h-3 w-3 text-green-600" />
+              </span>
+            )}
+            {/* Identifiers get a smaller monospace face rather than a mid-token line break:
+                "UK401K20250020 / 4" split across two lines reads as two different numbers,
+                which is the one thing a reviewer comparing IDs must not see. */}
+            <span
+              className={`min-w-0 flex-1 break-words text-sm text-gray-900 ${
+                isIdentifier(label) ? 'font-mono text-[13px] leading-5 tracking-tight' : ''
+              }`}
+            >
+              {value}
+            </span>
           </span>
-          <CopyButton text={value} what={label} />
+          {/* Lifted out of the flow so it costs the value NO width: in a 340px sidebar the
+              ~20px it used to reserve was the difference between a chassis number fitting on
+              one line and breaking mid-token, which is the one thing a reviewer comparing
+              IDs must not see. It inherits the row's background so that, while hovered, it
+              reads as an overlay rather than sitting on top of the text. */}
+          <span className="absolute right-0 top-1.5 bg-inherit pl-1">
+            <CopyButton text={value} what={label} />
+          </span>
         </>
       ) : (
         // Absent fields stay visible — "the document does not carry this" is information —
         // but muted, so they never compete with the values that are actually there.
         <span className="flex-1 text-sm italic text-gray-300">Not found</span>
       )}
+      {mismatch && (
+        // The QR's value is the evidence; showing it beside the printed one is the whole
+        // point of the check, so it is spelled out rather than left in a tooltip.
+        // 104px = the w-24 label column plus the gap-2, so this sits under the VALUE.
+        <span className="w-full pl-[104px] text-xs text-red-700">
+          QR code says <span className="font-mono">{check!.qrValue}</span>
+        </span>
+      )}
     </div>
   );
 }
 
-function GroupCard({ group, onJumpToPage }: { group: FieldGroup; onJumpToPage?: (page: number) => void }) {
+function GroupCard({
+  group,
+  qrChecks,
+  onJumpToPage,
+}: {
+  group: FieldGroup;
+  qrChecks: QrFieldCheck[];
+  onJumpToPage?: (page: number) => void;
+}) {
   const range = pageRange(group.pages);
   const filled = group.fields.filter((f) => f.value).length;
+  // A field with no tick is either "agreed" or "the QR never mentioned it" — indistinguishable
+  // per row, so the card states the totals once.
+  const checksHere = group.fields
+    .map((f) => checkFor(qrChecks, group, f.label))
+    .filter((c): c is QrFieldCheck => !!c);
+  const bad = checksHere.filter((c) => c.verdict === 'MISMATCH').length;
+  // A bundle can hold four documents; collapsing the ones already reviewed keeps the pane
+  // the reviewer is working on in view without scrolling past the rest.
+  const [open, setOpen] = useState(true);
 
   return (
     <section className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
@@ -137,12 +215,38 @@ function GroupCard({ group, onJumpToPage }: { group: FieldGroup; onJumpToPage?: 
         <span className="ml-auto text-xs tabular-nums text-gray-400">
           {filled}/{group.fields.length} read
         </span>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          title={open ? 'Collapse this document' : 'Expand this document'}
+          aria-expanded={open}
+          className="-mr-1 rounded p-0.5 text-gray-400 transition hover:bg-gray-200 hover:text-gray-700"
+        >
+          {open ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}
+          <span className="sr-only">
+            {open ? 'Collapse' : 'Expand'} {TYPE_LABEL[group.type] ?? group.type}
+          </span>
+        </button>
       </header>
-      <div className="px-3 py-1">
-        {group.fields.map((f) => (
-          <FieldRow key={f.label} {...f} />
-        ))}
-      </div>
+      {checksHere.length > 0 && (
+        <div
+          className={`flex items-center gap-1.5 border-b px-3 py-1 text-[11px] font-medium ${
+            bad > 0 ? 'border-red-100 bg-red-50 text-red-700' : 'border-green-100 bg-green-50 text-green-700'
+          }`}
+        >
+          {bad > 0 ? <X className="h-3 w-3 shrink-0" /> : <Check className="h-3 w-3 shrink-0" />}
+          {bad > 0
+            ? `${bad} of ${checksHere.length} field${checksHere.length === 1 ? '' : 's'} disagree with the QR code`
+            : `${checksHere.length} field${checksHere.length === 1 ? '' : 's'} verified against the QR code`}
+        </div>
+      )}
+      {open && (
+        <div className="px-3 py-1">
+          {group.fields.map((f) => (
+            <FieldRow key={f.label} {...f} check={checkFor(qrChecks, group, f.label)} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -174,6 +278,7 @@ function FindingsCard({
 }) {
   const [sev, setSev] = useState<SevFilter>('ALL');
   const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(true);
 
   const errors = findings.filter((f) => f.severity === 'ERROR').length;
   const warnings = findings.filter((f) => f.severity === 'WARNING').length;
@@ -232,9 +337,10 @@ function FindingsCard({
           {findings.length}
         </span>
 
-        {findings.some((f) => f.bbox) && (
-          <div className="ml-auto flex items-center gap-0.5">
-            <span className="mr-1 text-[11px] tabular-nums text-gray-400">{position}</span>
+        <div className="ml-auto flex items-center gap-0.5">
+          {open && findings.some((f) => f.bbox) && (
+            <>
+              <span className="mr-1 text-[11px] tabular-nums text-gray-400">{position}</span>
             <button
               type="button"
               onClick={() => step(-1)}
@@ -244,21 +350,35 @@ function FindingsCard({
             >
               <ChevronUp className="h-3.5 w-3.5" />
             </button>
-            <button
-              type="button"
-              onClick={() => step(1)}
-              title="Next finding"
-              aria-label="Next finding"
-              className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
-            >
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
+              <button
+                type="button"
+                onClick={() => step(1)}
+                title="Next finding"
+                aria-label="Next finding"
+                className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+          {/* Double chevron, not single: the single ones directly to its left step THROUGH
+              the findings, and two controls that look alike but do different things is how a
+              reviewer ends up scrolling the document when they meant to fold the list. */}
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            title={open ? 'Collapse the findings list' : 'Expand the findings list'}
+            aria-expanded={open}
+            className="-mr-1 rounded p-0.5 text-gray-400 transition hover:bg-gray-200 hover:text-gray-700"
+          >
+            {open ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}
+            <span className="sr-only">{open ? 'Collapse' : 'Expand'} findings</span>
+          </button>
+        </div>
       </header>
 
       {/* Filters only appear when they would actually narrow something down. */}
-      {findings.length > 5 && (
+      {open && findings.length > 5 && (
         <div className="flex items-center gap-1 border-b bg-white px-2 py-1.5">
           {chip('ALL', 'All', findings.length, 'bg-gray-200 text-gray-800')}
           {errors > 0 && chip('ERROR', 'Red flags', errors, 'bg-red-100 text-red-700')}
@@ -276,7 +396,7 @@ function FindingsCard({
         </div>
       )}
 
-      {findings.length === 0 ? (
+      {!open ? null : findings.length === 0 ? (
         <p className="px-3 py-3 text-xs text-gray-400">Nothing flagged on this document for this check.</p>
       ) : visible.length === 0 ? (
         <p className="px-3 py-3 text-xs text-gray-400">No finding matches this filter.</p>
@@ -379,6 +499,7 @@ export function FieldPanes({
   onSelect,
   onJumpToPage,
   showFields,
+  qrChecks = [],
 }: {
   groups: FieldGroup[];
   findings: Finding[];
@@ -387,6 +508,8 @@ export function FieldPanes({
   onSelect: (id: string) => void;
   onJumpToPage?: (page: number) => void;
   showFields: boolean;
+  /** Per-field QR verdicts for this document, shown against the matching rows. */
+  qrChecks?: QrFieldCheck[];
 }) {
   return (
     <div className="flex min-h-0 flex-col rounded-lg border border-gray-200 bg-gray-50">
@@ -395,7 +518,9 @@ export function FieldPanes({
         <h2 className="text-sm font-semibold text-gray-800">{showFields ? 'Document details' : 'Findings'}</h2>
         {showFields && groups.length > 0 && (
           <span className="ml-auto text-xs text-gray-400">
-            {groups.length} document{groups.length === 1 ? '' : 's'} in this file
+            {/* "in this file" would be a lie now that the list is filtered to the documents
+                carrying a QR — the file usually holds more than these. */}
+            {groups.length} document{groups.length === 1 ? '' : 's'} with a QR code
           </span>
         )}
       </header>
@@ -418,15 +543,21 @@ export function FieldPanes({
           (groups.length === 0 ? (
             <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
               <FileText className="mx-auto mb-2 h-6 w-6 text-gray-300" />
-              <p className="text-sm font-medium text-gray-600">No fields to show</p>
+              <p className="text-sm font-medium text-gray-600">No QR code found</p>
               <p className="mt-1 text-xs text-gray-400">
-                This file is not a PAN, Aadhaar, invoice or insurance document — or its text could not
-                be read. Run Validate on the claim if it has not been scanned yet.
+                This panel lists only the documents a QR code was read from, so there is nothing to
+                check here. PAN and Aadhaar Secure QR codes are encrypted by the issuer and cannot be
+                read in-app. Run Validate on the claim if it has not been scanned yet.
               </p>
             </div>
           ) : (
             groups.map((g) => (
-              <GroupCard key={`${g.type}-${g.pages[0] ?? 0}`} group={g} onJumpToPage={onJumpToPage} />
+              <GroupCard
+                key={`${g.type}-${g.pages[0] ?? 0}`}
+                group={g}
+                qrChecks={qrChecks}
+                onJumpToPage={onJumpToPage}
+              />
             ))
           ))}
       </div>

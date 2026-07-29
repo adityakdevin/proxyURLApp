@@ -1,0 +1,156 @@
+/**
+ * Compare a QR code's payload against the fields read off the document it is printed on.
+ *
+ * A policy QR carries the insurer's own copy of the policy number, insured name, chassis
+ * and model. The printed page carries the same values in ink. When the two disagree, the
+ * page has been altered after issue — which is exactly what a reviewer is looking for.
+ *
+ * Pure (no I/O, no prisma) so it unit-tests with string fixtures, same discipline as
+ * redFlagLogic and docFields.
+ *
+ * PAN and Aadhaar Secure QR codes are issuer-encrypted and decode to opaque binary, so
+ * nothing here can compare them — qrValidator surfaces its "use the issuer's app" guidance
+ * for those instead. What IS comparable: plaintext policy QRs, and the older Aadhaar XML
+ * QR whose attributes are readable.
+ */
+import { DocField } from './docFields.js';
+import { nameMatches } from './crossDocLogic.js';
+import { editDistanceCapped } from './logic.js';
+
+export type QrVerdict = 'MATCH' | 'MISMATCH';
+
+export interface QrFieldComparison {
+  /** The pane row this QR value was checked against, e.g. "Chassis No". */
+  label: string;
+  /** What the QR says. */
+  qrValue: string;
+  /** What was read off the page. */
+  documentValue: string;
+  verdict: QrVerdict;
+}
+
+/**
+ * Which pane row each QR key answers to. A QR key can map to several because the same
+ * key means different things per document type ("Name" is the insured on a policy and the
+ * holder on an Aadhaar) — the first label the document actually has wins.
+ */
+const QR_KEY_TO_LABELS: Record<string, string[]> = {
+  name: ["Insured's Name", 'Holder Name', 'Customer Name'],
+  polno: ['Policy No'],
+  policyno: ['Policy No'],
+  chassisno: ['Chassis No'],
+  chassis: ['Chassis No'],
+  engineno: ['Engine No'],
+  engine: ['Engine No'],
+  model: ['Model'],
+  uid: ['Aadhaar Number'],
+  pan: ['PAN Number'],
+  panno: ['PAN Number'],
+  gender: ['Gender'],
+  dob: ['Date of Birth'],
+};
+
+const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
+ * Characters OCR routinely confuses on a photographed document. Folding them before
+ * comparing is what stops a legitimate claim being flagged: this claim's chassis reads
+ * MZBB2SIALSNO10383 off the page and MZBB2814LSN010383 out of the QR — same number, four
+ * misread glyphs.
+ */
+const CONFUSABLE: Record<string, string> = {
+  O: '0', D: '0', Q: '0', I: '1', L: '1', Z: '2', A: '4', S: '5', G: '6', T: '7', B: '8',
+};
+
+const fold = (s: string) =>
+  s
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .replace(/[ODQILZASGTB]/g, (c) => CONFUSABLE[c]);
+
+/**
+ * Identifiers agree when they agree after glyph folding, within a length-scaled slack.
+ *
+ * DELIBERATE LIMIT: the document side of this comparison is OCR of a photograph, so
+ * character-perfect agreement is not achievable — demanding it would flag every honest
+ * claim. The cost is that tampering of one or two characters in a long identifier reads as
+ * a match. Catching that needs a cleaner document image, not a tighter threshold here.
+ */
+function identifierMatches(a: string, b: string): boolean {
+  const fa = fold(a);
+  const fb = fold(b);
+  if (!fa || !fb) return true; // nothing to compare → not a mismatch
+  if (fa === fb) return true;
+  const slack = Math.max(1, Math.floor(Math.max(fa.length, fb.length) / 8));
+  return editDistanceCapped(fa, fb, slack) <= slack;
+}
+
+const NAME_LABELS = new Set(["Insured's Name", 'Holder Name', 'Customer Name', "Father's Name"]);
+
+/**
+ * Parse a QR payload into key → value.
+ *
+ * Two shapes in the wild: the pipe-delimited "Label:Value" a policy QR carries, and the
+ * XML of an older Aadhaar QR. Returns an empty map for anything else (including the
+ * `binary:` blob an encrypted Secure QR decodes to), so the caller compares nothing rather
+ * than comparing noise.
+ */
+export function parseQrPayload(value: string): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!value || value.startsWith('binary:')) return out;
+
+  if (value.trimStart().startsWith('<')) {
+    for (const m of value.matchAll(/([A-Za-z_][\w-]*)="([^"]*)"/g)) {
+      const v = m[2].trim();
+      if (v) out.set(normalizeKey(m[1]), v);
+    }
+    return out;
+  }
+
+  const sep = value.includes('|') ? '|' : ',';
+  for (const part of value.split(sep)) {
+    // Split at the first colon that is not a time colon ("1:00PM" — digits both sides).
+    const m = /(?<!\d):|:(?!\d)/.exec(part);
+    if (!m || m.index <= 0) continue;
+    const key = normalizeKey(part.slice(0, m.index));
+    const v = part.slice(m.index + 1).trim();
+    // A URL's value contains colons of its own; keep the first-colon split, it is the key
+    // boundary either way. Empty values carry nothing to compare.
+    if (key && v && !out.has(key)) out.set(key, v);
+  }
+  return out;
+}
+
+/**
+ * Compare one QR payload against one document's field pane.
+ *
+ * Only fields present on BOTH sides are compared — a QR key the pane has no row for (a
+ * policy QR's registration number, its URL) is not evidence of anything, and neither is a
+ * pane row the QR does not carry.
+ */
+export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldComparison[] {
+  const payload = parseQrPayload(qrValue);
+  if (payload.size === 0) return [];
+  const byLabel = new Map(fields.map((f) => [f.label, f.value]));
+  const out: QrFieldComparison[] = [];
+  const seen = new Set<string>();
+
+  for (const [key, qrRaw] of payload) {
+    for (const label of QR_KEY_TO_LABELS[key] ?? []) {
+      const documentValue = byLabel.get(label);
+      if (!documentValue || seen.has(label)) continue;
+      seen.add(label);
+      const ok = NAME_LABELS.has(label)
+        ? nameMatches(qrRaw, documentValue)
+        : identifierMatches(qrRaw, documentValue);
+      out.push({
+        label,
+        qrValue: qrRaw.replace(/\s+/g, ' ').trim(),
+        documentValue,
+        verdict: ok ? 'MATCH' : 'MISMATCH',
+      });
+      break; // this QR key is answered by the first label the document actually has
+    }
+  }
+  return out;
+}

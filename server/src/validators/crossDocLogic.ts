@@ -247,6 +247,10 @@ const NON_PERSON_NAME_LABEL = new Set([
   'broker', 'agent', 'intermediary', 'surveyor', 'workshop', 'garage', 'financier',
   'financer', 'insurer', 'insurance', 'employer', 'hypothecation', 'organisation',
   'organization', 'institution', 'hospital', 'school', 'college', 'university',
+  // A policy schedule credits the selling dealer as "MISP Name : <dealership>". Without
+  // this the dealership was reported as the insured — the one name on the page that is
+  // certainly NOT the customer.
+  'misp',
 ]);
 
 // Group 1 = the single word immediately before "Name" (if any); group 2 = the value.

@@ -74,8 +74,13 @@ async function extract(
         const ocrd = await ctx.ocr.extractPdf(doc.readablePath, withCoords.textlessPages);
         if (ocrd.text) {
           // Merge the OCR'd pages back into their page slots so classification sees them.
-          for (const [i, t] of pageTextsFromWords(ocrd.words).entries()) {
-            if (t) pageTexts[i] = pageTexts[i] ? `${pageTexts[i]} ${t}` : t;
+          // Prefer the OCR's own per-page text: it keeps the line breaks that the ID-card
+          // field extractors anchor on, which a space-join of word boxes throws away.
+          const ocrPages =
+            ocrd.pages?.map((p) => [p.page - 1, p.text] as const) ??
+            pageTextsFromWords(ocrd.words).map((t, i) => [i, t] as const);
+          for (const [i, t] of ocrPages) {
+            if (t) pageTexts[i] = pageTexts[i] ? `${pageTexts[i]}\n${t}` : t;
           }
           return {
             text: `${withCoords.text}\n${ocrd.text}`,
@@ -98,7 +103,11 @@ async function extract(
     // No text layer → scanned PDF. Rasterize the pages and OCR them.
     if (ctx.ocr.extractPdf) {
       const r = await ctx.ocr.extractPdf(doc.readablePath);
-      return { ...r, pageTexts: pageTextsFromWords(r.words) };
+      // Same reason as the mixed-PDF merge above: keep the OCR's line breaks when it
+      // reports per-page text, and only rebuild from word boxes when it doesn't.
+      const pageTexts: string[] = [];
+      if (r.pages) for (const p of r.pages) pageTexts[p.page - 1] = p.text;
+      return { ...r, pageTexts: r.pages ? pageTexts : pageTextsFromWords(r.words) };
     }
     return { text: '', words: [], pageTexts: [] };
   }
@@ -110,7 +119,11 @@ const MAX_FILE_BYTES = 25 * 1024 * 1024; // matches the 25 MB upload limit
 const EXTRACT_TIMEOUT_MS = 30_000;
 // Scanned PDFs are rasterized + OCR'd page-by-page on one worker — far slower than a
 // single image, so give them a wider budget before the run gives up on the document.
-const PDF_EXTRACT_TIMEOUT_MS = 120_000;
+// 120s was not enough once sideways ID-card pages started being retried at other
+// rotations: a real 8-page claim bundle measured 111s here, i.e. it would have timed out
+// on any slower machine and produced NOTHING. Validation is a background run, so the cost
+// of a wider budget is only that a pathological document occupies the drainer longer.
+const PDF_EXTRACT_TIMEOUT_MS = 300_000;
 
 /** Resolve `p`, but fall back to `fallback` if it doesn't settle within `ms`. */
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
