@@ -36,7 +36,7 @@ export function TableToolbar({
         value={local}
         onChange={(e) => setLocal(e.target.value)}
         placeholder={placeholder}
-        className="max-w-xs"
+        className="w-48"
       />
       {children}
     </div>

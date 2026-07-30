@@ -285,7 +285,7 @@ export default function AdminClaims() {
             allLabel="All"
             prefix="Status"
             options={statusOptions}
-            className="w-[150px]"
+            className="w-[130px]"
           />
           {CHECK_FILTERS.map((cf) => (
             <FilterSelect
@@ -295,7 +295,7 @@ export default function AdminClaims() {
               allLabel="All"
               prefix={cf.label}
               options={CHECK_STATUS_OPTIONS}
-              className="w-[130px]"
+              className="w-[112px]"
             />
           ))}
         </TableToolbar>

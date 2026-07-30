@@ -4,6 +4,7 @@ import { ColumnDef } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
+import { FilterSelect } from '@/components/shared/FilterSelect';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ValidationBadge } from '@/components/ValidationBadge';
@@ -324,96 +325,63 @@ export default function ClaimDashboard() {
 
       {!noAssignment && (
       <>
-      <div className="mb-4 p-4 bg-white border rounded-md grid grid-cols-4 gap-3">
-        <div className="space-y-1">
-          <Label>Sub-Category</Label>
-          <Select
-            value={filters.subCategoryId ?? ''}
-            onValueChange={(v) =>
-              setFilters({
-                ...filters,
-                subCategoryId: v || undefined,
-                workflowStatusId: undefined,
-              })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="All" />
-            </SelectTrigger>
-            <SelectContent>
-              {subCats.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label>Workflow Status</Label>
-          <Select
-            value={filters.workflowStatusId ?? ''}
-            onValueChange={(v) =>
-              setFilters({ ...filters, workflowStatusId: v || undefined })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="All" />
-            </SelectTrigger>
-            <SelectContent>
-              {filterStatuses.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      {/* One row: the field labels live inside each control's own value ("Status: All"), which
+          is what lets four filters and both buttons share a line. Still explicitly applied —
+          the reviewer picks several filters, then fetches once. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-md border bg-white p-3">
+        <Input
+          value={filters.search}
+          onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+          onKeyDown={(e) => e.key === 'Enter' && fetchData(1, pagination.limit)}
+          placeholder="Search claim id…"
+          className="w-48"
+        />
+        <FilterSelect
+          value={filters.subCategoryId ?? ''}
+          onChange={(v) =>
+            setFilters({
+              ...filters,
+              subCategoryId: v || undefined,
+              workflowStatusId: undefined,
+            })
+          }
+          allLabel="All"
+          prefix="Sub-Category"
+          options={subCats.map((s) => ({ value: s.id, label: s.name }))}
+          className="w-[200px]"
+        />
+        <FilterSelect
+          value={filters.workflowStatusId ?? ''}
+          onChange={(v) => setFilters({ ...filters, workflowStatusId: v || undefined })}
+          allLabel="All"
+          prefix="Status"
+          options={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}
+          className="w-[170px]"
+        />
         {role === 'USER' ? (
-          <div className="space-y-1">
-            <Label>&nbsp;</Label>
-            <div className="flex items-center gap-2 pt-2">
-              <input
-                id="amt"
-                type="checkbox"
-                checked={filters.assignedToMe}
-                onChange={(e) => setFilters({ ...filters, assignedToMe: e.target.checked })}
-              />
-              <Label htmlFor="amt">Assigned to me only</Label>
-            </div>
-          </div>
+          <Label
+            htmlFor="amt"
+            className="flex h-10 cursor-pointer items-center gap-2 rounded-md border px-3"
+          >
+            <input
+              id="amt"
+              type="checkbox"
+              checked={filters.assignedToMe}
+              onChange={(e) => setFilters({ ...filters, assignedToMe: e.target.checked })}
+            />
+            Assigned to me
+          </Label>
         ) : (
-          <div className="space-y-1">
-            <Label>Assigned To</Label>
-            <Select
-              value={filters.assignedToUserId ?? ''}
-              onValueChange={(v) =>
-                setFilters({ ...filters, assignedToUserId: v || undefined })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="All" />
-              </SelectTrigger>
-              <SelectContent>
-                {addUsers.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.fullName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-        <div className="space-y-1">
-          <Label>Search</Label>
-          <Input
-            value={filters.search}
-            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-            onKeyDown={(e) => e.key === 'Enter' && fetchData(1, pagination.limit)}
-            placeholder="Claim ID contains..."
+          <FilterSelect
+            value={filters.assignedToUserId ?? ''}
+            onChange={(v) => setFilters({ ...filters, assignedToUserId: v || undefined })}
+            allLabel="All"
+            prefix="Assigned"
+            options={addUsers.map((u) => ({ value: u.id, label: u.fullName }))}
+            className="w-[180px]"
           />
-        </div>
-        <div className="col-span-4 flex justify-end gap-2">
+        )}
+        <div className="ml-auto flex gap-2">
           <Button variant="outline" onClick={handleExport}>
             Export
           </Button>
