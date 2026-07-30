@@ -6,6 +6,8 @@ export type ValidationStatus =
   | 'PENDING'
   | 'IN_PROGRESS'
   | 'PASSED'
+  // Passed on errors, but raised warning-level findings — the reviewer still has to look.
+  | 'DOUBTFUL'
   | 'FAILED'
   | 'DOCS_NOT_AVAILABLE';
 
@@ -33,6 +35,8 @@ export function validationStatusCardClass(s: string): string {
   switch (s) {
     case 'PASSED':
       return 'border-green-500 bg-white';
+    case 'DOUBTFUL':
+      return 'border-amber-500 bg-white';
     case 'FAILED':
       return 'border-red-600 bg-white';
     case 'IN_PROGRESS':
@@ -49,6 +53,9 @@ export function validationStatusVariant(s: string): BadgeVariant {
   switch (s) {
     case 'PASSED':
       return 'success';
+    // Same amber as the warning highlight boxes in the document viewer.
+    case 'DOUBTFUL':
+      return 'warning';
     case 'FAILED':
       return 'destructive';
     case 'IN_PROGRESS':

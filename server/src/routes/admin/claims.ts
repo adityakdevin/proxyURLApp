@@ -10,8 +10,15 @@ import {
 import { buildObservationWorkbook } from '../../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
 
-/** The five validation-check result values a claim can be filtered by. */
-const CHECK_STATUSES = ['PENDING', 'IN_PROGRESS', 'PASSED', 'FAILED', 'DOCS_NOT_AVAILABLE'];
+/** The validation-check result values a claim can be filtered by. */
+const CHECK_STATUSES = [
+  'PENDING',
+  'IN_PROGRESS',
+  'PASSED',
+  'DOUBTFUL',
+  'FAILED',
+  'DOCS_NOT_AVAILABLE',
+];
 
 const router = Router();
 const getService = (req: Request) => new ClaimService(prismaOf(req));

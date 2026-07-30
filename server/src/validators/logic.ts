@@ -1,4 +1,21 @@
-import { ValidatorOutcome } from './types.js';
+import { CheckStatus, FindingInput, ValidatorOutcome } from './types.js';
+
+/**
+ * Final stored status for a check, given what the validator decided and the evidence it
+ * produced. A validator only ever returns PASSED or FAILED; DOUBTFUL is derived here so
+ * all six checks behave the same way instead of each one re-deciding.
+ *
+ * A PASSED check that raised WARNING findings becomes DOUBTFUL: a doubtful OCR read, a
+ * page with no extractable text or a missing signature is not something to show a
+ * reviewer behind a green badge. FAILED is never softened — errors outrank warnings.
+ */
+export function deriveCheckStatus(
+  status: 'PASSED' | 'FAILED',
+  findings: FindingInput[] | undefined
+): CheckStatus {
+  if (status !== 'PASSED') return status;
+  return findings?.some((f) => f.severity === 'WARNING') ? 'DOUBTFUL' : 'PASSED';
+}
 
 /** A document FAILS the SPELL check on the FIRST distinct expected-term misspelling.
  *  Human reviewers flag a form on a single genuine typo ("enginear", "Cleark",

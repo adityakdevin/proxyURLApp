@@ -114,8 +114,9 @@ export const spellValidator: Validator = {
       }
     }
 
-    // Only CONFIDENT misspellings fail the check. Doubtful ones are still reported and
-    // highlighted — reviewers asked to see them, but a poor scan must not fail a claim.
+    // Only CONFIDENT misspellings FAIL the check — a poor scan must not fail a claim.
+    // A doubtful-only run returns PASSED here and the service downgrades it to DOUBTFUL
+    // off the WARNING findings (deriveCheckStatus), so it never shows a green badge.
     const status = distinct.size >= SPELL_MIN_TERM_HITS ? 'FAILED' : 'PASSED';
     const parts: string[] = [];
     if (distinct.size) parts.push(`${distinct.size} expected-term misspelling(s): ${sample.slice(0, 8).join(', ')}`);

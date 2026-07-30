@@ -1,6 +1,13 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import path from 'path';
-import { Validator, ValidatorContext, ValidatorDoc, FindingInput } from '../validators/types.js';
+import {
+  Validator,
+  ValidatorContext,
+  ValidatorDoc,
+  FindingInput,
+  CheckStatus,
+} from '../validators/types.js';
+import { deriveCheckStatus } from '../validators/logic.js';
 
 /** Bound the rows written per check so a noisy OCR page can't flood the table. */
 const MAX_FINDINGS_PER_RESULT = 200;
@@ -98,7 +105,7 @@ export class ValidationService {
       // Run all validators first (failures captured as FAILED, never thrown).
       const results: {
         v: Validator;
-        status: 'PASSED' | 'FAILED';
+        status: CheckStatus;
         summary: string;
         details?: unknown;
         findings?: FindingInput[];
@@ -106,7 +113,13 @@ export class ValidationService {
       for (const v of this.validators) {
         try {
           const outcome = await v.run(ctx);
-          results.push({ v, ...outcome });
+          // DOUBTFUL is decided here, not per validator: a check that passed but raised
+          // warning-level findings must not show the reviewer a green badge.
+          results.push({
+            ...outcome,
+            v,
+            status: deriveCheckStatus(outcome.status, outcome.findings),
+          });
         } catch (e) {
           results.push({
             v,

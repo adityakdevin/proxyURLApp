@@ -11,9 +11,24 @@ import {
   findTermMisspellings,
   ocrFold,
   ocrIndistinguishable,
+  deriveCheckStatus,
 } from '../logic.js';
 
 describe('validator logic', () => {
+  it('deriveCheckStatus downgrades a warning-only pass to DOUBTFUL', () => {
+    const warn = [{ code: 'SPELL_DOUBTFUL', severity: 'WARNING' as const, message: 'm' }];
+    const err = [{ code: 'SPELL_SUSPECT', severity: 'ERROR' as const, message: 'm' }];
+    const info = [{ code: 'X', severity: 'INFO' as const, message: 'm' }];
+    expect(deriveCheckStatus('PASSED', warn)).toBe('DOUBTFUL');
+    expect(deriveCheckStatus('PASSED', [...warn, ...err])).toBe('DOUBTFUL'); // status wins, not severity
+    expect(deriveCheckStatus('PASSED', info)).toBe('PASSED');
+    expect(deriveCheckStatus('PASSED', [])).toBe('PASSED');
+    expect(deriveCheckStatus('PASSED', undefined)).toBe('PASSED');
+    // A real failure is never softened, whatever its findings look like.
+    expect(deriveCheckStatus('FAILED', warn)).toBe('FAILED');
+    expect(deriveCheckStatus('FAILED', undefined)).toBe('FAILED');
+  });
+
   it('metaOutcome', () => {
     expect(metaOutcome(0, 0).status).toBe('PASSED');
     expect(metaOutcome(0, 2).status).toBe('FAILED');

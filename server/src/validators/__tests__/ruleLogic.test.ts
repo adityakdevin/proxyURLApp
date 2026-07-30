@@ -53,4 +53,10 @@ describe('ruleLogic', () => {
     expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'FAILED' }, noDocs)).toEqual({ passed: false, actual: 'DOCS N/A' });
     expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'NEQ', value: 'FAILED' }, noDocs).passed).toBe(true);
   });
+  it('DOUBTFUL satisfies neither "= PASSED" nor "= FAILED"', () => {
+    const doubtful = { ...facts, spellCheckStatus: 'DOUBTFUL' };
+    expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'PASSED' }, doubtful)).toEqual({ passed: false, actual: 'DOUBTFUL' });
+    expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'FAILED' }, doubtful)).toEqual({ passed: false, actual: 'DOUBTFUL' });
+    expect(evaluateRule({ field: 'SPELL_STATUS', operator: 'EQ', value: 'DOUBTFUL' }, doubtful).passed).toBe(true);
+  });
 });

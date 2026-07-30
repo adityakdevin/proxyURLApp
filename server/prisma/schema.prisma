@@ -54,6 +54,7 @@ enum ValidationStatus {
   PENDING
   IN_PROGRESS
   PASSED
+  DOUBTFUL
   FAILED
   DOCS_NOT_AVAILABLE
 }

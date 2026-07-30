@@ -107,8 +107,9 @@ export default function ClaimRules() {
     if (form.field === 'ASSIGNED') return ['true', 'false'];
     if (form.field === 'HAS_DOCUMENT_TYPE') return docTypeNames;
     if (form.field === 'WORKFLOW_STATUS') return statusNames;
-    // Validation checks are binary in every view: only PASSED/FAILED are valid rule targets.
-    if (STATUS_FIELDS.includes(form.field)) return ['PASSED', 'FAILED'];
+    // Validation-check rule targets. DOUBTFUL is its own state — a rule written against
+    // PASSED will not match a doubtful check, so it needs to be selectable on its own.
+    if (STATUS_FIELDS.includes(form.field)) return ['PASSED', 'DOUBTFUL', 'FAILED'];
     return null;
   }, [form.field, docTypeNames, statusNames]);
 

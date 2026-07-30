@@ -22,13 +22,19 @@ const NUMERIC_FIELDS: RuleField[] = ['DOCUMENT_COUNT', 'REMARK_COUNT'];
 /**
  * Collapse a validation-check status for rule evaluation and the claims xlsx
  * export (shared so the two agree): PENDING / IN_PROGRESS read as PASSED (a
- * mid-run claim shouldn't flunk rules), but DOCS_NOT_AVAILABLE keeps its own
- * state — a claim with zero documents was never checked, so it must not
- * satisfy "= PASSED" status rules (it doesn't read as FAILED either).
+ * mid-run claim shouldn't flunk rules), but DOCS_NOT_AVAILABLE and DOUBTFUL keep
+ * their own state — a claim with zero documents was never checked, and a doubtful
+ * one needs a reviewer's eye, so neither may satisfy "= PASSED" status rules
+ * (neither reads as FAILED either).
  */
-export function collapseValidationStatus(raw: string): 'PASSED' | 'FAILED' | 'DOCS N/A' {
+export function collapseValidationStatus(
+  raw: string
+): 'PASSED' | 'FAILED' | 'DOUBTFUL' | 'DOCS N/A' {
   if (raw === 'FAILED') return 'FAILED';
   if (raw === 'DOCS_NOT_AVAILABLE' || raw === 'DOCS N/A') return 'DOCS N/A';
+  // Like DOCS N/A, DOUBTFUL keeps its own state: warning-level findings need a human
+  // decision, so the check satisfies neither "= PASSED" nor "= FAILED".
+  if (raw === 'DOUBTFUL') return 'DOUBTFUL';
   return 'PASSED';
 }
 

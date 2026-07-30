@@ -82,6 +82,10 @@ export interface FindingInput {
   data?: Record<string, unknown>;
 }
 
+/** What lands in the claim's status column. Validators decide PASSED/FAILED; DOUBTFUL is
+ *  derived from their findings by `deriveCheckStatus`. */
+export type CheckStatus = 'PASSED' | 'FAILED' | 'DOUBTFUL';
+
 export interface ValidatorOutcome {
   status: 'PASSED' | 'FAILED';
   summary: string;
