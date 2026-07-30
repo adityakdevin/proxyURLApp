@@ -38,17 +38,20 @@
     "concurrently": "^8.2.2"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.0.0",
+    "npm": ">=11.17.0"
   },
-  "//allowScripts": "npm 11 blocks dependency install scripts until they are approved here. bcrypt and canvas will not build their native bindings without theirs, and the app dies at runtime if they are missing. Versions are pinned to the lockfile, so a bump re-prompts instead of inheriting approval. tesseract.js is denied: its postinstall is only an Open Collective funding message.",
+  "//allowScripts": "npm 11 blocks dependency install scripts until they are approved here; bcrypt and canvas need theirs to resolve their native bindings. Write entries with `npm install-scripts approve <pkg>` rather than by hand -- the key must carry the version (`pkg@1.2.3`), and a plain `pkg: version` entry is silently ignored. Pinning means a version bump re-prompts instead of inheriting approval. tesseract.js is denied: its postinstall is only an Open Collective funding message.",
   "allowScripts": {
-    "@prisma/client": "5.22.0",
-    "@prisma/engines": "5.22.0",
-    "bcrypt": "6.0.0",
-    "canvas": "3.2.3",
-    "esbuild": "0.28.1",
-    "prisma": "5.22.0",
-    "tesseract.js": false
+    "tesseract.js": false,
+    "@prisma/client@5.22.0": true,
+    "@prisma/engines@5.22.0": true,
+    "bcrypt@6.0.0": true,
+    "canvas@3.2.3": true,
+    "esbuild@0.28.1": true,
+    "prisma@5.22.0": true,
+    "fsevents@2.3.2": true,
+    "fsevents@2.3.3": true
   },
   "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and the Windows deploy box cannot resolve its own. Listing the win32 variants here forces them into the lockfile; npm skips them on macOS because each declares os/cpu. Keep the versions in step with rollup/esbuild/@napi-rs/canvas.",
   "optionalDependencies": {
