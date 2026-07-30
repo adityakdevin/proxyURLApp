@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { Finding } from '@/lib/claimTypes';
+import { copyText } from '@/lib/utils';
 
 export interface DocField {
   label: string;
@@ -81,7 +82,8 @@ function CopyButton({ text, what }: { text: string; what: string }) {
         // The finding row wraps this in its own click target; without this the copy would
         // also re-select the finding and scroll the document.
         e.stopPropagation();
-        void navigator.clipboard.writeText(text).then(() => {
+        void copyText(text).then((ok) => {
+          if (!ok) return;
           setCopied(true);
           setTimeout(() => setCopied(false), 1200);
         });

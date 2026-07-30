@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, Copy } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
+import { copyText } from '@/lib/utils';
 import { useCrudResource } from '@/hooks/useCrudResource';
 import { DataTable } from '@/components/shared/DataTable';
 import { TableToolbar } from '@/components/shared/TableToolbar';
@@ -169,9 +170,13 @@ export default function UrlConfigs() {
     submit(formData);
   };
 
-  const copyProxyUrl = (opaqueId: string) => {
-    navigator.clipboard.writeText(`${window.location.origin}/proxy/${opaqueId}`);
-    toast({ title: 'Copied', description: 'Proxy URL copied to clipboard' });
+  const copyProxyUrl = async (opaqueId: string) => {
+    const ok = await copyText(`${window.location.origin}/proxy/${opaqueId}`);
+    toast(
+      ok
+        ? { title: 'Copied', description: 'Proxy URL copied to clipboard' }
+        : { title: 'Copy failed', description: 'Could not access the clipboard', variant: 'destructive' }
+    );
   };
 
   const columns: ColumnDef<UrlConfig>[] = [
@@ -216,7 +221,7 @@ export default function UrlConfigs() {
             <Button variant="ghost" className="h-8 w-8 p-0"><MoreHorizontal className="h-4 w-4" /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => copyProxyUrl(row.original.opaqueId)}>
+            <DropdownMenuItem onClick={() => void copyProxyUrl(row.original.opaqueId)}>
               <Copy className="mr-2 h-4 w-4" />Copy Proxy URL
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleEdit(row.original)}><Pencil className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
