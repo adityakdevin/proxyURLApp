@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
+import { RotateCcw, RotateCw } from 'lucide-react';
 import { Finding } from '@/lib/claimTypes';
 
 // Bundle the pdfjs worker via Vite (react-pdf v9 uses pdfjs-dist v4).
@@ -13,40 +14,33 @@ interface DocumentViewerProps {
   documentId: string;
   fileName: string;
   findings: Finding[];
-  /** Scroll to this 1-based page when it changes. Bump `gotoNonce` to re-issue the same
-   *  page (clicking "Page 3" twice must scroll back both times). */
   gotoPage?: number | null;
   gotoNonce?: number;
-  /** Selection is owned by the page, because the findings list lives in the sidebar while
-   *  the highlight boxes live here — both have to agree on which finding is active. */
   activeId: string | null;
   onSelect: (id: string) => void;
-  /** Bumped by the page each time the reviewer PICKS a finding. Only a bump zooms in —
-   *  the auto-selection of the first finding must leave the document at 100%. */
   selectNonce?: number;
-  /** Finding id → badge number, so the number on the page matches the sidebar row. */
   numberOf: Map<string, number>;
 }
 
 const IMAGE_RE = /\.(png|jpe?g|gif|bmp|webp|tiff?)$/i;
 const PDF_RE = /\.pdf$/i;
-// Floor only. At zoom 1 a page fills the container instead of sitting at a fixed 760px with
-// dead margin either side — the reason the document looked small in a wide window.
 const PDF_MIN_PAGE_WIDTH = 320;
 const PDF_PAGE_GUTTER = 16;
-// 0.5 was too high a floor on a bundle: at 100% one page already fills the container, so a
-// reviewer skimming an 8-page claim could not pull back far enough to see a page whole.
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 5;
-const CLICK_ZOOM = 2.5; // zoom level a clicked finding snaps to, so the word is legible
+const CLICK_ZOOM = 2.5; 
 const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
-
-// Word boxes come back tight against the glyphs, which reads as a cramped sticker stuck to
-// the word. Padding them out — proportionally, so it scales with the text size — makes the
-// highlight legible without hiding the characters underneath.
-const BOX_PAD_X = 0.35; // × the box's own width
-const BOX_PAD_Y = 0.45; // × the box's own height
+const BOX_PAD_X = 0.35; 
+const BOX_PAD_Y = 0.45; 
 const pct = (v: number) => `${Math.max(0, Math.min(1, v)) * 100}%`;
+
+type Box = { x: number; y: number; w: number; h: number };
+function rotateBox({ x, y, w, h }: Box, deg: number): Box {
+  if (deg === 90) return { x: 1 - y - h, y: x, w: h, h: w };
+  if (deg === 180) return { x: 1 - x - w, y: 1 - y - h, w, h };
+  if (deg === 270) return { x: y, y: 1 - x - w, w: h, h: w };
+  return { x, y, w, h };
+}
 
 /** Absolute, normalized-% highlight boxes over a rendered page/image. */
 function Highlights({
@@ -54,11 +48,13 @@ function Highlights({
   activeId,
   numberOf,
   onSelect,
+  rotation = 0,
 }: {
   findings: Finding[];
   activeId: string | null;
   numberOf: Map<string, number>;
   onSelect: (id: string) => void;
+  rotation?: number;
 }) {
   return (
     <>
@@ -67,11 +63,6 @@ function Highlights({
         .map((f) => {
           const active = f.id === activeId;
           const soft = f.severity !== 'ERROR'; // doubtful / advisory — amber, not red
-          // Severity owns the colour in every state. The selected box used to turn yellow,
-          // which lost the one thing the reviewer is deciding on: is this a red flag or
-          // only an advisory? Selection is shown with a ring and a pulse instead.
-          // Outline only, never a fill: a tint over the word is exactly what the reviewer is
-          // trying to read, and on a scanned page it turns grey text to mud.
           const cls = active
             ? soft
               ? 'border-2 border-amber-500 ring-2 ring-amber-300/70 z-10'
@@ -84,7 +75,7 @@ function Highlights({
             : soft
             ? 'border-2 border-dashed border-amber-500'
             : 'border-2 border-red-500';
-          const { x, y, w, h } = f.bbox!;
+          const { x, y, w, h } = rotateBox(f.bbox!, rotation);
           const padX = w * BOX_PAD_X;
           const padY = h * BOX_PAD_Y;
           return (
@@ -157,19 +148,13 @@ export function DocumentViewerPanel({
   const [pdfFailed, setPdfFailed] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
-  // Counts pages whose canvas has actually painted. react-pdf reports numPages long
-  // before it renders them, and until a page paints its container is ~0px tall — so a
-  // scroll issued at that moment lands at the top of the document instead of on the
-  // finding. Re-running the scroll as each page paints is what makes "jump to the first
-  // mistake" work on a multi-page bundle, where the flagged page is typically page 5+.
   const [renderedPages, setRenderedPages] = useState(0);
   const [missing, setMissing] = useState(false);
-  // Width the scroll container gives us, so a page can fill it. Re-measured on resize
-  // because this view lives in a tab the reviewer resizes freely.
   const [fitWidth, setFitWidth] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Pending scroll adjustment so Ctrl-wheel zoom stays anchored under the cursor.
   const anchor = useRef<{ ax: number; ay: number; ratio: number; cx: number; cy: number } | null>(null);
 
   useEffect(() => {
@@ -179,10 +164,10 @@ export function DocumentViewerPanel({
     setImgLoaded(false);
     setRenderedPages(0);
     setZoom(1);
+    setRotation(0);
+    setImgSize({ w: 0, h: 0 });
   }, [documentId]);
 
-  // One HEAD probe tells us the file is gone BEFORE a render branch falls back to an
-  // iframe, which would otherwise paint the API's raw {"error":"File not found"} JSON.
   useEffect(() => {
     let cancelled = false;
     fetch(contentUrl, { method: 'HEAD', credentials: 'include' })
@@ -193,10 +178,6 @@ export function DocumentViewerPanel({
     };
   }, [contentUrl]);
 
-  // CLICKING a finding snaps to a legible zoom, then centers its box. Keyed on the caller's
-  // pick counter, not on activeId: the document also auto-selects its first finding (on open,
-  // and again whenever the check filter re-derives the list), and landing at 250% with no
-  // click behind it reads as the viewer being broken.
   const lastPick = useRef(selectNonce);
   useEffect(() => {
     if (selectNonce === lastPick.current) return;
@@ -204,15 +185,12 @@ export function DocumentViewerPanel({
     setZoom((z) => Math.max(z, CLICK_ZOOM));
   }, [selectNonce]);
 
-  // Scroll the selected box to center when it, the zoom, or the page count changes.
   useEffect(() => {
     if (!activeId) return;
     scrollRef.current
       ?.querySelector(`[data-fid="${CSS.escape(activeId)}"]`)
       ?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-    // imgLoaded / renderedPages matter: before the page paints, the overlay has no
-    // height to scroll to, so the scroll has to be re-issued once it does.
-  }, [activeId, zoom, numPages, imgLoaded, renderedPages]);
+  }, [activeId, zoom, rotation, numPages, imgLoaded, renderedPages]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -231,7 +209,6 @@ export function DocumentViewerPanel({
     scrollRef.current
       ?.querySelector(`[data-page="${gotoPage}"]`)
       ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    // renderedPages: a page that has not painted yet has no height to scroll to.
   }, [gotoPage, gotoNonce, renderedPages]);
 
   // Keep the cursor's document point fixed while Ctrl/Cmd-wheel zooming.
@@ -266,6 +243,12 @@ export function DocumentViewerPanel({
   // Stable file object so react-pdf doesn't refetch on every render.
   const pdfFile = useMemo(() => ({ url: contentUrl, withCredentials: true }), [contentUrl]);
 
+  const contentWidth = Math.max(PDF_MIN_PAGE_WIDTH, fitWidth - PDF_PAGE_GUTTER) * zoom;
+  const swapped = rotation % 180 !== 0;
+  const imgRatio = imgSize.w && imgSize.h ? imgSize.h / imgSize.w : 0;
+  const imgW = swapped && imgRatio ? contentWidth / imgRatio : contentWidth;
+  const imgH = imgW * imgRatio;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
         {!missing && ((isImage && !imgFailed) || (isPdf && !pdfFailed)) && (
@@ -291,13 +274,39 @@ export function DocumentViewerPanel({
                 +
               </button>
             </div>
+            <div className="flex items-center overflow-hidden rounded-md border">
+              <button
+                type="button"
+                onClick={() => setRotation((r) => (r + 270) % 360)}
+                className="flex h-7 w-7 items-center justify-center text-gray-600 hover:bg-gray-100"
+                aria-label="Rotate anticlockwise"
+                title="Rotate anticlockwise"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRotation((r) => (r + 90) % 360)}
+                className="flex h-7 w-7 items-center justify-center border-l text-gray-600 hover:bg-gray-100"
+                aria-label="Rotate clockwise"
+                title="Rotate clockwise"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+              </button>
+            </div>
             <button
               type="button"
-              onClick={() => setZoom(1)}
+              onClick={() => {
+                setZoom(1);
+                setRotation(0);
+              }}
               className="h-7 rounded-md border px-2.5 text-xs text-gray-600 hover:bg-gray-100"
             >
               Reset
             </button>
+            {rotation !== 0 && (
+              <span className="text-xs tabular-nums text-gray-500">{rotation}°</span>
+            )}
             {numPages > 0 && (
               <span className="text-xs tabular-nums text-gray-500">
                 {numPages} page{numPages === 1 ? '' : 's'}
@@ -319,12 +328,28 @@ export function DocumentViewerPanel({
           </p>
         ) : isImage ? (
           <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
-            <div className="relative mx-auto" style={{ width: `${zoom * 100}%`, maxWidth: 'none' }}>
+            <div
+              className="relative mx-auto"
+              style={{
+                width: swapped ? imgH : imgW,
+                height: swapped ? imgW : imgH,
+                maxWidth: 'none',
+              }}
+            >
               <img
                 src={contentUrl}
                 alt={fileName}
-                className="block w-full h-auto"
-                onLoad={() => setImgLoaded(true)}
+                className="absolute left-1/2 top-1/2 block"
+                style={{
+                  width: imgW,
+                  height: imgH || 'auto',
+                  transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+                }}
+                onLoad={(e) => {
+                  const el = e.currentTarget;
+                  setImgSize({ w: el.naturalWidth, h: el.naturalHeight });
+                  setImgLoaded(true);
+                }}
                 onError={() => setImgFailed(true)}
               />
               <Highlights
@@ -332,6 +357,7 @@ export function DocumentViewerPanel({
                 activeId={activeId}
                 numberOf={numberOf}
                 onSelect={onSelect}
+                rotation={rotation}
               />
             </div>
           </div>
@@ -347,7 +373,7 @@ export function DocumentViewerPanel({
               {Array.from({ length: numPages }, (_, i) => {
                 const page = i + 1;
                 const pageFindings = byPage.get(page) ?? [];
-                const pageWidth = Math.max(PDF_MIN_PAGE_WIDTH, fitWidth - PDF_PAGE_GUTTER) * zoom;
+                const pageWidth = contentWidth;
                 return (
                   <div
                     key={page}
@@ -358,6 +384,7 @@ export function DocumentViewerPanel({
                     <Page
                       pageNumber={page}
                       width={pageWidth}
+                      rotate={rotation === 0 ? undefined : rotation}
                       renderTextLayer={false}
                       renderAnnotationLayer={false}
                       onRenderSuccess={() => setRenderedPages((n) => n + 1)}
@@ -367,6 +394,7 @@ export function DocumentViewerPanel({
                       activeId={activeId}
                       numberOf={numberOf}
                       onSelect={onSelect}
+                      rotation={rotation}
                     />
                   </div>
                 );
