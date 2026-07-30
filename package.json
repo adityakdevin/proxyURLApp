@@ -30,7 +30,8 @@
     "test:e2e": "npm run test:e2e:api && npm run test:e2e:ui",
     "lint": "npm run lint --workspaces",
     "deploy": "npm run db:generate && npm run db:push && npm run build",
-    "redeploy": "pm2 stop proxyurl-server || echo skip && npm run deploy && pm2 startOrRestart ecosystem.config.js"
+    "pm2:stop": "pm2 stop proxyurl-server || echo skip",
+    "redeploy": "npm run pm2:stop && npm run deploy && pm2 startOrRestart ecosystem.config.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
@@ -38,6 +39,12 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and the Windows deploy box cannot resolve its own. Listing the win32 variants here forces them into the lockfile; npm skips them on macOS because each declares os/cpu. Keep the versions in step with rollup/esbuild/@napi-rs/canvas.",
+  "optionalDependencies": {
+    "@esbuild/win32-x64": "0.28.1",
+    "@napi-rs/canvas-win32-x64-msvc": "0.1.100",
+    "@rollup/rollup-win32-x64-msvc": "4.62.2"
   },
   "overrides": {
     "brace-expansion": "^1.1.17",
