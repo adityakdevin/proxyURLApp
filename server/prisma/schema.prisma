@@ -324,8 +324,13 @@ model DocumentTypeMaster {
   category     DocumentTypeCategory
   govtCode     GovtDocumentCode?    @unique @map("govt_code")
   displayOrder Int                  @default(0) @map("display_order")
-  // Must a claim carry this type to pass FULL validation? (default preserves old behaviour)
-  isRequired   Boolean              @default(true) @map("is_required")
+  // Must a claim carry this type to pass FULL validation?
+  //
+  // Defaults to FALSE. It defaulted to true, which meant every type ever added became
+  // mandatory for EVERY claim without anyone choosing it — a production claim read
+  // "3 of 9 required document types present" and failed Full Scan while carrying exactly
+  // the documents it should. A type is required only when someone ticks it.
+  isRequired   Boolean              @default(false) @map("is_required")
   status       Status               @default(ACTIVE)
   createdAt    DateTime             @default(now()) @map("created_at")
   updatedAt    DateTime             @updatedAt @map("updated_at")

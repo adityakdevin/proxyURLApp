@@ -70,7 +70,9 @@ export class DocumentTypeService {
           category: input.category,
           govtCode: input.category === 'GOVT' ? input.govtCode! : null,
           displayOrder: input.displayOrder ?? 0,
-          isRequired: input.isRequired ?? true,
+          // Not required unless asked for — see the schema comment. A type silently made
+          // mandatory is one every claim is then judged against.
+          isRequired: input.isRequired ?? false,
           status: input.status ?? Status.ACTIVE,
           createdBy: actorId,
           updatedBy: actorId,
