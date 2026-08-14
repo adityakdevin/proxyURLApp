@@ -16,6 +16,7 @@
     "db:setup:samples": "tsx prisma/setupSampleClaims.ts",
     "db:setup:spelling": "tsx prisma/setupSpellingChecks.ts",
     "db:revalidate": "tsx prisma/revalidateClaims.ts",
+    "qa:diagnostics": "tsx prisma/qaCaseDiagnostics.ts",
     "db:reset-admin": "tsx prisma/resetAdminPassword.ts",
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
