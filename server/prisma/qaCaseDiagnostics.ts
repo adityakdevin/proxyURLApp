@@ -26,6 +26,11 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 // Imported after dotenv so the client reads the URL resolved above.
 import { PrismaClient } from '@prisma/client';
+// The REAL parser, not a copy of it. This script originally reimplemented the key-splitting
+// inline, which meant it kept reporting the pre-fix behaviour after the fix shipped and
+// looked like a failed deploy. A diagnostic that does not exercise the code under test is
+// worse than no diagnostic.
+import { parseQrPayload } from '../src/validators/qrCompare.js';
 
 const prisma = new PrismaClient();
 const FULL = process.argv.includes('--full');
@@ -39,31 +44,20 @@ const CASES = [
   { sno: 20, vin: 'MZBFB813LSN603467', asks: 'failed to scan PAN QR' },
 ];
 
-/** Name the payload's shape — that is what decides how parseQrPayload must handle it. */
+/** Name the payload's shape. Mirrors the separator PRECEDENCE in parseQrPayload — newline
+ *  first, then pipe, then comma — so what this prints matches how the payload is really
+ *  split. Reporting "comma-delimited" for a newline block is what made this tool claim the
+ *  GST fix had not deployed when it had. */
 function shapeOf(v: string): string {
   if (v.startsWith('binary:')) return 'binary blob (base64)';
   if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v)) return 'JWT (3 dot-separated base64url parts)';
   if (v.trimStart().startsWith('<')) return 'XML';
   if (/^https?:\/\//i.test(v)) return 'URL';
   if (/^\d+$/.test(v)) return `all digits (${v.length})`;
+  if (/[\r\n]/.test(v)) return 'newline-delimited';
   if (v.includes('|')) return 'pipe-delimited';
   if (v.includes(',')) return 'comma-delimited';
-  return 'other';
-}
-
-/** Keys a "Label:Value" style payload carries, which is what the mapping is keyed on. */
-function keysOf(v: string): string[] {
-  if (v.trimStart().startsWith('<')) {
-    return [...v.matchAll(/([A-Za-z_][\w-]*)="/g)].map((m) => m[1]);
-  }
-  const sep = v.includes('|') ? '|' : ',';
-  return v
-    .split(sep)
-    .map((part) => {
-      const m = /(?<!\d):|:(?!\d)/.exec(part);
-      return m && m.index > 0 ? part.slice(0, m.index).trim() : null;
-    })
-    .filter((k): k is string => !!k);
+  return 'single line, no delimiter';
 }
 
 const mask = (v: string) => (FULL ? v : v.length <= 12 ? '*'.repeat(v.length) : `${v.slice(0, 6)}…${v.slice(-4)} (${v.length} chars)`);
@@ -126,13 +120,20 @@ async function main() {
       for (const q of decoded) {
         console.log(`  QR: ${q.fileName}${q.page !== undefined ? ` p.${q.page}` : ''}`);
         console.log(`      shape : ${shapeOf(q.value)}`);
-        const keys = keysOf(q.value);
-        console.log(`      keys  : ${keys.length ? keys.join(', ') : '(none — parseQrPayload yields an empty map, so no field rows can render)'}`);
+        // Straight from the validator's own parser, so this line reflects the DEPLOYED code.
+        const keys = [...parseQrPayload(q.value).keys()];
+        console.log(
+          `      keys  : ${keys.length ? keys.join(', ') : '(none — parseQrPayload yields an empty map, so no field rows can render)'}`
+        );
         console.log(`      value : ${mask(q.value)}`);
       }
     }
     const cmp = d?.comparisons ?? [];
-    console.log(`  QR field rows rendered: ${cmp.length}${cmp.length === 0 ? '  ← nothing for the reviewer to see' : ''}`);
+    // STORED from the last validation run — not recomputed here. It only moves after the
+    // claim is re-validated, so a stale number means "not re-validated yet", not "not fixed".
+    console.log(
+      `  QR field rows rendered (stored, last run): ${cmp.length}${cmp.length === 0 ? '  ← nothing for the reviewer to see' : ''}`
+    );
     console.log();
   }
 }
