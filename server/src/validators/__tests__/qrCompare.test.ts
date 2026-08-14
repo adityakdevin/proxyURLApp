@@ -103,6 +103,27 @@ describe('QR payload parsing', () => {
     expect(p.has('gstnofbuyer')).toBe(false); // empty value carries nothing to compare
   });
 
+
+  it('verifies a GST certificate end to end: its own QR against its own printed rows', () => {
+    // Both sides verbatim from production claim MZBEU813LSN749087 p.6.
+    const pane: DocField[] = [
+      { label: 'GSTIN', value: '24AAGFO2658A1ZM' },
+      { label: 'PAN Number', value: 'AAGFO2658A' },
+      { label: 'Legal Name', value: 'OM ENTERPRISE' },
+    ];
+    const cmp = compareQrToFields(GST_CERT, pane);
+    expect(verdictFor(cmp, 'GSTIN')).toBe('MATCH');
+    expect(verdictFor(cmp, 'PAN Number')).toBe('MATCH');
+    // Legal Name is shown but deliberately not compared - a long OCR'd business name
+    // would read as a MISMATCH on one dropped word, and a MISMATCH fails the check.
+    expect(cmp.some((c) => c.label === 'Legal Name')).toBe(false);
+  });
+
+  it('flags a GSTIN substituted on the page', () => {
+    const cmp = compareQrToFields(GST_CERT, [{ label: 'GSTIN', value: '24ZZZZZ9999Z1ZQ' }]);
+    expect(verdictFor(cmp, 'GSTIN')).toBe('MISMATCH');
+  });
+
   it('compares nothing for an encrypted Secure QR blob', () => {
     expect(parseQrPayload('binary:AAECAwQ=').size).toBe(0);
     expect(compareQrToFields('binary:AAECAwQ=', PANE)).toEqual([]);
