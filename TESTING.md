@@ -60,9 +60,18 @@ can only see/act on claims under that pair. Admin is unrestricted.
 
 ## 2. Setup gotchas — read before testing
 
-1. **The DB is PostgreSQL, not MySQL.** Despite `CLAUDE.md` / `.env.example` mentioning
-   MySQL, the live `.env` uses `postgresql://...@127.0.0.1:5432/proxyapp_db`. Make sure
-   **Postgres** is running and the `proxyapp_db` database exists.
+1. **The DB is MySQL.** This note previously said PostgreSQL, on the strength of a
+   `postgresql://...@127.0.0.1:5432/proxyapp_db` line in a repo-root `.env`. That URL could
+   never have worked: `schema.prisma` declares `provider = "mysql"`, and Prisma validates
+   the protocol against the provider — pointing it at that URL fails with
+
+   ```
+   Error validating datasource `db`: the URL must start with the protocol `mysql://`
+   ```
+
+   The root `.env` was read by nothing, so the wrong value sat there unnoticed while the app
+   ran happily against `server/.env`. Put the connection string in **`server/.env`** and make
+   sure **MySQL** is running with the `proxyapp_db` database. See `server/.env.example`.
 
 2. **A fresh seed creates ZERO sample claims.** `seed.ts` only adds sample claim data
    *if an ACTIVE SubCategory already exists*. On a brand-new DB there is no
@@ -77,10 +86,10 @@ can only see/act on claims under that pair. Admin is unrestricted.
    `D:\` prefix and re-roots scan/sync reads under it. Without it, folder scan/sync
    finds nothing.
 
-### Extra `.env` entries for claims testing (add these)
+### Extra `server/.env` entries for claims testing (add these)
 
 ```bash
-# Claims module (not in .env.example yet)
+# Claims module (not in server/.env.example yet)
 CLAIMS_SCAN_ROOT=./dev-scan        # local stand-in for the Windows scan drive
 OCR_CACHE_DIR=./.ocr-cache         # Tesseract language-data cache (first run downloads)
 UPLOADS_ROOT=./uploads             # where uploaded documents are stored
@@ -93,7 +102,7 @@ UPLOADS_ROOT=./uploads             # where uploaded documents are stored
 ## 3. First-time setup (fresh environment)
 
 ```bash
-# Ensure Postgres is running and proxyapp_db exists, then from the repo root:
+# Ensure MySQL is running and proxyapp_db exists, then from the repo root:
 npm install
 npm run db:generate
 npm run db:push        # NOT db:migrate — schema is managed with `prisma db push`

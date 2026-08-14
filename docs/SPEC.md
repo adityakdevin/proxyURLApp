@@ -12,7 +12,7 @@ The Proxy URL App is a web-based application that provides controlled access to 
 |-------|------------|
 | Backend | Node.js with Express |
 | Frontend | React |
-| Database | PostgreSQL |
+| Database | MySQL (via Prisma) — the spec originally called for PostgreSQL; the implementation uses MySQL, and `server/prisma/schema.prisma` declares `provider = "mysql"` |
 | Password Hashing | bcrypt |
 | Protocol | HTTPS only (all environments) |
 
