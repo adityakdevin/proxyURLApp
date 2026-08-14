@@ -68,7 +68,7 @@ export default function DocumentTypeMasters() {
     govtCode: GovtCode | '';
     displayOrder: number;
     isRequired: boolean;
-  }>({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0, isRequired: true });
+  }>({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0, isRequired: false });
   // All ACTIVE GOVT docs for the selected SubCategory (not just the current page),
   // so the "code already used" filter is accurate regardless of pagination.
   const [allGovtDocs, setAllGovtDocs] = useState<DocType[]>([]);
@@ -292,7 +292,7 @@ export default function DocumentTypeMasters() {
         <Button
           onClick={() => {
             setSelected(null);
-            setFormData({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0, isRequired: true });
+            setFormData({ name: '', category: 'CUSTOM', govtCode: '', displayOrder: 0, isRequired: false });
             setIsFormOpen(true);
           }}
         >
@@ -390,14 +390,23 @@ export default function DocumentTypeMasters() {
                 }
               />
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                id="isRequired"
-                type="checkbox"
-                checked={formData.isRequired}
-                onChange={(e) => setFormData({ ...formData, isRequired: e.target.checked })}
-              />
-              <Label htmlFor="isRequired">Required for Full-scan validation</Label>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <input
+                  id="isRequired"
+                  type="checkbox"
+                  checked={formData.isRequired}
+                  onChange={(e) => setFormData({ ...formData, isRequired: e.target.checked })}
+                />
+                <Label htmlFor="isRequired">Required for Full-scan validation</Label>
+              </div>
+              {/* The consequence used to be invisible, and the box used to start ticked, so
+                  types became mandatory without anyone deciding they were. */}
+              <p className="text-xs text-muted-foreground">
+                Applies to <strong>every claim</strong>, not just this category. A claim whose
+                documents do not include this type fails Full Scan. Leave unticked unless the
+                document is genuinely mandatory on every claim.
+              </p>
             </div>
           </div>
           <DialogFooter>
