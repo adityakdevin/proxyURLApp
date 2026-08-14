@@ -88,11 +88,6 @@ const PAN_SHAPE_RE = /\b([A-Z]{5}[0-9]{4}[A-Z])\b/;
  *  mistake "24AAGFO2658A1ZM" for the PAN — it correctly finds the separate "PAN :" line. */
 const GSTIN_LABEL_RE = /gst(?:in|\s*no)\.?\s*[:\-]?\s*(\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z])/i;
 const GSTIN_SHAPE_RE = /\b(\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z])\b/;
-/** "Legal Name :OM ENTERPRISE" / "Legal Name of Business:WEST COAST MOTORS PRIVATE LIMITED".
- *  Stops at a line break so the following field never bleeds into the value. */
-const LEGAL_NAME_RE = /legal\s*name(?:\s*of\s*business)?\s*[:\-]?\s*([^\r\n]{2,80})/i;
-const TRADE_NAME_RE = /trade\s*name(?:\s*if\s*any)?\s*[:\-]?\s*([^\r\n]{2,80})/i;
-const REG_DATE_RE = /date\s*of\s*(?:registration|liability)\s*[:\-]?\s*(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})/i;
 
 // Names on an ID card sit in a table cell next to their label, with no colon between them,
 // and the labels are bilingual. Anything requiring "Label: Value" reads nothing off them.
@@ -362,9 +357,14 @@ export function documentFields(text: string, type: FieldDocType): DocField[] {
         // The holder's PAN is printed separately AND embedded in the GSTIN; PAN_SHAPE_RE's
         // word boundaries mean it reads the printed one, not the substring.
         { label: 'PAN Number', value: one(text.toUpperCase(), PAN_SHAPE_RE) },
-        { label: 'Legal Name', value: one(text, LEGAL_NAME_RE) },
-        { label: 'Trade Name', value: one(text, TRADE_NAME_RE) },
-        { label: 'Date of Registration', value: one(text, REG_DATE_RE) },
+        // NO Legal Name / Trade Name / Date of Registration rows. A real REG-06 is a NUMBERED
+        // FORM whose labels OCR into one run — "1. Legal Name 2. Trade Name, if any
+        // 3. Constitution of Business ..." — with the values in a separate column. A
+        // label-anchored regex captures the FOLLOWING LABELS as the value: on claim
+        // MZBEU813LSN749087 p.6 "Legal Name" returned "2. Trade Name, if any 3. Constitution
+        // of Business Partnership 4. Address of Prin". Showing that to a reviewer is worse
+        // than showing nothing. Reinstate only with a layout-aware extractor tested against
+        // real OCR text, not a hand-written fixture.
       ];
     case 'INVOICE':
       return [
