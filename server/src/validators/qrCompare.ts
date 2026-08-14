@@ -65,6 +65,15 @@ const QR_KEY_TO_LABELS: Record<string, string[]> = {
   //                 Adding one means writing a GSTIN extractor, which wants a real GST
   //                 invoice sample to get right.
   invoiceno: ['Invoice No'],
+  // The GST certificate's own QR repeats the GSTIN printed on it, so the two disagreeing is
+  // exactly the tampering this check exists to catch. `pan` above already covers the PAN row
+  // the GST pane now carries.
+  //
+  // `legalname` / `legalnameofbusiness` stay UNMAPPED: the value is a long business name read
+  // by OCR ("WEST COAST MOTORS PRIVATE LIMITED"), and identifierMatches allows only
+  // length/8 edits, so one dropped word reads as a MISMATCH — which fails the check on a
+  // correct document. Those rows are shown for the reviewer without a verdict.
+  gstin: ['GSTIN'],
 };
 
 const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, '');

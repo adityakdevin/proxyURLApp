@@ -18,11 +18,24 @@ export interface DocField {
 
 /** The document kinds that get a field pane. Govt codes come from classifyPage, business
  *  types from classifyDocType; PAN/AADHAR win when both fire (a KYC page IS a PAN card). */
-export type FieldDocType = 'PAN' | 'AADHAR' | 'INVOICE' | 'INSURANCE';
+export type FieldDocType = 'PAN' | 'AADHAR' | 'INVOICE' | 'INSURANCE' | 'GST';
+
+/**
+ * A GST REGISTRATION CERTIFICATE, as opposed to any page that merely mentions GST.
+ *
+ * The shared GOVT_TYPE_MARKERS.GST also fires on "goods and services tax", which a dealer's
+ * tax invoice prints too — routing those pages to the GST pane would strip an invoice of its
+ * invoice number, chassis and model. The certificate carries its own wording (Form GST
+ * REG-06, "Legal Name", "Type of Registration"), so require one of those here. The loose
+ * marker is left untouched for FULL's required-document check, which only asks "is a GST
+ * document present at all".
+ */
+const GST_CERT_RE = /gst\s*reg-?\s*0?6|registration\s+certificate|legal\s+name|type\s+of\s+registrat/i;
 
 export function fieldDocType(text: string): FieldDocType | null {
   const govt = classifyPage(text);
   if (govt === 'PAN' || govt === 'AADHAR') return govt;
+  if (govt === 'GST' && GST_CERT_RE.test(text)) return 'GST';
   const biz = classifyDocType(text);
   if (biz === 'INVOICE' || biz === 'INSURANCE') return biz;
   return null;
@@ -69,6 +82,17 @@ function aadhaarNumber(text: string): string | null {
 // anchoring on the word "PAN", which on a real card also appears in "PAN Services Unit" —
 // and duly reported the holder's PAN as "SERVICES".
 const PAN_SHAPE_RE = /\b([A-Z]{5}[0-9]{4}[A-Z])\b/;
+/** GSTIN: 2 state digits, the holder's PAN, an entity digit, 'Z', a checksum character.
+ *  Label-anchored first; the bare shape is distinctive enough to stand alone as a fallback.
+ *  Note the PAN inside a GSTIN has no word boundary before it, so PAN_SHAPE_RE cannot
+ *  mistake "24AAGFO2658A1ZM" for the PAN — it correctly finds the separate "PAN :" line. */
+const GSTIN_LABEL_RE = /gst(?:in|\s*no)\.?\s*[:\-]?\s*(\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z])/i;
+const GSTIN_SHAPE_RE = /\b(\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z])\b/;
+/** "Legal Name :OM ENTERPRISE" / "Legal Name of Business:WEST COAST MOTORS PRIVATE LIMITED".
+ *  Stops at a line break so the following field never bleeds into the value. */
+const LEGAL_NAME_RE = /legal\s*name(?:\s*of\s*business)?\s*[:\-]?\s*([^\r\n]{2,80})/i;
+const TRADE_NAME_RE = /trade\s*name(?:\s*if\s*any)?\s*[:\-]?\s*([^\r\n]{2,80})/i;
+const REG_DATE_RE = /date\s*of\s*(?:registration|liability)\s*[:\-]?\s*(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})/i;
 
 // Names on an ID card sit in a table cell next to their label, with no colon between them,
 // and the labels are bilingual. Anything requiring "Label: Value" reads nothing off them.
@@ -330,6 +354,18 @@ export function documentFields(text: string, type: FieldDocType): DocField[] {
         { label: "Father's Name", value: relation(text, 'FATHER') ?? careOfName(text) },
         { label: 'Date of Birth', value: one(text, DOB_RE) ?? anyDate(text) },
       ];
+    // GST registration certificate. Its QR repeats what the certificate prints, so these
+    // rows are what a reviewer checks the code against — the whole point of reading it.
+    case 'GST':
+      return [
+        { label: 'GSTIN', value: one(text.toUpperCase(), GSTIN_LABEL_RE) ?? one(text.toUpperCase(), GSTIN_SHAPE_RE) },
+        // The holder's PAN is printed separately AND embedded in the GSTIN; PAN_SHAPE_RE's
+        // word boundaries mean it reads the printed one, not the substring.
+        { label: 'PAN Number', value: one(text.toUpperCase(), PAN_SHAPE_RE) },
+        { label: 'Legal Name', value: one(text, LEGAL_NAME_RE) },
+        { label: 'Trade Name', value: one(text, TRADE_NAME_RE) },
+        { label: 'Date of Registration', value: one(text, REG_DATE_RE) },
+      ];
     case 'INVOICE':
       return [
         { label: 'Invoice No', value: one(text, INVOICE_NO_RE) },
@@ -365,6 +401,7 @@ export const TYPE_LABEL: Record<FieldDocType, string> = {
   AADHAR: 'Aadhaar',
   INVOICE: 'Invoice',
   INSURANCE: 'Insurance Policy',
+  GST: 'GST Certificate',
 };
 
 /**

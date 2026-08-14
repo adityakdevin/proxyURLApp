@@ -192,3 +192,47 @@ Help Desk 1800 300 1947`;
     expect(valueOf(f, 'Date of Birth')).toBeNull();
   });
 });
+
+// Verbatim from production claim MZBEU813LSN749087 p.6 (S.No 16 of the 2026-08 QA sample).
+const GST_CERT_TEXT = `Form GST REG-06
+Registration Certificate
+Registration Number : 24AAGFO2658A1ZM
+Legal Name : OM ENTERPRISE
+Trade Name if any : OM ENTERPRISE
+PAN : AAGFO2658A
+Address of Principal Place of Business : SWATIPARK MAIN ROAD, PLOT NO 15 SHED NO 3, RAJKOT, Gujarat, 360005
+Type of Registration : Regular
+Date of Registration : 25/02/2019`;
+
+// A dealer's vehicle tax invoice. It prints GST wording too, which is why the field pane
+// needs a certificate-specific signal rather than the loose GOVT_TYPE_MARKERS.GST.
+const TAX_INVOICE_TEXT = `Savan IB Automotive Private Limited
+Vehicle Tax Invoice
+Goods and Services Tax
+Dealer GST / PAN No : 24ABACS4515J1ZH/ABACS4515J
+Invoice No : GJ308K202500942
+Invoice Date : 26/01/2026
+Customer Id : C2026010724
+Chassis No.: MZBEU813LSN749087`;
+
+describe('GST registration certificate', () => {
+  it('classifies a certificate as GST', () => {
+    expect(fieldDocType(GST_CERT_TEXT)).toBe('GST');
+  });
+
+  // The whole reason GST_CERT_RE exists: routing an invoice to the GST pane would strip it
+  // of its invoice number, chassis and model.
+  it('does NOT reclassify a tax invoice that merely mentions GST', () => {
+    expect(fieldDocType(TAX_INVOICE_TEXT)).toBe('INVOICE');
+    expect(valueOf(documentFields(TAX_INVOICE_TEXT, 'INVOICE'), 'Invoice No')).toBe('GJ308K202500942');
+  });
+
+  it('reads GSTIN, PAN and the names off the certificate', () => {
+    const f = documentFields(GST_CERT_TEXT, 'GST');
+    expect(valueOf(f, 'GSTIN')).toBe('24AAGFO2658A1ZM');
+    // The PAN is ALSO embedded in the GSTIN; word boundaries keep the printed one.
+    expect(valueOf(f, 'PAN Number')).toBe('AAGFO2658A');
+    expect(valueOf(f, 'Legal Name')).toBe('OM ENTERPRISE');
+    expect(valueOf(f, 'Date of Registration')).toBe('25/02/2019');
+  });
+});
