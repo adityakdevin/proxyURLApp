@@ -65,15 +65,20 @@ const QR_KEY_TO_LABELS: Record<string, string[]> = {
   //                 Adding one means writing a GSTIN extractor, which wants a real GST
   //                 invoice sample to get right.
   invoiceno: ['Invoice No'],
-  // The GST certificate's own QR repeats the GSTIN printed on it, so the two disagreeing is
-  // exactly the tampering this check exists to catch. `pan` above already covers the PAN row
-  // the GST pane now carries.
+  // NO `gstin` ENTRY, DELIBERATELY. It was mapped once and had to be removed: on a real
+  // certificate (claim MZBEU813LSN749087 p.6) OCR read the printed GSTIN as
+  // "24AAGFO2459A1ZM" where the QR says "24AAGFO2658A1ZM" — two digit misreads on small
+  // print beside the code. identifierMatches allows length/8 = 1 edit for a 15-character
+  // GSTIN, so that scored MISMATCH, and a MISMATCH FAILS the whole QR check on a perfectly
+  // legitimate document.
   //
-  // `legalname` / `legalnameofbusiness` stay UNMAPPED: the value is a long business name read
-  // by OCR ("WEST COAST MOTORS PRIVATE LIMITED"), and identifierMatches allows only
-  // length/8 edits, so one dropped word reads as a MISMATCH — which fails the check on a
-  // correct document. Those rows are shown for the reviewer without a verdict.
-  gstin: ['GSTIN'],
+  // The read was OCR, not tampering: the QR's own PAN (AAGFO2658A) agrees with the QR's
+  // GSTIN, and a forger altering one would have altered both. Chassis and policy numbers
+  // survive this comparison because they are printed large; a GSTIN is not.
+  //
+  // `legalname` is unmapped for the same class of reason — a long OCR'd business name where
+  // one dropped word reads as a mismatch. Both rows are DISPLAYED for the reviewer; they
+  // are simply not allowed to fail a claim on their own.
 };
 
 const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, '');

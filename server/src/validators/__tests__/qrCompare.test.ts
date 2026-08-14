@@ -104,24 +104,26 @@ describe('QR payload parsing', () => {
   });
 
 
-  it('verifies a GST certificate end to end: its own QR against its own printed rows', () => {
-    // Both sides verbatim from production claim MZBEU813LSN749087 p.6.
+  it('verifies a GST certificate PAN against its own QR', () => {
     const pane: DocField[] = [
       { label: 'GSTIN', value: '24AAGFO2658A1ZM' },
       { label: 'PAN Number', value: 'AAGFO2658A' },
-      { label: 'Legal Name', value: 'OM ENTERPRISE' },
     ];
     const cmp = compareQrToFields(GST_CERT, pane);
-    expect(verdictFor(cmp, 'GSTIN')).toBe('MATCH');
     expect(verdictFor(cmp, 'PAN Number')).toBe('MATCH');
-    // Legal Name is shown but deliberately not compared - a long OCR'd business name
-    // would read as a MISMATCH on one dropped word, and a MISMATCH fails the check.
-    expect(cmp.some((c) => c.label === 'Legal Name')).toBe(false);
   });
 
-  it('flags a GSTIN substituted on the page', () => {
-    const cmp = compareQrToFields(GST_CERT, [{ label: 'GSTIN', value: '24ZZZZZ9999Z1ZQ' }]);
-    expect(verdictFor(cmp, 'GSTIN')).toBe('MISMATCH');
+  // REGRESSION. `gstin` was mapped for comparison and had to be unmapped: on production
+  // claim MZBEU813LSN749087 p.6, OCR read the printed GSTIN as 24AAGFO2459A1ZM where the QR
+  // says 24AAGFO2658A1ZM — two digit misreads on small print. identifierMatches allows
+  // length/8 = 1 edit over 15 characters, so it scored MISMATCH, and a MISMATCH FAILS the
+  // whole QR check on a legitimate certificate. It was OCR and not tampering: the QR's own
+  // PAN agrees with the QR's GSTIN, which a forger would have altered together.
+  it('does NOT fail a claim when OCR misreads the printed GSTIN', () => {
+    const cmp = compareQrToFields(GST_CERT, [
+      { label: 'GSTIN', value: '24AAGFO2459A1ZM' }, // what OCR actually read
+    ]);
+    expect(cmp).toEqual([]); // shown to the reviewer, never compared
   });
 
   it('compares nothing for an encrypted Secure QR blob', () => {

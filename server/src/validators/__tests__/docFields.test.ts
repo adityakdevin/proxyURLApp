@@ -227,12 +227,24 @@ describe('GST registration certificate', () => {
     expect(valueOf(documentFields(TAX_INVOICE_TEXT, 'INVOICE'), 'Invoice No')).toBe('GJ308K202500942');
   });
 
-  it('reads GSTIN, PAN and the names off the certificate', () => {
+  it('reads GSTIN and PAN off the certificate', () => {
     const f = documentFields(GST_CERT_TEXT, 'GST');
     expect(valueOf(f, 'GSTIN')).toBe('24AAGFO2658A1ZM');
     // The PAN is ALSO embedded in the GSTIN; word boundaries keep the printed one.
     expect(valueOf(f, 'PAN Number')).toBe('AAGFO2658A');
-    expect(valueOf(f, 'Legal Name')).toBe('OM ENTERPRISE');
-    expect(valueOf(f, 'Date of Registration')).toBe('25/02/2019');
+  });
+
+  // A real REG-06 is a NUMBERED FORM: OCR runs its labels together and puts the values in a
+  // separate column. A label-anchored regex captured the FOLLOWING LABELS as the value and
+  // showed a reviewer "2. Trade Name, if any 3. Constitution of Business ...". Seen on
+  // production claim MZBEU813LSN749087 p.6. The pane now carries only the two fields that
+  // are read by shape rather than by label.
+  it('shows no name/date rows, which a numbered form cannot yield by label', () => {
+    const FORM_OCR = `Form GST REG-06
+1. Legal Name 2. Trade Name, if any 3. Constitution of Business 4. Address of Principal Place of Business
+Registration Number : 24AAGFO2658A1ZM`;
+    const labels = documentFields(FORM_OCR, 'GST').map((x) => x.label);
+    expect(labels).toEqual(['GSTIN', 'PAN Number']);
+    expect(labels).not.toContain('Legal Name');
   });
 });
