@@ -3,8 +3,16 @@ import path from 'path';
 import { WordBox } from '../validators/types.js';
 import { clamp01 } from './bbox.js';
 
-/** Cap pages scanned per PDF so a giant document can't dominate a run. */
-const MAX_PDF_PAGES = 50;
+/**
+ * Cap pages scanned per PDF so a giant document can't dominate a run.
+ *
+ * ONE ceiling for the whole pipeline. Text extraction, OCR and the QR scan each used to
+ * stop at a different page (50 / 40 / 60), so a bundled claim silently lost its QR at one
+ * page, its OCR at another and its text at a third — with nothing anywhere saying a page
+ * had been skipped. Callers that truncate now report it; see `RasterPage.totalPages` and
+ * the *_PAGES_TRUNCATED findings.
+ */
+export const MAX_PDF_PAGES = Number(process.env.SCAN_MAX_PAGES ?? 60);
 // Horizontal bands a page is divided into when judging how much of it the text layer
 // actually covers, and the fraction below which the page is treated as mostly picture and
 // sent for OCR even though it does carry some text.
@@ -83,15 +91,22 @@ interface PdfTextItem {
  * failure (image-only/scanned PDFs still return {text:'',words:[]}; hard errors return null)
  * so the caller can fall back to text-only extraction — highlighting degrades to no boxes.
  */
-export async function extractPdf(
-  absolutePath: string
-): Promise<{ text: string; words: WordBox[]; textlessPages: number[]; pageTexts: string[] } | null> {
+export async function extractPdf(absolutePath: string): Promise<{
+  text: string;
+  words: WordBox[];
+  textlessPages: number[];
+  pageTexts: string[];
+  /** Pages in the file. Compare against MAX_PDF_PAGES to see whether the cap truncated it. */
+  totalPages: number;
+} | null> {
   try {
     // Dynamic import: pdfjs-dist ships ESM-only; NodeNext keeps this a native import()
     // so it loads under both tsx (dev) and compiled dist (prod).
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
     const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
+    // Read before the finally below destroys the document — the return statement runs after it.
+    const totalPages = doc.numPages;
     const words: WordBox[] = [];
     const parts: string[] = [];
     // Per-page text (index 0 = page 1), so REDFLAG/segment can classify and run
@@ -148,7 +163,7 @@ export async function extractPdf(
       await doc.cleanup?.();
       await doc.destroy?.();
     }
-    return { text: parts.join(' ').trim(), words, textlessPages, pageTexts };
+    return { text: parts.join(' ').trim(), words, textlessPages, pageTexts, totalPages };
   } catch {
     return null;
   }
@@ -241,6 +256,9 @@ export interface RasterPage {
   png: Buffer;
   width: number;
   height: number;
+  /** Pages in the source PDF, not in this array — so a caller can tell that the cap (or an
+   *  `onlyPages` filter) left pages unscanned and say so instead of reporting a clean run. */
+  totalPages: number;
 }
 
 /**
@@ -297,6 +315,7 @@ export async function rasterizePdf(
           png: canvas.toBuffer('image/png'),
           width: Math.round(viewport.width),
           height: Math.round(viewport.height),
+          totalPages: doc.numPages,
         });
       }
     } finally {

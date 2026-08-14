@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma, Status, SpellTerm } from '@prisma/client';
+import { MIN_TERM_LEN } from '../validators/logic.js';
 
 export interface CreateSpellTermInput {
   term: string;
@@ -29,11 +30,37 @@ function normalize(term: string): string {
   return term.toLowerCase().trim();
 }
 
+/**
+ * Reject a term the matcher could never act on, rather than storing one that silently
+ * does nothing. Both shapes were accepted before and were invisible failures: an admin
+ * added "Security Guard" or "For", saw it listed as ACTIVE, and no document was ever
+ * flagged against it.
+ *
+ * - A multi-word term cannot match: a spell candidate is a single run of letters
+ *   (`spellCandidates`), so nothing containing a space is ever within edit distance.
+ * - A term under MIN_TERM_LEN is skipped by `findTermMisspellings` as coincidence-prone.
+ */
+function assertMatchable(term: string): void {
+  if (/\s/.test(term)) {
+    throw new SpellTermServiceError(
+      'INVALID_TERM',
+      'A term must be a single word — the spell check compares one word at a time, so a term containing a space can never match. Add each word as its own term.'
+    );
+  }
+  if (term.length < MIN_TERM_LEN) {
+    throw new SpellTermServiceError(
+      'INVALID_TERM',
+      `A term must be at least ${MIN_TERM_LEN} characters — shorter terms match too many unrelated words to be evidence of anything.`
+    );
+  }
+}
+
 export class SpellTermService {
   constructor(private prisma: PrismaClient) {}
 
   async create(input: CreateSpellTermInput, actorId: string): Promise<SpellTerm> {
     const term = normalize(input.term);
+    assertMatchable(term);
     try {
       return await this.prisma.spellTerm.create({
         data: {
@@ -54,11 +81,13 @@ export class SpellTermService {
   async update(id: string, input: UpdateSpellTermInput, actorId: string): Promise<SpellTerm> {
     const existing = await this.prisma.spellTerm.findUnique({ where: { id } });
     if (!existing) throw new SpellTermServiceError('NOT_FOUND', 'SpellTerm not found');
+    const term = input.term !== undefined ? normalize(input.term) : undefined;
+    if (term !== undefined) assertMatchable(term);
     try {
       return await this.prisma.spellTerm.update({
         where: { id },
         data: {
-          ...(input.term !== undefined ? { term: normalize(input.term) } : {}),
+          ...(term !== undefined ? { term } : {}),
           ...(input.status !== undefined ? { status: input.status } : {}),
           updatedBy: actorId,
         },

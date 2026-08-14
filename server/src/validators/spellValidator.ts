@@ -2,7 +2,13 @@ import nspell from 'nspell';
 import enDictionary from 'dictionary-en';
 import { PrismaClient } from '@prisma/client';
 import { Validator, FindingInput, WordBox } from './types.js';
-import { spellCandidates, findTermMisspellings, SPELL_MIN_TERM_HITS, EXPECTED_TERMS } from './logic.js';
+import {
+  spellCandidates,
+  findTermMisspellings,
+  SPELL_MIN_TERM_HITS,
+  EXPECTED_TERMS,
+  MIN_TERM_LEN,
+} from './logic.js';
 
 /** The expected-vocabulary the near-miss matcher checks against. Prefer the
  *  admin-managed `SpellTerm` table so the list can be tuned without a deploy;
@@ -14,7 +20,11 @@ async function loadExpectedTerms(prisma: PrismaClient): Promise<string[]> {
       where: { status: 'ACTIVE' },
       select: { term: true },
     });
-    const terms = rows.map((r) => r.term.toLowerCase().trim()).filter((t) => t.length >= 4);
+    // Rows that can never match are dropped here as a backstop; SpellTermService rejects
+    // them at entry, so this only catches terms stored before that validation existed.
+    const terms = rows
+      .map((r) => r.term.toLowerCase().trim())
+      .filter((t) => t.length >= MIN_TERM_LEN && !/\s/.test(t));
     return terms.length > 0 ? terms : EXPECTED_TERMS;
   } catch {
     return EXPECTED_TERMS;

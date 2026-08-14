@@ -72,9 +72,11 @@ describe('validator logic', () => {
     // Scanner-explainable: rn/m, c/e, i/l glyph pairs.
     expect(flag('novernber', 'november').doubtful).toBe(true);
     expect(flag('manaqer', 'manager').doubtful).toBe(true);
-    // A leading m→rn misread ("rnanager") never reaches this tier at all: the
-    // first-letter rule in findTermMisspellings already drops edge-glyph OCR noise.
-    expect(flag('rnanager', 'manager')).toBeUndefined();
+    // A leading m→rn misread ("rnanager") used to be dropped outright by the first-letter
+    // rule. It is now reported as DOUBTFUL instead — the same rule made a real leading-letter
+    // error ("Oesignation") uncatchable, so edge hits surface for the reviewer but still
+    // cannot fail a claim.
+    expect(flag('rnanager', 'manager').doubtful).toBe(true);
     expect(flag('cierk', 'clerk').doubtful).toBe(true);
     expect(flag('englneer', 'engineer').doubtful).toBe(true);
     expect(flag('nincty', 'ninety').doubtful).toBe(true);

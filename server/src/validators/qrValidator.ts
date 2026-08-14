@@ -8,7 +8,8 @@ import { classifyPage } from './segment.js';
 import { docFieldGroups } from './docFields.js';
 import { aadhaarQrAsFields, isUnreadableQrPayload } from './aadhaarSecureQr.js';
 import { compareQrToFields, QrFieldComparison } from './qrCompare.js';
-import { rasterizePdf } from '../lib/pdfExtractor.js';
+import { rasterizePdf, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
+import { BBox, clamp01 } from '../lib/bbox.js';
 
 // Policy QR codes decode at scale 3; dense ones (Aadhaar Secure QR is ~330
 // bytes on a card-sized square) need ~scale 8, which is too heavy to render
@@ -19,7 +20,9 @@ const PDF_QR_RETRY_SCALE = 8;
 // The cheap scale-3 pass covers the whole bundle — scanned motor-claim PDFs run to
 // 20-60 pages and the ID card carrying the QR is rarely in the first 12. Only the
 // expensive scale-8 re-render stays capped.
-const MAX_QR_PAGES = Number(process.env.QR_MAX_PAGES ?? 60);
+// Shares the pipeline-wide ceiling (SCAN_MAX_PAGES); QR_MAX_PAGES stays honoured for any
+// deployment already setting it.
+const MAX_QR_PAGES = Number(process.env.QR_MAX_PAGES ?? MAX_PDF_PAGES);
 const MAX_QR_RETRY_PAGES = 12;
 
 /** Render a decoded QR as a stable string: printable text as-is, binary
@@ -49,13 +52,39 @@ function expandKnownPayload(value: string): string {
   return aadhaarQrAsFields(value) ?? value;
 }
 
+/** One decoded QR: its payload, and where it sits on the page it was read from.
+ *  The box is what lets the viewer outline the code — without it a QR that read
+ *  perfectly showed the reviewer nothing at all on the document. */
+export interface QrHit {
+  value: string;
+  bbox?: BBox;
+}
+
+/** Normalize a decoder's corner points to a [0..1] top-left-origin box. Returns undefined
+ *  for a decoder that reported no usable position, so the caller degrades to "no outline"
+ *  rather than drawing a box at the origin. */
+export function cornersToBBox(
+  corners: { x: number; y: number }[],
+  width: number,
+  height: number
+): BBox | undefined {
+  if (corners.length === 0 || width <= 0 || height <= 0) return undefined;
+  const xs = corners.map((c) => c.x);
+  const ys = corners.map((c) => c.y);
+  const x = clamp01(Math.min(...xs) / width);
+  const y = clamp01(Math.min(...ys) / height);
+  const w = clamp01(Math.max(...xs) / width) - x;
+  const h = clamp01(Math.max(...ys) / height) - y;
+  return w > 0 && h > 0 ? { x, y, w, h } : undefined;
+}
+
 /** Single-QR sync decode via jsQR — the fallback when the zxing wasm can't
  *  load (e.g. under jest, which can't do dynamic import()). */
 export function decodePixels(
   data: Uint8ClampedArray,
   width: number,
   height: number
-): string | null {
+): QrHit | null {
   const res = jsQR(data, width, height);
   if (!res) return null;
   // jsQR reports a BYTE-mode payload as data:'' with the bytes in binaryData, so testing
@@ -63,7 +92,16 @@ export function decodePixels(
   // this fallback exists to catch. Route through qrValue so both shapes survive.
   const bytes = res.binaryData ? Uint8Array.from(res.binaryData) : undefined;
   const v = qrValue(res.data ?? '', bytes);
-  return v ? expandKnownPayload(v) : null;
+  if (!v) return null;
+  const loc = res.location;
+  const bbox = loc
+    ? cornersToBBox(
+        [loc.topLeftCorner, loc.topRightCorner, loc.bottomLeftCorner, loc.bottomRightCorner],
+        width,
+        height
+      )
+    : undefined;
+  return { value: expandKnownPayload(v), bbox };
 }
 
 /** All QR values in one image. zxing-cpp (tryHarder + LocalAverage) reads
@@ -99,23 +137,33 @@ export async function decodeAll(
   data: Uint8ClampedArray,
   width: number,
   height: number
-): Promise<string[]> {
+): Promise<QrHit[]> {
   try {
     const { readBarcodes } = await loadZxing();
     const results = await readBarcodes(
       { data, width, height },
       { formats: ['QRCode'], tryHarder: true, binarizer: 'LocalAverage', maxNumberOfSymbols: 4 }
     );
-    return results.filter((r) => r.isValid).map((r) => expandKnownPayload(qrValue(r.text, r.bytes)));
+    return results
+      .filter((r) => r.isValid)
+      .map((r) => {
+        const p = r.position;
+        return {
+          value: expandKnownPayload(qrValue(r.text, r.bytes)),
+          bbox: p
+            ? cornersToBBox([p.topLeft, p.topRight, p.bottomLeft, p.bottomRight], width, height)
+            : undefined,
+        };
+      });
   } catch (e) {
     // Never silent: a failed wasm load turns every QR check in the system weak.
     console.warn(`[qr] zxing decode unavailable, falling back to jsQR: ${(e as Error).message}`);
-    const v = decodePixels(data, width, height);
-    return v ? [v] : [];
+    const hit = decodePixels(data, width, height);
+    return hit ? [hit] : [];
   }
 }
 
-async function decodeQrImage(absolutePath: string): Promise<string[]> {
+async function decodeQrImage(absolutePath: string): Promise<QrHit[]> {
   try {
     const img = await Jimp.read(absolutePath);
     const { data, width, height } = img.bitmap;
@@ -125,11 +173,22 @@ async function decodeQrImage(absolutePath: string): Promise<string[]> {
   }
 }
 
-export async function decodeQrPdf(
-  absolutePath: string
-): Promise<{ page: number; value: string }[]> {
-  const out: { page: number; value: string }[] = [];
-  const decodePage = async (p: { page: number; png: Buffer }): Promise<string[]> => {
+/** What a PDF scan found, plus what it did NOT look at. The skipped counts are returned
+ *  rather than swallowed so the validator can tell the reviewer that "no QR found" may
+ *  mean "we never rendered that page". */
+export interface PdfQrScan {
+  hits: (QrHit & { page: number })[];
+  /** Pages in the file; 0 when it could not be rendered at all. */
+  totalPages: number;
+  /** Pages beyond MAX_QR_PAGES that were never scanned. */
+  skippedPages: number;
+  /** Pages that missed at low resolution and did not fit in the high-res retry budget. */
+  skippedRetries: number;
+}
+
+export async function decodeQrPdf(absolutePath: string): Promise<PdfQrScan> {
+  const hits: (QrHit & { page: number })[] = [];
+  const decodePage = async (p: { page: number; png: Buffer }): Promise<QrHit[]> => {
     try {
       const img = await Jimp.read(p.png);
       const { data, width, height } = img.bitmap;
@@ -140,19 +199,28 @@ export async function decodeQrPdf(
   };
   // rasterizePdf returns [] on any failure, so an unreadable PDF just yields no QR.
   const misses: number[] = [];
-  for (const p of await rasterizePdf(absolutePath, MAX_QR_PAGES, PDF_QR_SCALE)) {
-    const values = await decodePage(p);
-    if (values.length > 0) for (const value of values) out.push({ page: p.page, value });
+  const pages = await rasterizePdf(absolutePath, MAX_QR_PAGES, PDF_QR_SCALE);
+  const totalPages = pages[0]?.totalPages ?? 0;
+  for (const p of pages) {
+    const found = await decodePage(p);
+    if (found.length > 0) for (const h of found) hits.push({ ...h, page: p.page });
     else misses.push(p.page);
   }
+  let skippedRetries = 0;
   if (misses.length > 0) {
     // High-res retry (~1-3s/page render+decode) only for pages that had no QR.
     const retry = misses.slice(0, MAX_QR_RETRY_PAGES);
+    skippedRetries = misses.length - retry.length;
     for (const p of await rasterizePdf(absolutePath, MAX_QR_PAGES, PDF_QR_RETRY_SCALE, retry)) {
-      for (const value of await decodePage(p)) out.push({ page: p.page, value });
+      for (const h of await decodePage(p)) hits.push({ ...h, page: p.page });
     }
   }
-  return out;
+  return {
+    hits,
+    totalPages,
+    skippedPages: Math.max(0, totalPages - pages.length),
+    skippedRetries,
+  };
 }
 
 /**
@@ -247,8 +315,20 @@ export const qrValidator: Validator = {
     );
     const values: string[] = [];
     // Per-document decoded values, persisted in result.details so the UI can show them.
-    const decoded: { documentId: string; fileName: string; value: string; page?: number }[] = [];
+    const decoded: {
+      documentId: string;
+      fileName: string;
+      value: string;
+      page?: number;
+      bbox?: BBox;
+    }[] = [];
     const missing: FindingInput[] = [];
+    // A code that read cleanly is evidence too. Without a finding here the reviewer saw a
+    // "1 QR code" badge and a completely unmarked page — the code had nothing to anchor to.
+    const found: FindingInput[] = [];
+    // Pages the scan never rendered. Reported so "no QR code found" cannot be mistaken for
+    // "this document carries no QR code".
+    const truncated: FindingInput[] = [];
     // INFO-level guidance: the QR was read, but its payload is issuer-encrypted.
     const guidance: FindingInput[] = [];
     // Field-by-field verdicts, persisted so the QR tab can show matched/not matched, and
@@ -256,10 +336,38 @@ export const qrValidator: Validator = {
     const comparisons: (QrFieldComparison & { documentId: string; page?: number })[] = [];
     const mismatches: FindingInput[] = [];
     for (const doc of scannable) {
-      const hits: { page?: number; value: string }[] =
-        doc.mimeType === 'application/pdf'
-          ? await decodeQrPdf(doc.readablePath)
-          : (await decodeQrImage(doc.readablePath)).map((value) => ({ value }));
+      let hits: (QrHit & { page?: number })[];
+      if (doc.mimeType === 'application/pdf') {
+        const scan = await decodeQrPdf(doc.readablePath);
+        hits = scan.hits;
+        if (scan.skippedPages > 0) {
+          truncated.push({
+            documentId: doc.id,
+            code: 'QR_PAGES_TRUNCATED',
+            severity: 'WARNING',
+            message:
+              `Only the first ${scan.totalPages - scan.skippedPages} of ${scan.totalPages} pages of ` +
+              `${doc.fileName} were scanned for QR codes. A code on pages ` +
+              `${scan.totalPages - scan.skippedPages + 1}-${scan.totalPages} would not have been found. ` +
+              `Raise SCAN_MAX_PAGES to scan further.`,
+            data: { totalPages: scan.totalPages, skippedPages: scan.skippedPages },
+          });
+        }
+        if (scan.skippedRetries > 0) {
+          truncated.push({
+            documentId: doc.id,
+            code: 'QR_RETRY_BUDGET_EXHAUSTED',
+            severity: 'WARNING',
+            message:
+              `${scan.skippedRetries} page(s) of ${doc.fileName} showed no QR at standard resolution ` +
+              `and were not re-rendered at high resolution (budget is ${MAX_QR_RETRY_PAGES} pages). ` +
+              `A dense code such as a PAN card's needs the high-resolution pass to read.`,
+            data: { skippedRetries: scan.skippedRetries, retryBudget: MAX_QR_RETRY_PAGES },
+          });
+        }
+      } else {
+        hits = await decodeQrImage(doc.readablePath);
+      }
       if (hits.length > 0) {
         for (const h of hits) {
           values.push(h.value);
@@ -268,6 +376,18 @@ export const qrValidator: Validator = {
             fileName: doc.fileName,
             value: h.value,
             ...(h.page !== undefined ? { page: h.page } : {}),
+            ...(h.bbox ? { bbox: h.bbox } : {}),
+          });
+          // INFO, so it draws the outline and lists in the sidebar without ever changing
+          // the check's status (deriveCheckStatus only softens on WARNING).
+          found.push({
+            documentId: doc.id,
+            code: 'QR_FOUND',
+            severity: 'INFO',
+            message: `QR code read from ${doc.fileName}${h.page !== undefined ? ` page ${h.page}` : ''}.`,
+            page: h.page ?? null,
+            bbox: h.bbox ?? null,
+            data: { value: h.value },
           });
           // Does the QR agree with what is printed on the same page?
           for (const c of compareQrToFields(h.value, fieldsForQrPage(doc, ctx, h.page))) {
@@ -279,6 +399,7 @@ export const qrValidator: Validator = {
                 severity: 'ERROR',
                 message: `QR code says ${c.label} is "${c.qrValue}", but ${doc.fileName} reads "${c.documentValue}".`,
                 page: h.page ?? null,
+                bbox: h.bbox ?? null,
                 data: { label: c.label, qrValue: c.qrValue, documentValue: c.documentValue },
               });
             }
@@ -296,6 +417,7 @@ export const qrValidator: Validator = {
             severity: 'INFO',
             message: OPAQUE_QR_GUIDANCE[kind] ?? OPAQUE_QR_GUIDANCE.UNKNOWN,
             page: opaque.page ?? null,
+            bbox: opaque.bbox ?? null,
             data: { kind },
           });
         }
@@ -336,7 +458,9 @@ export const qrValidator: Validator = {
     // hint as to which five were empty.
     outcome.findings = [
       ...mismatches,
+      ...truncated,
       ...guidance,
+      ...found,
       ...(values.length === 0 ? missing : missing.map((f) => ({ ...f, severity: 'INFO' as const }))),
     ];
     if (decoded.length > 0) outcome.details = { values, decoded, comparisons };

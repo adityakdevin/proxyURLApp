@@ -40,6 +40,24 @@ describe('SpellTermService', () => {
     });
   });
 
+  // Both shapes used to save happily and then match nothing: a candidate word is a single
+  // run of letters, and findTermMisspellings skips anything under MIN_TERM_LEN. An admin
+  // added "Security Guard", saw it ACTIVE, and no document was ever flagged against it.
+  it('rejects a term the matcher could never act on', async () => {
+    await expect(service.create({ term: 'Security Guard' }, actorId)).rejects.toMatchObject({
+      code: 'INVALID_TERM',
+    });
+    await expect(service.create({ term: 'For' }, actorId)).rejects.toMatchObject({
+      code: 'INVALID_TERM',
+    });
+    // ...and on update, not just create.
+    const t = await service.create({ term: 'welfare' }, actorId);
+    await expect(service.update(t.id, { term: 'unique id' }, actorId)).rejects.toMatchObject({
+      code: 'INVALID_TERM',
+    });
+    expect((await service.getById(t.id))!.term).toBe('welfare'); // unchanged
+  });
+
   it('rejects an update that would collide with another term', async () => {
     await service.create({ term: 'engineer' }, actorId);
     const b = await service.create({ term: 'manager' }, actorId);

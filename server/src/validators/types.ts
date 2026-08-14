@@ -41,6 +41,8 @@ export interface OcrPort {
      *  them: a PAN card's holder name is identified as the line above the father label,
      *  and an Aadhaar's as the line above its date of birth. */
     pages?: { page: number; text: string }[];
+    /** Pages in the source PDF, so the caller can report a scan the page cap truncated. */
+    totalPages?: number;
   }>;
   /** Release any underlying resources (e.g. a reused OCR worker). Optional. */
   close?(): Promise<void>;

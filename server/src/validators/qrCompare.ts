@@ -49,6 +49,22 @@ const QR_KEY_TO_LABELS: Record<string, string[]> = {
   panno: ['PAN Number'],
   gender: ['Gender'],
   dob: ['Date of Birth'],
+  // GST e-invoice QR. Measured from the payloads already stored in validation_results:
+  // comma-delimited "Key :Value" carrying suppliergstno, invoiceno, invoicedate, totalamt,
+  // cgstamt, sgstamt, igstamt, cessamt, supplierupiid, payeebankaccountno, ifsccode.
+  // parseQrPayload reads them fine — none had a row here, so compareQrToFields returned
+  // nothing and the reviewer saw a decoded code with no verdict against it.
+  //
+  // Only the invoice number is mapped. The others have no home yet:
+  //  - invoicedate  the pane's 'Invoice Date' is a raw regex capture in whatever format the
+  //                 invoice prints, while the QR emits DD/MM/YYYY. identifierMatches folds
+  //                 punctuation but not date formats, so mapping it would raise a MISMATCH —
+  //                 and a MISMATCH FAILS the check — on correct invoices. Needs date
+  //                 normalization on both sides first.
+  //  - suppliergstno / the amount and bank fields have no docFields label to compare against.
+  //                 Adding one means writing a GSTIN extractor, which wants a real GST
+  //                 invoice sample to get right.
+  invoiceno: ['Invoice No'],
 };
 
 const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, '');

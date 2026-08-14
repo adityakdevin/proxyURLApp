@@ -10,6 +10,7 @@ const getService = (req: Request) => new SpellTermService(prismaOf(req));
 const handleErr = makeErrorHandler(SpellTermServiceError, {
   NOT_FOUND: 404,
   DUPLICATE_TERM: 409,
+  INVALID_TERM: 400,
 });
 
 router.get(

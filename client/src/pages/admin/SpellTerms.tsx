@@ -31,6 +31,10 @@ interface SpellTerm {
   status: 'ACTIVE' | 'INACTIVE';
 }
 
+/** Keep in step with MIN_TERM_LEN in server/src/validators/logic.ts — the server is the
+ *  one that enforces it; this only saves the admin a round-trip. */
+const MIN_TERM_LEN = 4;
+
 export default function SpellTerms() {
   const { toast } = useToast();
   const crud = useCrudResource<SpellTerm>({
@@ -81,6 +85,25 @@ export default function SpellTerms() {
     const cleaned = term.trim();
     if (!cleaned) {
       toast({ title: 'Validation Error', description: 'Term is required', variant: 'destructive' });
+      return;
+    }
+    // Mirrors SpellTermService.assertMatchable. Both shapes used to save happily and then
+    // never flag anything — the server rejects them now, this just says so without a trip.
+    if (/\s/.test(cleaned)) {
+      toast({
+        title: 'Validation Error',
+        description:
+          'A term must be a single word — the spell check compares one word at a time. Add each word separately.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (cleaned.length < MIN_TERM_LEN) {
+      toast({
+        title: 'Validation Error',
+        description: `A term must be at least ${MIN_TERM_LEN} characters — shorter terms match too many unrelated words.`,
+        variant: 'destructive',
+      });
       return;
     }
     submit({ term: cleaned });
@@ -176,7 +199,10 @@ export default function SpellTerms() {
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
               />
               <p className="text-xs text-muted-foreground">
-                Stored lowercase. A document word that is a close misspelling of an active term is flagged.
+                Stored lowercase. A document word that is a close misspelling of an active term is
+                flagged. One word per term, {MIN_TERM_LEN} characters or more — a phrase such as
+                &ldquo;security guard&rdquo; must be added as &ldquo;security&rdquo; and
+                &ldquo;guard&rdquo; separately.
               </p>
             </div>
           </div>
