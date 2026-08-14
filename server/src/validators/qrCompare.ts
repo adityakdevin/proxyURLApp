@@ -107,10 +107,17 @@ const NAME_LABELS = new Set(["Insured's Name", 'Holder Name', 'Customer Name', "
 /**
  * Parse a QR payload into key → value.
  *
- * Two shapes in the wild: the pipe-delimited "Label:Value" a policy QR carries, and the
- * XML of an older Aadhaar QR. Returns an empty map for anything else (including the
- * `binary:` blob, or a still-unexpanded digit run), so the caller compares nothing rather
- * than comparing noise.
+ * Three shapes in the wild: the pipe-delimited "Label:Value" a policy QR carries, the XML of
+ * an older Aadhaar QR, and the NEWLINE-delimited block a GST certificate or e-invoice uses.
+ * Returns an empty map for anything else (including the `binary:` blob, or a still-unexpanded
+ * digit run), so the caller compares nothing rather than comparing noise.
+ *
+ * NOT handled on purpose: a single-line run of "Label: Value Label: Value" with no delimiter
+ * at all, as the scrappage Certificate of Deposit uses ("CD No.: … First Owner Name: …").
+ * Splitting that needs guessing where one value ends and the next label begins, and none of
+ * its fields (CD number, owner names, validity) has a docFields row to be compared against —
+ * so a parser for it would buy nothing. Such a QR is still decoded, counted, and now
+ * outlined on the page, which is what the reviewer was missing.
  */
 export function parseQrPayload(value: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -127,8 +134,13 @@ export function parseQrPayload(value: string): Map<string, string> {
     return out;
   }
 
-  const sep = value.includes('|') ? '|' : ',';
-  for (const part of value.split(sep)) {
+  // Delimiter, most-specific first. A NEWLINE wins over everything: the GST registration
+  // certificate (Form GST REG-06) puts one field per line AND carries an address full of
+  // commas, so splitting on ',' shredded it — measured on production, a real certificate
+  // yielded the keys ["legalname", "360005typeofregistration"] and lost GSTIN and PAN
+  // entirely. Pipe stays ahead of comma for the policy QRs.
+  const sep = /[\r\n]/.test(value) ? /[\r\n]+/ : value.includes('|') ? '|' : ',';
+  for (const part of value.split(sep as never)) {
     // Split at the first colon that is not a time colon ("1:00PM" — digits both sides).
     const m = /(?<!\d):|:(?!\d)/.exec(part);
     if (!m || m.index <= 0) continue;
