@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox } from './types.js';
 import { metaOutcome } from './logic.js';
-import { extractPdf, readPdfInfo } from '../lib/pdfExtractor.js';
+import { extractPdf, readPdfInfo, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
 import { readFileMeta } from '../lib/fileMeta.js';
 
 /** Document properties (created/modified/author/…), NOT body text. PDFs read the Info
@@ -51,7 +51,7 @@ function pageTextsFromWords(words: WordBox[]): string[] {
 async function extract(
   ctx: ValidatorContext,
   doc: ValidatorDoc
-): Promise<{ text: string; words: WordBox[]; pageTexts: string[] }> {
+): Promise<{ text: string; words: WordBox[]; pageTexts: string[]; totalPages?: number }> {
   const mime = doc.mimeType ?? '';
   if (mime.startsWith('image/')) {
     // A single image is one "page".
@@ -86,10 +86,16 @@ async function extract(
             text: `${withCoords.text}\n${ocrd.text}`,
             words: [...withCoords.words, ...ocrd.words],
             pageTexts,
+            totalPages: withCoords.totalPages,
           };
         }
       }
-      return { text: withCoords.text, words: withCoords.words, pageTexts };
+      return {
+        text: withCoords.text,
+        words: withCoords.words,
+        pageTexts,
+        totalPages: withCoords.totalPages,
+      };
     }
     try {
       const buf = await fs.readFile(doc.readablePath);
@@ -107,7 +113,11 @@ async function extract(
       // reports per-page text, and only rebuild from word boxes when it doesn't.
       const pageTexts: string[] = [];
       if (r.pages) for (const p of r.pages) pageTexts[p.page - 1] = p.text;
-      return { ...r, pageTexts: r.pages ? pageTexts : pageTextsFromWords(r.words) };
+      return {
+        ...r,
+        pageTexts: r.pages ? pageTexts : pageTextsFromWords(r.words),
+        totalPages: r.totalPages,
+      };
     }
     return { text: '', words: [], pageTexts: [] };
   }
@@ -153,6 +163,7 @@ export const metaValidator: Validator = {
     let withText = 0;
     const noText: FindingInput[] = [];
     const aiFindings: FindingInput[] = [];
+    const truncated: FindingInput[] = [];
     // Extracted text per document, persisted in result.details so the UI can show it.
     // ponytail: 20k chars/doc cap keeps the JSON column and API payload bounded.
     const MAX_DETAIL_CHARS = 20_000;
@@ -196,11 +207,28 @@ export const metaValidator: Validator = {
       }
       const timeoutMs =
         (doc.mimeType ?? '') === 'application/pdf' ? PDF_EXTRACT_TIMEOUT_MS : EXTRACT_TIMEOUT_MS;
-      const { text, words, pageTexts } = await withTimeout(extract(ctx, doc), timeoutMs, {
-        text: '',
-        words: [],
-        pageTexts: [],
-      });
+      const { text, words, pageTexts, totalPages } = await withTimeout(
+        extract(ctx, doc),
+        timeoutMs,
+        { text: '', words: [], pageTexts: [] }
+      );
+      // A scan that stopped at the page cap must not read as a clean scan. SPELL, INTRA and
+      // FULL all work off the text this validator stores, so an unread page is a check that
+      // never ran — FULL will report a required document "missing" when it is simply past
+      // the cap. WARNING (not INFO) so deriveCheckStatus downgrades META to DOUBTFUL.
+      const scanned = Math.min(totalPages ?? 0, MAX_PDF_PAGES);
+      if (totalPages && totalPages > scanned) {
+        truncated.push({
+          documentId: doc.id,
+          code: 'META_PAGES_TRUNCATED',
+          severity: 'WARNING',
+          message:
+            `Only the first ${scanned} of ${totalPages} pages of ${doc.fileName} were read. ` +
+            `Pages ${scanned + 1}-${totalPages} were not spell-checked, not searched for the claim ID, ` +
+            `and do not count towards the required-document check. Raise SCAN_MAX_PAGES to scan further.`,
+          data: { scannedPages: scanned, totalPages },
+        });
+      }
       if (text && text.replace(/\s/g, '').length >= 3) {
         ctx.shared.set(doc.id, text);
         if (words.length > 0) ctx.wordBoxes.set(doc.id, words);
@@ -239,7 +267,11 @@ export const metaValidator: Validator = {
     // Every unreadable document surfaces, even when other documents DID yield text.
     // Hiding them on an overall pass is what made a skipped employee ID card look like
     // the portal had simply never scanned it — with nothing in the UI to say so.
-    const findings = [...aiFindings, ...noText.map((f) => ({ ...f, severity: 'WARNING' as const }))];
+    const findings = [
+      ...aiFindings,
+      ...truncated,
+      ...noText.map((f) => ({ ...f, severity: 'WARNING' as const })),
+    ];
     if (findings.length > 0) outcome.findings = findings;
     if (extracted.length > 0) outcome.details = { extracted };
     return outcome;

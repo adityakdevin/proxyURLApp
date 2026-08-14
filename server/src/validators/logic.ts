@@ -241,6 +241,14 @@ export const EXPECTED_TERMS: string[] = [
   // common form vocabulary reviewers flag
   'ninety', 'three', 'does', 'require', 'required', 'days', 'letterhead', 'declaration',
   'certificate', 'special',
+  // Corporate-scheme vocabulary. Added from the 2026-08 reviewer sample, where 8 of 10
+  // Corporate cases reported a missed misspelling and 12 of the 13 words cited were simply
+  // not in this list — the matcher never had a term to be near, so nothing was ever flagged.
+  // Multi-word phrases the reviewers cited ("Security Guard", "unique id") are entered as
+  // their separate words on purpose: a candidate is a single letter run, so a term
+  // containing a space can never match one. See MIN_TERM_LEN.
+  'statement', 'assistant', 'security', 'guard', 'unique', 'consultant', 'remittance',
+  'welfare', 'dearness', 'leadership',
   // pay-period vocabulary — "Quartarly" was cited by reviewers and had no term to miss
   'quarterly', 'monthly', 'weekly', 'annual', 'annually', 'yearly', 'period',
   // months
@@ -340,8 +348,19 @@ export function isTruncation(token: string, term: string): boolean {
  *   - a pure glyph swap    → indistinguishable print ("novernber", "cierk", "costomer")
  */
 export function isDoubtfulHit(token: string, term: string, distance: number): boolean {
-  return distance >= 2 || isTruncation(token, term) || ocrIndistinguishable(token, term);
+  return (
+    distance >= 2 ||
+    token[0] !== term[0] ||
+    isTruncation(token, term) ||
+    ocrIndistinguishable(token, term)
+  );
 }
+
+/** Terms and tokens shorter than this are not matched at all: at 3 characters an edit
+ *  distance of 1 reaches most of the language, so the hits are coincidence rather than
+ *  evidence. Exported so the admin service rejects such a term at entry instead of
+ *  storing one that can never fire. */
+export const MIN_TERM_LEN = 4;
 
 /**
  * From spell candidates, find DISTINCT tokens that misspell an expected term:
@@ -362,24 +381,28 @@ export function findTermMisspellings(
     if (seen.has(raw)) continue;
     seen.add(raw);
     const token = raw.toLowerCase();
-    if (token.length < 4 || hits.has(token)) continue;
+    if (token.length < MIN_TERM_LEN || hits.has(token)) continue;
     if (isRealWord(raw)) continue; // a genuine word (e.g. "cleaner" near "clerk") is fine
     // Keep the CLOSEST term, not the first one within the cap. Taking the first made the
     // reported "expected" word depend on term order (EXPECTED_TERMS order, or unordered
     // SpellTerm rows), so "novernber" could be reported as a misspelling of "number".
-    let best: { term: string; d: number } | null = null;
+    let best: { term: string; d: number; edge: boolean } | null = null;
     for (const term of terms) {
-      if (term.length < 4 || token === term) continue;
-      // Require the first letter to match. Real misspellings alter an INTERIOR
-      // letter ("profeSion", "retAntion"); OCR drops leading characters
-      // ("nsurance", "ddress", "ustomer") — that edge-drop noise is not forgery.
-      if (token[0] !== term[0]) continue;
+      if (term.length < MIN_TERM_LEN || token === term) continue;
       const cap = term.length >= 6 ? 2 : 1;
       const d = editDistanceCapped(token, term, cap);
-      if (d >= 1 && d <= cap && (!best || d < best.d)) {
-        best = { term, d };
-        if (d === 1) break; // can't do better
-      }
+      if (d < 1 || d > cap) continue;
+      // A first-letter difference USED TO skip the term outright. Real misspellings alter an
+      // interior letter ("profeSion", "retAntion") while OCR drops leading characters
+      // ("nsurance", "ddress"), so the skip suppressed that noise — but it also made a
+      // leading-character error uncatchable: "Oesignation" went unreported even though
+      // "designation" was in the list. It is now reported as DOUBTFUL (see isDoubtfulHit),
+      // so the reviewer sees it and it still cannot fail a claim on its own.
+      const edge = token[0] !== term[0];
+      // At equal distance prefer the term that shares the first letter — it is the likelier
+      // intended word, and reporting it keeps the hit out of the doubtful tier.
+      if (!best || d < best.d || (d === best.d && best.edge && !edge)) best = { term, d, edge };
+      if (d === 1 && !edge) break; // can't do better
     }
     if (best) hits.set(token, { term: best.term, doubtful: isDoubtfulHit(token, best.term, best.d) });
   }

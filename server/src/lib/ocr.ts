@@ -3,7 +3,7 @@ import path from 'path';
 import { Jimp } from 'jimp';
 import { createWorker, Worker } from 'tesseract.js';
 import { OcrPort, WordBox } from '../validators/types.js';
-import { rasterizePdf } from './pdfExtractor.js';
+import { rasterizePdf, MAX_PDF_PAGES } from './pdfExtractor.js';
 import { estimateSkewDegrees } from './deskew.js';
 import { clamp01 } from './bbox.js';
 
@@ -68,8 +68,10 @@ function collectWords(data: unknown, width: number, height: number, page = 1, de
 const OCR_CACHE_PATH = process.env.OCR_CACHE_DIR || path.join(os.tmpdir(), 'claims-ocr-cache');
 
 /** Upper bound when the caller names the pages to OCR (mixed digital/scanned PDF).
- *  Still bounded — a 200-page bundle of scans should not stall a run. */
-const MAX_OCR_TARGETED_PAGES = 40;
+ *  Still bounded — a 200-page bundle of scans should not stall a run. Shares the
+ *  pipeline-wide ceiling: at 40 while text extraction ran to 50 and the QR scan to 60, a
+ *  scanned page at position 45 was silently skipped even when explicitly requested. */
+const MAX_OCR_TARGETED_PAGES = MAX_PDF_PAGES;
 
 /**
  * Two ways a scanned ID card defeats a plain Tesseract pass, both seen on real claims:
@@ -276,7 +278,12 @@ export class TesseractOcrPort implements OcrPort {
   async extractPdf(
     absolutePath: string,
     onlyPages?: number[]
-  ): Promise<{ text: string; words: WordBox[]; pages?: { page: number; text: string }[] }> {
+  ): Promise<{
+    text: string;
+    words: WordBox[];
+    pages?: { page: number; text: string }[];
+    totalPages?: number;
+  }> {
     try {
       // Cap OCR pages: the relevant docs (salary slip / ID card) sit in the first
       // pages, and OCRing a long PDF serially on one worker is the slow path.
@@ -322,7 +329,12 @@ export class TesseractOcrPort implements OcrPort {
         // Deskewed pages contribute text but no boxes — see extractImage above.
         if (!skew) words.push(...collectWords(data, dims.w, dims.h, pg.page, rotation));
       }
-      return { text: parts.join('\n').trim(), words, pages: perPage };
+      return {
+        text: parts.join('\n').trim(),
+        words,
+        pages: perPage,
+        totalPages: pages[0].totalPages,
+      };
     } catch {
       return { text: '', words: [] };
     }

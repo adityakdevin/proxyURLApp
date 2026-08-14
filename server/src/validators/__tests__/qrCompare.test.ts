@@ -35,6 +35,30 @@ describe('QR payload parsing', () => {
     expect(p.get('name')).toBe('Ravi Shankar');
   });
 
+  // Shape taken from a GST e-invoice QR already stored in validation_results: comma
+  // delimited, a space before each colon. It parsed correctly all along — the reason the
+  // reviewer saw no verdict was that none of its keys had a row in QR_KEY_TO_LABELS.
+  it('reads a comma-delimited GST e-invoice QR', () => {
+    const GST_QR =
+      'Supplier_Gst_No :21AEFFS5576Q1ZD, Invoice_No :OD302K2025000012, ' +
+      'Invoice_Date :24/02/2026, Total_Amt :845000.00, Cgst_Amt :0.00, Igst_Amt :0.00';
+    const p = parseQrPayload(GST_QR);
+    expect(p.get('suppliergstno')).toBe('21AEFFS5576Q1ZD');
+    expect(p.get('invoiceno')).toBe('OD302K2025000012');
+    expect(p.get('invoicedate')).toBe('24/02/2026');
+
+    // The invoice number now reaches the pane; the date deliberately does not — the pane
+    // holds the invoice's own printed format, and a format difference would read as a
+    // MISMATCH, which fails the whole check on a correct document.
+    const pane: DocField[] = [
+      { label: 'Invoice No', value: 'OD302K2025000012' },
+      { label: 'Invoice Date', value: '24-Feb-2026' },
+    ];
+    const cmp = compareQrToFields(GST_QR, pane);
+    expect(verdictFor(cmp, 'Invoice No')).toBe('MATCH');
+    expect(cmp.some((c) => c.label === 'Invoice Date')).toBe(false);
+  });
+
   it('compares nothing for an encrypted Secure QR blob', () => {
     expect(parseQrPayload('binary:AAECAwQ=').size).toBe(0);
     expect(compareQrToFields('binary:AAECAwQ=', PANE)).toEqual([]);
