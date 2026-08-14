@@ -92,13 +92,18 @@ User → UserAssignment (single Project) → determines menu/URL access
 
 ## Environment Variables
 
-Required in `.env`:
+Required in **`server/.env`** (template: `server/.env.example`):
 ```
 DATABASE_URL="mysql://user:pass@localhost:3306/proxyapp_db"
 PORT=3001
 NODE_ENV=development
 CLIENT_URL=http://localhost:5173
 ```
+
+> A `.env` at the REPO ROOT is read by nothing. Prisma resolves its connection string next
+> to `server/prisma/schema.prisma`, and the app, seeds and backup script all run with
+> `server/` as their working directory. A stale root `.env` is not merely inert — it is
+> misleading, and one carrying a `postgresql://` URL was what made this confusing before.
 
 Admin seed credentials configured via `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_FULLNAME`.
 

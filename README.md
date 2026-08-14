@@ -46,10 +46,15 @@ A full-stack web application that provides controlled access to external and int
 
 3. **Configure environment**
    ```bash
-   cp .env.example .env
+   cp server/.env.example server/.env
    ```
 
-   Update `.env` with your database credentials:
+   Every variable here is read by the server, so the file belongs in `server/`. A `.env` at
+   the repo root is read by nothing — Prisma resolves its connection string next to
+   `server/prisma/schema.prisma`, and the app, seeds and backup script all run with `server/`
+   as their working directory.
+
+   Update `server/.env` with your database credentials:
    ```
    DATABASE_URL="mysql://user:password@localhost:3306/proxyapp_db"
    PORT=3001
