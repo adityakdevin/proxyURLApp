@@ -59,6 +59,50 @@ describe('QR payload parsing', () => {
     expect(cmp.some((c) => c.label === 'Invoice Date')).toBe(false);
   });
 
+  // Verbatim from a production claim (S.No 16, MZBEU813LSN749087 p.6). One field per LINE,
+  // and the address carries five commas — splitting on ',' produced the keys
+  // ["legalname", "360005typeofregistration"] and lost GSTIN and PAN completely.
+  const GST_CERT =
+    'Legal Name :OM ENTERPRISE\n' +
+    'GSTIN :24AAGFO2658A1ZM\n' +
+    'PAN :AAGFO2658A\n' +
+    'Address of Principal Place of Business :SWATIPARK MAIN ROAD, PLOT NO 15 SHED NO 3, ' +
+    'SHREE HARI SOCITEY, NEAR KRISHANA WAYBRIJ KOTHARIYA, RAJKOT, Rajkot, Gujarat, 360005\n' +
+    'Type of Registration :Regular\n' +
+    'Date of Registration :25/02/2019';
+
+  it('reads a newline-delimited GST registration certificate whose address holds commas', () => {
+    const p = parseQrPayload(GST_CERT);
+    expect(p.get('legalname')).toBe('OM ENTERPRISE');
+    expect(p.get('gstin')).toBe('24AAGFO2658A1ZM');
+    expect(p.get('pan')).toBe('AAGFO2658A');
+    expect(p.get('typeofregistration')).toBe('Regular');
+    // The address keeps its own commas rather than being split into junk keys.
+    expect(p.get('addressofprincipalplaceofbusiness')).toContain('Gujarat, 360005');
+  });
+
+  it('verifies the PAN printed on a page against its GST certificate QR', () => {
+    // `pan` was already mapped to 'PAN Number'; only the delimiter stood in the way.
+    const cmp = compareQrToFields(GST_CERT, [{ label: 'PAN Number', value: 'AAGFO2658A' }]);
+    expect(verdictFor(cmp, 'PAN Number')).toBe('MATCH');
+    const tampered = compareQrToFields(GST_CERT, [{ label: 'PAN Number', value: 'AAGFO9999A' }]);
+    expect(verdictFor(tampered, 'PAN Number')).toBe('MISMATCH');
+  });
+
+  it('reads a newline-delimited GST tax-invoice QR', () => {
+    // Verbatim from S.No 19 (MZBGB814LSN298909 p.11). Note `documentnumber` is deliberately
+    // NOT mapped to 'Invoice No': this is the INSURER's tax invoice, whose number differs
+    // from the dealer invoice on the pane, and a MISMATCH fails the whole check.
+    const p = parseQrPayload(
+      'GSTN of Supplier: 06AAFCK7016C1ZX\nGSTN of Buyer:\nDocument Number: 261519042400\n' +
+        'Document Type : Tax Invoice\nDate of Creation of Invoice : 31/03/2026\nHSN code: 997134'
+    );
+    expect(p.get('gstnofsupplier')).toBe('06AAFCK7016C1ZX');
+    expect(p.get('documentnumber')).toBe('261519042400');
+    expect(p.get('documenttype')).toBe('Tax Invoice');
+    expect(p.has('gstnofbuyer')).toBe(false); // empty value carries nothing to compare
+  });
+
   it('compares nothing for an encrypted Secure QR blob', () => {
     expect(parseQrPayload('binary:AAECAwQ=').size).toBe(0);
     expect(compareQrToFields('binary:AAECAwQ=', PANE)).toEqual([]);
