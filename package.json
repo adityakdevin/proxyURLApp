@@ -24,6 +24,7 @@
     "db:reset-admin": "npm run db:reset-admin --workspace=server",
     "db:studio": "npm run db:studio --workspace=server",
     "db:backup": "npm run db:backup --workspace=server",
+    "db:sync-spell-terms": "npm run db:sync-spell-terms --workspace=server --",
     "qa:diagnostics": "npm run qa:diagnostics --workspace=server --",
     "test": "npm run test --workspace=server",
     "test:e2e:api": "npm run test:e2e:api --workspace=server",
