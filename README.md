@@ -92,11 +92,12 @@ proxyURLApp/
 │   │   └── lib/            # Utilities
 │   └── vite.config.ts
 ├── server/                 # Express backend
+│   ├── prisma/             # Schema & migrations
 │   ├── src/
 │   │   ├── routes/         # API endpoints
 │   │   ├── services/       # Business logic
-│   │   ├── middleware/     # Auth, error handling
-│   │   └── prisma/         # Schema & migrations
+│   │   ├── lib/            # Shared helpers
+│   │   └── middleware/     # Auth, error handling
 │   └── tsconfig.json
 ├── scripts/                # Utility scripts
 └── docs/                   # Documentation
@@ -114,7 +115,8 @@ proxyURLApp/
 | `npm run db:migrate` | Run database migrations |
 | `npm run db:seed` | Seed initial data |
 | `npm run db:studio` | Open Prisma Studio |
-| `npm run test` | Run tests |
+| `npm run test` | Run unit tests |
+| `npm run test:e2e` | Run the API and UI end-to-end suites |
 | `npm run lint` | Run ESLint |
 
 ## User Roles
@@ -140,8 +142,11 @@ proxyURLApp/
 
 ## Documentation
 
+- [User Manual](docs/README.md) — Plain-language guides for end users, team leads and admins
 - [Technical Specification](docs/SPEC.md) — Detailed feature specification
-- [Windows Server Installation](docs/WINDOWS-SERVER-INSTALL.md) — Deployment guide
+- [Deployment Guide](docs/DEPLOYMENT.md) — Server installation and deployment
+- [Manual Testing Guide](TESTING.md) — Walkthrough for the claims and document-scanning module
+- [Admin & User Flows](docs/flows.md) — End-to-end flow diagrams
 
 ## License
 

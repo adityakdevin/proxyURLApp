@@ -51,6 +51,8 @@ npm run start            # Run production server
 - `server/src/routes/proxy.ts` - Main proxy handler (~700 lines) with HTML/CSS/JS URL rewriting
 - `server/src/services/authService.ts` - Login, password changes, session creation
 - `server/src/services/proxyService.ts` - URL access validation
+- `server/src/routes/claims.ts` - Claim routes; the `bulk/*` routes are registered before `/:id/*` so "bulk" is never parsed as a claim id
+- `server/src/lib/bulkClaims.ts` - Bulk target resolution (explicit ids vs list filters), the `BULK_MAX` cap, and the per-claim succeeded/failed report
 - `server/prisma/schema.prisma` - Data models
 
 ### Key Frontend Files
@@ -88,6 +90,9 @@ User → UserAssignment (single Project) → determines menu/URL access
 - `/api/auth/*` - Login, logout, change-password, impersonation
 - `/api/admin/*` - CRUD for Users, Projects, Categories, SubCategories, UrlConfigs
 - `/api/user/*` - Menu, dashboard endpoints
+- `/api/claims/*` - Claim list/detail, documents, validation runs, remarks
+  - `POST /api/claims/bulk/{validate,remarks,delete}` - Act on an explicit selection of ids, or on every claim matching the current list filters. Capped at `BULK_MAX` (500); over the cap the whole call is refused with 422 `BULK_TOO_LARGE` rather than trimmed. Every claim still goes through the same per-claim permission check as the single-claim route; `bulk/delete` is additionally admin-only.
+  - `GET /api/claims/:id/adjacent` - Previous/next claim in the default list order (createdAt desc, id tiebreak), each with its first document. Powers the document viewer's step arrows.
 - `/proxy/:opaqueId/*` - Proxy handler (all HTTP methods)
 
 ## Environment Variables

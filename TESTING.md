@@ -42,6 +42,9 @@ upload, sync, and delete.
 | Create claim                    | ❌                    | ✅ (in scope)         | ✅    |
 | Add remark / change status      | ✅ if assignee        | ✅ in scope           | ✅    |
 | Reassign claim                  | ❌                    | ✅                    | ✅    |
+| Bulk re-validate / change status| ✅ if assignee        | ✅ in scope           | ✅    |
+| Bulk reassign                   | ❌                    | ✅                    | ✅    |
+| Bulk delete                     | ❌                    | ❌                    | ✅ only|
 | Exit a **terminal** status      | ❌                    | ❌                    | ✅ only|
 | Upload / sync / delete docs     | ✅ if assignee        | ✅ in scope           | ✅    |
 | Trigger a **folder scan job**   | ❌                    | ❌                    | ✅ only|
@@ -55,6 +58,10 @@ can only see/act on claims under that pair. Admin is unrestricted.
 - **Admin UI:** `/admin/claims`, `/admin/claim-id-rules`, `/admin/status-masters`,
   `/admin/doc-type-masters`, `/admin/claim-rules`, `/admin/scans`
 - **Team Lead / User UI:** `/claims` (dashboard) and `/claims/:id` (shared detail page)
+- **Bulk actions API:** `POST /api/claims/bulk/{validate,remarks,delete}` — send either
+  `ids` (an explicit selection) or `filters` (everything matching the list filters). One
+  call may touch at most 500 claims; above that it is refused with 422 `BULK_TOO_LARGE`
+  and nothing is changed. Worth testing both bodies and the cap.
 
 ---
 

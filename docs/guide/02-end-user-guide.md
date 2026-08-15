@@ -44,7 +44,7 @@ You'll see a table with one row per claim. The columns are:
 | **Assigned To** | Who is responsible for it. |
 | **Spell · QR · Meta · Intra-Claim · Full Scan** | The five **automatic check** results (see [section 2.5](#25-the-five-automatic-checks)). Each shows Pending, In Progress, Passed, or Failed. |
 | **Created** | When the claim was created. |
-| **Open** | Button to open the claim. |
+| **Actions** | Buttons to open the claim's documents, re-run its checks, and a **⋮** menu with the rest (see [Quick actions on one row](#quick-actions-on-one-row)). This column stays visible while you scroll the table sideways. |
 
 ### Finding a claim quickly
 
@@ -56,6 +56,38 @@ Above the table is a **filter row**:
 - **Search** — type part of a Claim ID to jump to it.
 
 The list is split into pages; use the page controls at the bottom to move through it.
+
+### Quick actions on one row
+
+The **Actions** column on each row gives you, without opening the claim:
+
+- **👁 Open documents** — jumps straight into the document viewer for that claim.
+- **🔄 Re-validate** — re-runs all five automatic checks on that claim.
+- **⋮ More actions** — **Change status** (with a note, exactly like the claim page).
+  Team Leads and Admins also get **Reassign** here; Admins also get **Delete claim**.
+
+### Acting on several claims at once
+
+Tick the box at the left of any row you can open. A blue **action bar** appears above
+the table showing how many you picked:
+
+- **Re-validate** — queues the five checks for every picked claim.
+- **Change status** — writes the same note (and, if you set one, the same new status)
+  to every picked claim.
+- **Reassign** — Team Leads and Admins only.
+- **Delete** — Admins only.
+
+Two things worth knowing:
+
+- The tick box in the **header** picks every row on the **current page**. If more claims
+  match your filters than fit on the page, the bar offers **"Select all N matching the
+  filters"** — that acts on all N, not just the page. **Clear** drops the selection.
+- One action can cover at most **500** claims. Ask for more and the app refuses the whole
+  batch and tells you to narrow the filters — it never silently acts on just the first 500.
+
+Each claim is still checked against your own permissions one by one, so a batch can
+partly succeed. The result message tells you how many went through and why the rest
+did not.
 
 ### Exporting your list
 
@@ -114,6 +146,22 @@ Each document has a **Delete** option. Use it to remove a file added by mistake.
 > 💡 **Automatic checks restart on changes.** Every time you **upload**, **sync**, or
 > **delete** a document, the app **automatically re-runs the checks** in the
 > background — because the evidence changed.
+
+### Reading a document full screen (the document viewer)
+
+Opening a document (from the **Actions** column on the dashboard, or from the Documents
+list) gives you a full-screen **viewer**: the file on one side, and the findings for the
+check you picked beside it. Tabs across the top switch between the checks. The window is
+titled with the **Claim ID**, so several open tabs stay tellable apart.
+
+Two controls make working through a batch quicker:
+
+- **‹ and ›** step to the **previous / next claim** in the list and stay on the same
+  check, so you can walk a day's claims without going back to the dashboard.
+  They follow the dashboard's default order (newest first), not any sort or filter you
+  applied.
+- **The 🔍 "Go to claim ID" box** jumps straight to a claim by typing part of its Claim
+  ID and picking it from the suggestions. It opens that claim's first document.
 
 ---
 
