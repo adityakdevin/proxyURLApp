@@ -37,6 +37,14 @@ describe('DocumentService', () => {
     });
   }
 
+  // The FakeFs below is keyed by the RAW Windows folderPath, so the scan-root override has
+  // to be off for these cases: with CLAIMS_SCAN_ROOT set, resolveScanRoot rewrites
+  // "D:\Claims\..." to "<root>/Claims/..." and every stat misses, which reads as "no files
+  // discovered" rather than as a mis-keyed fixture. Prisma loads server/.env on import, so
+  // the variable arrives here even though the test never asks for it. The mapping itself is
+  // covered by lib/__tests__/fsDirectoryReader.test.ts.
+  const scanRootBefore = process.env.CLAIMS_SCAN_ROOT;
+
   beforeAll(async () => {
     prisma = getTestPrisma();
     const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
@@ -53,6 +61,9 @@ describe('DocumentService', () => {
   });
 
   beforeEach(async () => {
+    // Cleared per test, not once in beforeAll: constructing PrismaClient loads server/.env,
+    // which puts the variable back.
+    delete process.env.CLAIMS_SCAN_ROOT;
     await truncateClaimsTables(prisma);
     const pending = await prisma.statusMaster.create({
       data: { name: 'Pending', isDefault: true, createdBy: adminId, updatedBy: adminId },
@@ -71,6 +82,8 @@ describe('DocumentService', () => {
   });
 
   afterAll(async () => {
+    if (scanRootBefore === undefined) delete process.env.CLAIMS_SCAN_ROOT;
+    else process.env.CLAIMS_SCAN_ROOT = scanRootBefore;
     await truncateClaimsTables(prisma);
     await prisma.subCategory.deleteMany({ where: { id: subCategoryId } });
     await prisma.category.deleteMany({ where: { id: catId } });

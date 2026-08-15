@@ -28,12 +28,17 @@ const doc = (id: string, over: Partial<ValidatorDoc> = {}): ValidatorDoc => ({
   ...over,
 });
 
+// SPELL flags NEAR-MISSES of the expected form vocabulary, not raw dictionary misses:
+// on scanned Indian paperwork a dictionary-miss ratio just tracked OCR quality. So the
+// fixtures below are single interior edits of EXPECTED_TERMS ("retantion" ← "retention"),
+// which is what a reviewer actually flags. Pure gibberish ("zzzqqq") is near nothing and
+// is correctly ignored — it was what these tests used to assert on.
 describe('validation findings — per-document attribution (Phase 1)', () => {
   it('SPELL attributes suspect-word findings to each source document', async () => {
     const ctx = baseCtx({
       shared: new Map([
-        ['docA', 'zzzqqq wwwxxx vvvbbb'],
-        ['docB', 'lkjhg fdsapo iuyt nnnmmm'],
+        ['docA', 'retantion profesion'],
+        ['docB', 'allowence deducton'],
       ]),
     });
     const out = await spellValidator.run(ctx);
@@ -47,20 +52,20 @@ describe('validation findings — per-document attribution (Phase 1)', () => {
 
   it('SPELL anchors a suspect finding to its OCR word box when boxes are present (Phase 2)', async () => {
     const ctx = baseCtx({
-      shared: new Map([['docA', 'zzzqqq hello world']]),
+      shared: new Map([['docA', 'retantion hello world']]),
       wordBoxes: new Map([
-        ['docA', [{ text: 'Zzzqqq', page: 1, bbox: { x: 0.1, y: 0.2, w: 0.3, h: 0.05 } }]],
+        ['docA', [{ text: 'Retantion', page: 1, bbox: { x: 0.1, y: 0.2, w: 0.3, h: 0.05 } }]],
       ]),
     });
     const out = await spellValidator.run(ctx);
     expect(out.status).toBe('FAILED');
-    const suspect = out.findings!.find((f) => f.data?.word === 'zzzqqq');
+    const suspect = out.findings!.find((f) => f.data?.word === 'retantion');
     expect(suspect?.page).toBe(1);
     expect(suspect?.bbox).toEqual({ x: 0.1, y: 0.2, w: 0.3, h: 0.05 });
   });
 
   it('SPELL leaves bbox null when no word boxes are available (graceful degrade)', async () => {
-    const ctx = baseCtx({ shared: new Map([['docA', 'zzzqqq wwwxxx vvvbbb']]) });
+    const ctx = baseCtx({ shared: new Map([['docA', 'retantion profesion allowence']]) });
     const out = await spellValidator.run(ctx);
     expect(out.status).toBe('FAILED');
     expect(out.findings!.every((f) => (f.bbox ?? null) === null)).toBe(true);
