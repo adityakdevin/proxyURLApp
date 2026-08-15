@@ -478,12 +478,15 @@ export class ClaimService {
    * filters, pass them in — buildWhere already takes them.
    */
   async adjacent(id: string, filters: ListClaimsFilters) {
-    const current = await this.prisma.claim.findUnique({
-      where: { id },
+    const where = this.buildWhere(filters);
+    // The anchor goes through the SAME scope as its neighbours. An unscoped findUnique here
+    // answered 200 for a claim in another project — telling the caller that id exists and
+    // where it sits in their own timeline.
+    const current = await this.prisma.claim.findFirst({
+      where: { AND: [where, { id }] },
       select: { id: true, createdAt: true },
     });
     if (!current) return null;
-    const where = this.buildWhere(filters);
     const neighbour = async (dir: 'prev' | 'next') => {
       // 'prev' is the row ABOVE in the list — newer — because the list is newest-first.
       const [cmp, order] = dir === 'prev' ? (['gt', 'asc'] as const) : (['lt', 'desc'] as const);
@@ -540,7 +543,11 @@ export class ClaimService {
           workflowStatus: { select: { id: true, name: true, isTerminal: true } },
           assignedTo: { select: { id: true, fullName: true } },
         },
-        orderBy: { [sortBy]: sortOrder },
+        // id as a tiebreak so the order is total: claims imported by one scan share a
+        // createdAt, and without it MySQL may repeat or skip rows across pages — and the
+        // viewer's step arrows (which order by createdAt THEN id) would walk a different
+        // sequence than the list the reviewer is stepping through.
+        orderBy: [{ [sortBy]: sortOrder }, { id: sortOrder }],
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -582,7 +589,10 @@ export class ClaimService {
     const rows = await this.prisma.claim.findMany({
       where,
       select: { id: true },
-      orderBy: { createdAt: 'desc' },
+      // `take` because count and select are two statements: a claim inserted between them
+      // would otherwise push the batch past the cap the count just cleared. No orderBy —
+      // the caller uses this as a set, and sorting it was a filesort for nothing.
+      take: cap,
     });
     return { ids: rows.map((r) => r.id), total };
   }
@@ -606,7 +616,16 @@ export class ClaimService {
     if (filters.intraClaimStatus) where.intraClaimStatus = filters.intraClaimStatus;
     if (filters.fullScanStatus) where.fullScanStatus = filters.fullScanStatus;
     if (filters.scope && filters.scope !== 'ALL') {
-      where.subCategoryId = { in: filters.scope.subCategoryIds };
+      // Intersect, never overwrite. Overwriting silently discarded a scoped caller's own
+      // sub-category filter — harmless while this only fed a list, but bulk MUTATES through
+      // the same where: "select all 12 matching" then acted on every claim in their scope.
+      // An out-of-scope pick matches nothing rather than falling back to everything.
+      const allowed = filters.scope.subCategoryIds;
+      where.subCategoryId = filters.subCategoryId
+        ? allowed.includes(filters.subCategoryId)
+          ? filters.subCategoryId
+          : { in: [] }
+        : { in: allowed };
     }
     return where;
   }

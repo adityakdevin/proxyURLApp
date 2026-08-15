@@ -33,7 +33,21 @@ export type ClaimTarget =
 
 export type ClaimAction = 'status' | 'assign' | 'delete' | null;
 
-interface BulkReport {
+/** Sentinel for "clear the assignee" — a Radix Select cannot carry an empty-string value. */
+const UNASSIGN = '__unassign__';
+
+/** Server refusal codes, in the words a reviewer can act on. */
+const FAILURE_REASON: Record<string, string> = {
+  CLAIM_NOT_EDITABLE: 'you cannot edit this claim',
+  TERMINAL_STATUS: 'the claim is in a terminal status',
+  REASSIGN_FORBIDDEN: 'only a Team Lead or Admin can reassign',
+  INVALID_STATUS: 'that status no longer exists',
+  STATUS_INACTIVE: 'that status is inactive',
+  NOT_FOUND: 'the claim no longer exists',
+  FAILED: 'the server could not complete it',
+};
+
+export interface BulkReport {
   requested: number;
   succeeded: number;
   failed: { id: string; code: string }[];
@@ -87,13 +101,26 @@ export function ClaimActionDialog({
     try {
       const r = await api.post<DataResponse<BulkReport>>(endpoint, { ...target, ...body });
       const { succeeded, requested, failed } = r.data;
+      const codes = [...new Set(failed.map((f) => f.code))];
+      // The bulk endpoints answer 200 with succeeded:0 where the single-claim route used to
+      // throw a 403, so a refusal has to be read off the REPORT. Titling on `requested`
+      // said "Deleted" for a claim the server refused, then closed the dialog and threw the
+      // typed remark away.
+      if (succeeded === 0 && requested > 0) {
+        toast({
+          title: `${verb} failed`,
+          variant: 'destructive',
+          description: codes.map((c) => FAILURE_REASON[c] ?? c).join(', '),
+        });
+        return; // dialog stays open, remark intact, nothing refetched
+      }
       toast({
         title: requested === 1 ? verb : `${verb}: ${succeeded} of ${requested}`,
         variant: failed.length ? 'destructive' : undefined,
         // Name the reason, not just the number — "8 failed" leaves a reviewer guessing
         // whether it was permissions, a terminal status, or something broken.
         description: failed.length
-          ? `${failed.length} failed (${[...new Set(failed.map((f) => f.code))].join(', ')})`
+          ? `${failed.length} failed (${codes.map((c) => FAILURE_REASON[c] ?? c).join(', ')})`
           : undefined,
       });
       close();
@@ -115,10 +142,18 @@ export function ClaimActionDialog({
       return toast({ title: 'A remark is required', variant: 'destructive' });
     }
     if (action === 'assign') {
+      if (!newAssigneeId) {
+        return toast({ title: 'Pick who to assign to', variant: 'destructive' });
+      }
       return run(
         '/claims/bulk/remarks',
-        // Empty means "unassign", which the API takes as an explicit null.
-        { remarkText: remarkText.trim(), newAssigneeId: newAssigneeId || null },
+        // The key's PRESENCE is what the API reads as "reassign", so it is only sent once a
+        // choice exists. UNASSIGN is the explicit way to clear it — the Select used to start
+        // empty and send null, so a plain Apply unassigned every target.
+        {
+          remarkText: remarkText.trim(),
+          newAssigneeId: newAssigneeId === UNASSIGN ? null : newAssigneeId,
+        },
         'Reassigned'
       );
     }
@@ -178,6 +213,7 @@ export function ClaimActionDialog({
                     <SelectValue placeholder="Pick a user" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={UNASSIGN}>Unassigned</SelectItem>
                     {assigneeOptions.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
                         {o.label}

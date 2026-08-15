@@ -422,6 +422,9 @@ model Claim {
   @@index([workflowStatusId])
   @@index([assignedToUserId])
   @@index([createdBy])
+  // The list orders by createdAt with an id tiebreak, and the document viewer's step arrows
+  // walk that same order as a keyset range — without this both are a full scan plus filesort.
+  @@index([status, createdAt, id])
   @@map("claims")
 }
 
@@ -553,6 +556,9 @@ model ValidationRun {
 
   @@index([claimId])
   @@index([status])
+  // The drainer picks the oldest QUEUED run one at a time; bulk validate can queue hundreds,
+  // and on @@index([status]) alone each pick filesorts the whole queued set.
+  @@index([status, createdAt])
   @@map("validation_runs")
 }
 

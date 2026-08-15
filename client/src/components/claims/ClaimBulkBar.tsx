@@ -4,7 +4,7 @@ import { api, DataResponse } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { Role } from '@/stores/authStore';
-import { ClaimAction, ClaimActionDialog, Option } from './ClaimActionDialog';
+import { BulkReport, ClaimAction, ClaimActionDialog, Option } from './ClaimActionDialog';
 
 interface ClaimBulkBarProps {
   /** Ids ticked on the pages the reviewer has visited. */
@@ -52,11 +52,17 @@ export function ClaimBulkBar({
   const revalidate = async () => {
     setBusy(true);
     try {
-      const r = await api.post<DataResponse<{ requested: number; succeeded: number }>>(
-        '/claims/bulk/validate',
-        target
-      );
-      toast({ title: `Re-validation queued: ${r.data.succeeded} of ${r.data.requested}` });
+      const r = await api.post<DataResponse<BulkReport>>('/claims/bulk/validate', target);
+      const { succeeded, requested, failed } = r.data;
+      // The failed[] array was being dropped here, so 45 refusals out of 50 still showed a
+      // plain "queued" toast.
+      toast({
+        title: `Re-validation queued: ${succeeded} of ${requested}`,
+        variant: failed.length ? 'destructive' : undefined,
+        description: failed.length
+          ? `${failed.length} refused (${[...new Set(failed.map((f) => f.code))].join(', ')})`
+          : undefined,
+      });
       finish();
     } catch (e) {
       toast({

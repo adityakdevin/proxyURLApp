@@ -279,8 +279,8 @@ export default function DocumentView() {
 
   const checkLabel = check ? CHECK_LABEL[check] ?? check : null;
 
-  // Name the tab after the file and the check, so a reviewer with several open — often the
-  // same document under different checks — can tell them apart from the tab strip alone.
+  // Name the tab after the CLAIM and the check, so a reviewer with several open — often the
+  // same claim under different checks — can tell them apart from the tab strip alone.
   useEffect(() => {
     if (claimLabel) document.title = checkLabel ? `${claimLabel} — ${checkLabel}` : claimLabel;
   }, [claimLabel, checkLabel]);
@@ -299,8 +299,8 @@ export default function DocumentView() {
 
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-x-hidden bg-gray-100">
-      {/* Sticky identity bar: which file, under which check, on which claim. Without it a
-          reviewer with six tabs open cannot tell them apart from the page itself. */}
+      {/* Sticky identity bar: which claim, under which check. The file name lives in the
+          viewer panel — with six tabs open it is the claim id that tells them apart. */}
       <header className="flex shrink-0 items-center gap-3 border-b bg-white px-4 py-2.5 shadow-sm">
         <h1 className="min-w-0 shrink truncate text-base font-semibold text-gray-900" title={claimLabel}>
           {claimLabel || 'Claim'}
@@ -389,7 +389,7 @@ export default function DocumentView() {
           <ClaimJumpBox
             onPick={jumpToClaim}
             collapsible
-            inputClassName="h-7 w-44 rounded-md border border-gray-200 pl-7 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-blue-200"
+            inputClassName="h-7 w-44 rounded-md border border-gray-200 pl-7 pr-8 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600"
           />
 
           <span className="mx-0.5 h-5 w-px bg-gray-200" />

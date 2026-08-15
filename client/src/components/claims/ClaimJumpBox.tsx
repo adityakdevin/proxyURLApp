@@ -89,9 +89,12 @@ export function ClaimJumpBox({
     };
   }, [term]);
 
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
   const flash = (message: string) => {
     setError(message);
-    setTimeout(() => setError(''), 3000);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setError(''), 3000);
   };
 
   const pick = async (claim: ClaimHit) => {
@@ -112,7 +115,7 @@ export function ClaimJumpBox({
     setError('');
     try {
       const r = await api.get<{ data: ClaimHit[] }>(
-        `/claims?search=${encodeURIComponent(term)}&limit=10`
+        `/claims?search=${encodeURIComponent(term)}&limit=${LIMIT}`
       );
       const exact = r.data.find((c) => c.claimId.toLowerCase() === term.toLowerCase());
       const target = exact ?? (r.data.length === 1 ? r.data[0] : null);
@@ -156,7 +159,7 @@ export function ClaimJumpBox({
           // Focus after the input exists, so the click lands straight in the field.
           requestAnimationFrame(() => inputRef.current?.focus());
         }}
-        className="flex items-center rounded border p-1.5 text-gray-600 hover:bg-gray-100"
+        className="flex items-center rounded border p-1.5 text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
       >
         <Search className="h-3.5 w-3.5" />
       </button>
@@ -177,6 +180,13 @@ export function ClaimJumpBox({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={onKeyDown}
+        // Combobox semantics: arrow keys moved a highlight nothing announced, so a screen
+        // reader user never learned suggestions existed or which one Enter would take.
+        role="combobox"
+        aria-expanded={open && hits.length > 0}
+        aria-controls="claim-jump-list"
+        aria-autocomplete="list"
+        aria-activedescendant={open && hits.length ? `claim-jump-opt-${active}` : undefined}
         // Blur closes the list, but a click on a row blurs first — the rows commit on
         // mousedown, so by the time this runs the pick has already happened. An empty
         // collapsible field folds back to its icon rather than sitting there taking width.
@@ -190,7 +200,7 @@ export function ClaimJumpBox({
         autoComplete="off"
         className={
           inputClassName ??
-          'h-9 w-52 rounded-md border border-gray-200 pl-7 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200'
+          'h-9 w-52 rounded-md border border-gray-200 pl-7 pr-8 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600'
         }
       />
       <button
@@ -208,18 +218,26 @@ export function ClaimJumpBox({
       </button>
 
       {open && hits.length > 0 && (
-        <ul className="absolute right-0 top-full z-30 mt-1 max-h-72 w-80 overflow-y-auto rounded-md border bg-white py-1 shadow-lg">
+        <ul
+          id="claim-jump-list"
+          role="listbox"
+          className="absolute right-0 top-full z-30 mt-1 max-h-72 w-80 overflow-y-auto rounded-md border bg-white py-1 shadow-lg"
+        >
           {hits.map((hit, i) => (
-            <li key={hit.id}>
+            <li key={hit.id} role="option" id={`claim-jump-opt-${i}`} aria-selected={i === active}>
               <button
                 type="button"
+                tabIndex={-1}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   pick(hit);
                 }}
+                onClick={() => pick(hit)}
                 onMouseEnter={() => setActive(i)}
-                className={`flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs ${
-                  i === active ? 'bg-blue-50' : ''
+                // blue-50 as the only marker was ~1.05:1 against the dropdown — invisible,
+                // on the row Enter commits.
+                className={`flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-xs ${
+                  i === active ? 'border-blue-600 bg-blue-100 font-medium' : 'border-transparent'
                 }`}
               >
                 <span className="min-w-0 flex-1 truncate font-mono text-gray-600">
@@ -231,7 +249,7 @@ export function ClaimJumpBox({
                   </span>
                 )}
                 {hit.subCategory && (
-                  <span className="max-w-[35%] shrink-0 truncate text-[10px] text-gray-400">
+                  <span className="max-w-[35%] shrink-0 truncate text-[11px] text-gray-600">
                     {hit.subCategory.name}
                   </span>
                 )}
@@ -242,7 +260,11 @@ export function ClaimJumpBox({
       )}
 
       {error && (
-        <p className="absolute right-0 top-full z-30 mt-1 whitespace-nowrap rounded bg-red-50 px-2 py-1 text-xs text-red-600 shadow">
+        <p
+          role="status"
+          aria-live="polite"
+          className="absolute right-0 top-full z-30 mt-1 whitespace-nowrap rounded bg-red-50 px-2 py-1 text-xs text-red-600 shadow"
+        >
           {error}
         </p>
       )}

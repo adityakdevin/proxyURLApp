@@ -116,13 +116,25 @@ router.get(
   }
 );
 
+// Shape checks for the two ways a bulk call names its targets. The resolver re-checks
+// both, but a malformed body should be a 400 here rather than a per-claim "FAILED" later.
+const bulkTargetValidators = [
+  // No max here: the cap belongs to resolveTargets, which refuses with 422 BULK_TOO_LARGE
+  // and names the number the caller actually sent. An isArray max would shadow that with a
+  // bare 400 carrying no count.
+  body('ids').optional().isArray(),
+  body('ids.*').optional().isUUID(),
+  body('filters').optional().isObject(),
+];
+
 // Bulk actions on a selection (or on everything matching the list filters). Registered
 // BEFORE '/:id/...' so "bulk" is never read as a claim id. Every claim still goes through
 // the same per-claim permission checks the single-claim routes use.
 const bulkTargets = async (req: ScopedRequest, res: Response) => {
-  const r = await resolveTargets(getService(req), req.body, {
+  const r = await resolveTargets(getService(req), req.body ?? {}, {
     scope: req.scope!,
     callerId: req.session!.userId,
+    role: req.session!.role,
   });
   if (r.error) {
     res.status(r.error.status).json({ error: r.error.message, code: r.error.code });
@@ -131,7 +143,11 @@ const bulkTargets = async (req: ScopedRequest, res: Response) => {
   return r.ids;
 };
 
-router.post('/bulk/validate', async (req: ScopedRequest, res: Response, next: NextFunction) => {
+router.post(
+  '/bulk/validate',
+  bulkTargetValidators,
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
   try {
     const ids = await bulkTargets(req, res);
     if (!ids) return;
@@ -141,22 +157,22 @@ router.post('/bulk/validate', async (req: ScopedRequest, res: Response, next: Ne
       if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
       await enqueue(prismaOf(req), registry, id, 'MANUAL', req.session!.userId);
     });
-    res.status(202).json({ data: report });
-  } catch (err) {
-    next(err);
+      res.status(202).json({ data: report });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 // One endpoint for both "change status" and "reassign": a bulk remark is the single-claim
 // remark applied N times, and that route already carries the status and assignee rules.
 router.post(
   '/bulk/remarks',
   [
+    ...bulkTargetValidators,
     body('remarkText').isString().trim().notEmpty(),
     body('newStatusId').optional().isUUID(),
-    body('newAssigneeId')
-      .optional({ nullable: true })
-      .custom((v) => v === null || /^[0-9a-fA-F-]{36}$/.test(v)),
+    body('newAssigneeId').optional({ nullable: true }).isUUID(),
   ],
   validate,
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
@@ -189,6 +205,8 @@ router.post(
 router.post(
   '/bulk/delete',
   adminMiddleware,
+  bulkTargetValidators,
+  validate,
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
       const ids = await bulkTargets(req, res);
@@ -268,9 +286,7 @@ router.post(
     param('id').isUUID(),
     body('remarkText').isString().trim().notEmpty(),
     body('newStatusId').optional().isUUID(),
-    body('newAssigneeId')
-      .optional({ nullable: true })
-      .custom((v) => v === null || /^[0-9a-fA-F-]{36}$/.test(v)),
+    body('newAssigneeId').optional({ nullable: true }).isUUID(),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {

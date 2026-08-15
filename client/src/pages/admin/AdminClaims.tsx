@@ -286,7 +286,12 @@ export default function AdminClaims() {
           role="ADMIN"
           statusOptions={statusOptions}
           assigneeOptions={assigneeOptions}
-          onDone={() => fetchData(pagination.page, pagination.limit)}
+          onDone={() => {
+            // Drop it from the selection too: acting on a row from its own menu used to
+            // leave the id ticked, so the bulk bar counted a claim that was no longer there.
+            setSelectedIds((ids) => ids.filter((x) => x !== row.original.id));
+            fetchData(pagination.page, pagination.limit);
+          }}
         />
       ),
     },

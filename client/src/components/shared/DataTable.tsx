@@ -38,6 +38,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -59,7 +60,9 @@ import {
  *  paging and sorting; the owning page decides what "selected" then means. */
 export interface RowSelection<TData> {
   selectedIds: string[];
-  onChange: (ids: string[]) => void;
+  /** Takes an updater, not a value: two toggles inside one React batch both read the same
+   *  prop, so passing a computed array dropped the first one. */
+  onChange: (update: (ids: string[]) => string[]) => void;
   rowId: (row: TData) => string;
   /** What a screen reader should call the row — the id is a UUID, which says nothing. */
   rowLabel?: (row: TData) => string;
@@ -135,19 +138,20 @@ export function DataTable<TData, TValue>({
 
   const toggleOne = (id: string) => {
     if (!selection) return;
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    selection.onChange([...next]);
+    selection.onChange((ids) =>
+      ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]
+    );
   };
   // The header box acts on THIS page only; acting on everything the filters match is a
   // separate, explicit choice the page offers once rows are ticked.
   const togglePage = () => {
     if (!selection) return;
-    const next = new Set(selected);
-    if (allPageSelected) pageIds.forEach((id) => next.delete(id));
-    else pageIds.forEach((id) => next.add(id));
-    selection.onChange([...next]);
+    selection.onChange((ids) => {
+      const next = new Set(ids);
+      if (allPageSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return [...next];
+    });
   };
 
   const selectColumn: ColumnDef<TData, TValue> = {
@@ -195,7 +199,9 @@ export function DataTable<TData, TValue>({
   // must not be the part that scrolls out of reach.
   const stickyActions = (columnId: string) =>
     columnId === 'actions'
-      ? 'sticky right-0 z-20 bg-background shadow-[inset_1px_0_0_hsl(var(--border))]'
+      // bg-inherit, not bg-background: an opaque cell paints over the row's hover and
+      // selected tint, leaving a white block exactly where the eye tracks across the row.
+      ? 'sticky right-0 z-20 bg-inherit shadow-[inset_1px_0_0_hsl(var(--border))]'
       : '';
 
   return (
@@ -211,13 +217,27 @@ export function DataTable<TData, TValue>({
                     ? null
                     : flexRender(header.column.columnDef.header, header.getContext());
                   const sortable = sortField && onSortChange;
+                  const sortedBy = sort?.field === sortField;
                   return (
                     <TableHead
                       key={header.id}
-                      // z above the other sticky headers: this one is sticky on both axes.
-                      className={
+                      // cn() so the z/shadow overrides actually win: two conflicting Tailwind
+                      // utilities in one string resolve by generated-CSS order otherwise.
+                      // z above the other sticky headers — this one is sticky on both axes.
+                      className={cn(
                         stickyActions(header.column.id) &&
-                        `${stickyActions(header.column.id)} z-30 shadow-[inset_1px_0_0_hsl(var(--border)),inset_0_-1px_0_hsl(var(--border))]`
+                          'z-30 bg-background shadow-[inset_1px_0_0_hsl(var(--border)),inset_0_-1px_0_hsl(var(--border))]'
+                      )}
+                      // Sort direction was conveyed by an arrow icon alone, so a screen
+                      // reader could not tell the table was sorted, or by what.
+                      aria-sort={
+                        sortable
+                          ? sortedBy
+                            ? sort!.order === 'asc'
+                              ? 'ascending'
+                              : 'descending'
+                            : 'none'
+                          : undefined
                       }
                     >
                       {sortable ? (
@@ -258,7 +278,16 @@ export function DataTable<TData, TValue>({
               </TableRow>
             ) : table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'}>
+                // Selection lives in the page's state, not TanStack's, so the row tint has to
+                // read the same source the checkbox does — getIsSelected() is always false
+                // here, which meant a ticked row got no row-level feedback at all.
+                <TableRow
+                  key={row.id}
+                  className="bg-background"
+                  data-state={
+                    selection && selected.has(selection.rowId(row.original)) ? 'selected' : undefined
+                  }
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id} className={stickyActions(cell.column.id)}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}

@@ -102,8 +102,9 @@ export default function ClaimDashboard() {
   const noAssignment = role !== 'ADMIN' && !user?.projectId;
   const [filterStatuses, setFilterStatuses] = useState<Status[]>([]);
 
-  // Bulk selection: ids, so ticks survive paging. Cleared on every fetch — the rows a
-  // reviewer ticked under one filter are not the rows the next filter shows.
+  // Bulk selection: ids, so ticks survive paging — a reviewer gathers rows across pages and
+  // then acts. Cleared when the FILTERS change, because those rows are no longer the set on
+  // screen; paging leaves it alone. AdminClaims does the same.
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -133,7 +134,6 @@ export default function ClaimDashboard() {
 
   const fetchData = async (page = 1, limit = 10) => {
     setIsLoading(true);
-    setSelectedIds([]);
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (filters.subCategoryId) params.set('subCategoryId', filters.subCategoryId);
@@ -186,6 +186,7 @@ export default function ClaimDashboard() {
       if (addForm.remarkText.trim()) payload.remarkText = addForm.remarkText.trim();
       await api.post('/claims', payload);
       toast({ title: 'Claim created' });
+      setSelectedIds([]);
       setIsAddOpen(false);
       setAddForm({ claimId: '', folderPath: '', remarkText: '' });
       fetchData(1, pagination.limit);
@@ -301,7 +302,12 @@ export default function ClaimDashboard() {
           role={role}
           statusOptions={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}
           assigneeOptions={addUsers.map((u) => ({ value: u.id, label: u.fullName }))}
-          onDone={() => fetchData(pagination.page, pagination.limit)}
+          onDone={() => {
+            // Drop it from the selection too: acting on a row from its own menu used to
+            // leave the id ticked, so the bulk bar counted a claim that was no longer there.
+            setSelectedIds((ids) => ids.filter((x) => x !== row.original.id));
+            fetchData(pagination.page, pagination.limit);
+          }}
         />
       ),
     },
@@ -391,7 +397,14 @@ export default function ClaimDashboard() {
           <Button variant="outline" onClick={handleExport}>
             Export
           </Button>
-          <Button onClick={() => fetchData(1, pagination.limit)}>Apply filters</Button>
+          <Button
+            onClick={() => {
+              setSelectedIds([]);
+              fetchData(1, pagination.limit);
+            }}
+          >
+            Apply filters
+          </Button>
         </div>
       </div>
 

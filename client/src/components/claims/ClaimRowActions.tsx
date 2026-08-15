@@ -43,16 +43,24 @@ export function ClaimRowActions({
 
   if (!canAct) return <span className="text-xs text-muted-foreground">—</span>;
 
-  // The list has no document ids, so the first one is looked up on click. Its own tab, named
-  // like the claim page's opener so the two do not fight over one window.
+  // The list has no document ids, so the first one is looked up on click. The window is
+  // opened BEFORE the await — a window.open that runs after one has lost the user-gesture
+  // token and is blocked outright in Safari and Firefox.
   const openDocuments = async () => {
     setBusy(true);
+    const tab = window.open('', `doc-claim-${claimId}`);
     try {
       const r = await api.get<{ data: { id: string }[] }>(`/claims/${claimId}/documents`);
       const first = r.data[0];
-      if (!first) return toast({ title: 'No documents on this claim' });
-      window.open(`/claims/${claimId}/documents/${first.id}`, `doc-${first.id}-all`);
+      if (!first) {
+        tab?.close();
+        return toast({ title: 'No documents on this claim' });
+      }
+      const href = `/claims/${claimId}/documents/${first.id}`;
+      if (tab) tab.location.href = href;
+      else window.open(href, `doc-claim-${claimId}`); // popup blocked: try once more on the click's tail
     } catch (e) {
+      tab?.close();
       toast({
         title: 'Could not open documents',
         variant: 'destructive',
