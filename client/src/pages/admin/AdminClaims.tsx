@@ -357,6 +357,7 @@ export default function AdminClaims() {
           selectedIds,
           onChange: setSelectedIds,
           rowId: (row) => row.id,
+          rowLabel: (row) => row.claimId,
         }}
         sort={sort}
         onSortChange={(f) => setSort((p) => nextSort(p, f))}

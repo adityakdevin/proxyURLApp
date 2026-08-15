@@ -421,6 +421,7 @@ export default function ClaimDashboard() {
           selectedIds,
           onChange: setSelectedIds,
           rowId: (row) => row.id,
+          rowLabel: (row) => row.claimId,
           // A USER may only act on claims assigned to them — the same rule that decides
           // whether the row opens at all, so the box never promises an action that 403s.
           isSelectable: canOpen,

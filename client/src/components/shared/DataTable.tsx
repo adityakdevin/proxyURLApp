@@ -61,6 +61,8 @@ export interface RowSelection<TData> {
   selectedIds: string[];
   onChange: (ids: string[]) => void;
   rowId: (row: TData) => string;
+  /** What a screen reader should call the row — the id is a UUID, which says nothing. */
+  rowLabel?: (row: TData) => string;
   /** Rows that cannot be acted on get no checkbox (e.g. a claim the user may not edit). */
   isSelectable?: (row: TData) => boolean;
 }
@@ -165,7 +167,7 @@ export function DataTable<TData, TValue>({
         <SelectBox
           checked={selected.has(id)}
           onChange={() => toggleOne(id)}
-          label={`Select row ${id}`}
+          label={`Select ${selection!.rowLabel?.(row.original) ?? `row ${id}`}`}
         />
       );
     },
@@ -188,6 +190,14 @@ export function DataTable<TData, TValue>({
 
   const pageSizeOptions = [10, 25, 50, 100];
 
+  // Every table here names its row-action column 'actions' and puts it last. Pin it to the
+  // right edge: a wide table scrolls its middle columns, and the actions a reviewer came for
+  // must not be the part that scrolls out of reach.
+  const stickyActions = (columnId: string) =>
+    columnId === 'actions'
+      ? 'sticky right-0 z-20 bg-background shadow-[inset_1px_0_0_hsl(var(--border))]'
+      : '';
+
   return (
     <div className="space-y-4">
       <div className="rounded-md border">
@@ -202,7 +212,14 @@ export function DataTable<TData, TValue>({
                     : flexRender(header.column.columnDef.header, header.getContext());
                   const sortable = sortField && onSortChange;
                   return (
-                    <TableHead key={header.id}>
+                    <TableHead
+                      key={header.id}
+                      // z above the other sticky headers: this one is sticky on both axes.
+                      className={
+                        stickyActions(header.column.id) &&
+                        `${stickyActions(header.column.id)} z-30 shadow-[inset_1px_0_0_hsl(var(--border)),inset_0_-1px_0_hsl(var(--border))]`
+                      }
+                    >
                       {sortable ? (
                         <button
                           type="button"
@@ -243,7 +260,7 @@ export function DataTable<TData, TValue>({
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell key={cell.id} className={stickyActions(cell.column.id)}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}
