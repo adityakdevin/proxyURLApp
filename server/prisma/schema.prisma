@@ -555,9 +555,10 @@ model ValidationRun {
   results ValidationResult[]
 
   @@index([claimId])
-  @@index([status])
   // The drainer picks the oldest QUEUED run one at a time; bulk validate can queue hundreds,
-  // and on @@index([status]) alone each pick filesorts the whole queued set.
+  // and on a status-only index each pick filesorts the whole queued set. That older
+  // single-column index was a strict left prefix of this one — dropped, because keeping it
+  // only added an index rewrite to every QUEUED -> RUNNING -> PASSED transition.
   @@index([status, createdAt])
   @@map("validation_runs")
 }

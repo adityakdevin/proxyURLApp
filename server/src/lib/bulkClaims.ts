@@ -88,8 +88,11 @@ export async function resolveTargets(
       };
     }
     // Deduplicated BEFORE the cap: 500 copies of one id passed the cap and wrote 500
-    // remarks onto a single claim, reported as 500 successes.
-    const ids = [...new Set(body.ids as string[])];
+    // remarks onto a single claim, reported as 500 successes. Lowercased first because the
+    // claims table is utf8mb4_unicode_ci — MySQL matches ids case-insensitively, so a
+    // case-sensitive Set let the SAME claim through 500 times in 500 spellings. Prisma's
+    // uuid() emits lowercase, so this is also the stored form.
+    const ids = [...new Set((body.ids as string[]).map((id) => id.toLowerCase()))];
     if (ids.length === 0) {
       return {
         error: { status: 400, code: 'NO_TARGETS', message: 'The selection was empty' },

@@ -37,8 +37,9 @@ export type ClaimAction = 'status' | 'assign' | 'delete' | null;
 const UNASSIGN = '__unassign__';
 
 /** Server refusal codes, in the words a reviewer can act on. */
-const FAILURE_REASON: Record<string, string> = {
+export const FAILURE_REASON: Record<string, string> = {
   CLAIM_NOT_EDITABLE: 'you cannot edit this claim',
+  INVALID_ASSIGNEE: 'that user cannot be assigned this claim',
   TERMINAL_STATUS: 'the claim is in a terminal status',
   REASSIGN_FORBIDDEN: 'only a Team Lead or Admin can reassign',
   INVALID_STATUS: 'that status no longer exists',
@@ -106,11 +107,15 @@ export function ClaimActionDialog({
       // throw a 403, so a refusal has to be read off the REPORT. Titling on `requested`
       // said "Deleted" for a claim the server refused, then closed the dialog and threw the
       // typed remark away.
-      if (succeeded === 0 && requested > 0) {
+      // Nothing succeeded — including the case where the filters matched nothing at all
+      // (requested 0). Both used to reach the success path and close the dialog.
+      if (succeeded === 0) {
         toast({
           title: `${verb} failed`,
           variant: 'destructive',
-          description: codes.map((c) => FAILURE_REASON[c] ?? c).join(', '),
+          description: codes.length
+            ? codes.map((c) => FAILURE_REASON[c] ?? c).join(', ')
+            : 'nothing matched — the rows may have changed since you selected them',
         });
         return; // dialog stays open, remark intact, nothing refetched
       }
@@ -190,9 +195,9 @@ export function ClaimActionDialog({
           <div className="space-y-4 py-2">
             {action === 'status' && (
               <div className="space-y-2">
-                <Label>New status</Label>
+                <Label htmlFor="bulk-new-status">New status</Label>
                 <Select value={newStatusId} onValueChange={setNewStatusId}>
-                  <SelectTrigger>
+                  <SelectTrigger id="bulk-new-status">
                     <SelectValue placeholder="Pick a status" />
                   </SelectTrigger>
                   <SelectContent>
@@ -207,13 +212,13 @@ export function ClaimActionDialog({
             )}
             {action === 'assign' && (
               <div className="space-y-2">
-                <Label>Assign to</Label>
+                <Label htmlFor="bulk-assignee">Assign to</Label>
                 <Select value={newAssigneeId} onValueChange={setNewAssigneeId}>
-                  <SelectTrigger>
+                  <SelectTrigger id="bulk-assignee">
                     <SelectValue placeholder="Pick a user" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={UNASSIGN}>Unassigned</SelectItem>
+                    <SelectItem value={UNASSIGN}>— Remove assignee —</SelectItem>
                     {assigneeOptions.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
                         {o.label}
@@ -224,8 +229,9 @@ export function ClaimActionDialog({
               </div>
             )}
             <div className="space-y-2">
-              <Label>Remark</Label>
+              <Label htmlFor="bulk-remark">Remark</Label>
               <Textarea
+                id="bulk-remark"
                 value={remarkText}
                 onChange={(e) => setRemarkText(e.target.value)}
                 placeholder="Why is this changing?"

@@ -224,22 +224,23 @@ export function ClaimJumpBox({
           className="absolute right-0 top-full z-30 mt-1 max-h-72 w-80 overflow-y-auto rounded-md border bg-white py-1 shadow-lg"
         >
           {hits.map((hit, i) => (
-            <li key={hit.id} role="option" id={`claim-jump-opt-${i}`} aria-selected={i === active}>
-              <button
-                type="button"
-                tabIndex={-1}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  pick(hit);
-                }}
-                onClick={() => pick(hit)}
-                onMouseEnter={() => setActive(i)}
-                // blue-50 as the only marker was ~1.05:1 against the dropdown — invisible,
-                // on the row Enter commits.
-                className={`flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-xs ${
-                  i === active ? 'border-blue-600 bg-blue-100 font-medium' : 'border-transparent'
-                }`}
-              >
+            <li
+              key={hit.id}
+              role="option"
+              id={`claim-jump-opt-${i}`}
+              aria-selected={i === active}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(hit);
+              }}
+              onClick={() => pick(hit)}
+              onMouseEnter={() => setActive(i)}
+              // blue-50 as the only marker was ~1.05:1 against the dropdown — invisible, on
+              // the row Enter commits.
+              className={`flex w-full cursor-pointer items-center gap-2 border-l-2 px-2 py-1.5 text-left text-xs ${
+                i === active ? 'border-blue-600 bg-blue-100 font-medium' : 'border-transparent'
+              }`}
+            >
                 <span className="min-w-0 flex-1 truncate font-mono text-gray-600">
                   <Highlighted text={hit.claimId} term={term} />
                 </span>
@@ -253,7 +254,6 @@ export function ClaimJumpBox({
                     {hit.subCategory.name}
                   </span>
                 )}
-              </button>
             </li>
           ))}
         </ul>

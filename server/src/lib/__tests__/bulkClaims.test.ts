@@ -8,6 +8,8 @@ const stubService = (result: { ids: string[]; total: number }) =>
 
 const base = { scope: 'ALL' as const, callerId: 'caller', role: 'ADMIN' as const };
 
+afterEach(() => jest.restoreAllMocks());
+
 describe('resolveTargets', () => {
   it('takes an explicit selection as-is', async () => {
     const r = await resolveTargets(stubService({ ids: [], total: 0 }), { ids: ['a', 'b'] }, base);
@@ -122,9 +124,12 @@ describe('resolveTargets', () => {
 
 describe('runBulk', () => {
   it('keeps going past a failure and reports the reason per claim', async () => {
+    const logged = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     const report = await runBulk(['ok-1', 'bad', 'ok-2'], async (id) => {
       if (id === 'bad') throw new ClaimServiceError('TERMINAL_STATUS', 'nope');
     });
+    // A rule saying no is not a fault — it must NOT reach the log.
+    expect(logged).not.toHaveBeenCalled();
     expect(report).toEqual({
       requested: 3,
       succeeded: 2,
@@ -140,7 +145,15 @@ describe('runBulk', () => {
     expect(report.failed).toEqual([{ id: 'boom', code: 'FAILED' }]);
     // A fault that answers 200 must at least leave a trace on the server.
     expect(logged).toHaveBeenCalled();
-    logged.mockRestore();
+  });
+
+  it('dedupes ids the DATABASE would consider equal, not just byte-equal ones', async () => {
+    // claims.id is utf8mb4_unicode_ci, so MySQL matches these as one row; a case-sensitive
+    // Set let the same claim through 500 times and wrote 500 remarks to one timeline.
+    const id = '3F2504E0-4F89-11D3-9A0C-0305E82C3301';
+    const spellings = [id, id.toLowerCase(), id.toUpperCase()];
+    const r = await resolveTargets(stubService({ ids: [], total: 0 }), { ids: spellings }, base);
+    expect(r.ids).toEqual([id.toLowerCase()]);
   });
 
   it('reports a no-op for an empty target list', async () => {

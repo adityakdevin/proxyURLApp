@@ -49,11 +49,18 @@ export function ClaimRowActions({
   const openDocuments = async () => {
     setBusy(true);
     const tab = window.open('', `doc-claim-${claimId}`);
+    // The tab is opened before the lookup, so it sits on about:blank meanwhile. Give it
+    // something to say, and on the empty path leave the reason THERE — closing it and
+    // toasting on the page the browser just left means nobody reads it.
+    tab?.document.write('<title>Opening documents…</title><p style="font:14px system-ui;padding:2rem">Opening documents…</p>');
     try {
       const r = await api.get<{ data: { id: string }[] }>(`/claims/${claimId}/documents`);
       const first = r.data[0];
       if (!first) {
-        tab?.close();
+        if (tab) {
+          tab.document.body.innerHTML =
+            '<p style="font:14px system-ui;padding:2rem">This claim has no documents yet.</p>';
+        }
         return toast({ title: 'No documents on this claim' });
       }
       const href = `/claims/${claimId}/documents/${first.id}`;

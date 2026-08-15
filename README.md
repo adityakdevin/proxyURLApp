@@ -67,7 +67,7 @@ A full-stack web application that provides controlled access to external and int
 
 4. **Set up the database**
    ```bash
-   npm run db:migrate
+   npm run db:push
    npm run db:seed
    ```
 
@@ -112,7 +112,7 @@ proxyURLApp/
 | `npm run dev:client` | Start frontend only (port 5173) |
 | `npm run build` | Build for production |
 | `npm run start` | Run production server |
-| `npm run db:migrate` | Run database migrations |
+| `npm run db:push` | Sync the database to `schema.prisma` (this project's mechanism — NOT `db:migrate`, see `server/prisma/migrations/README.md`) |
 | `npm run db:seed` | Seed initial data |
 | `npm run db:studio` | Open Prisma Studio |
 | `npm run test` | Run unit tests |

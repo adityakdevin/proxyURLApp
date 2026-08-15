@@ -221,12 +221,15 @@ export function DataTable<TData, TValue>({
                   return (
                     <TableHead
                       key={header.id}
-                      // cn() so the z/shadow overrides actually win: two conflicting Tailwind
-                      // utilities in one string resolve by generated-CSS order otherwise.
-                      // z above the other sticky headers — this one is sticky on both axes.
+                      // Both arguments matter: the first carries the sticky/right-0 classes,
+                      // the second the header-only overrides, and cn() (twMerge) resolves the
+                      // conflicts between them. `[&]:z-30` rather than `z-30` because
+                      // TableHeader's `[&_th]:z-10` is a class+type selector and outranks a
+                      // bare utility on the th itself.
                       className={cn(
+                        stickyActions(header.column.id),
                         stickyActions(header.column.id) &&
-                          'z-30 bg-background shadow-[inset_1px_0_0_hsl(var(--border)),inset_0_-1px_0_hsl(var(--border))]'
+                          '[&]:z-30 bg-background shadow-[inset_1px_0_0_hsl(var(--border)),inset_0_-1px_0_hsl(var(--border))]'
                       )}
                       // Sort direction was conveyed by an arrow icon alone, so a screen
                       // reader could not tell the table was sorted, or by what.

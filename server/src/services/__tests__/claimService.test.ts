@@ -176,24 +176,47 @@ describe('ClaimService', () => {
       // A scan creates every claim in one moment, so createdAt alone cannot order them; the
       // id tiebreak has to give the same sequence the list walks.
       const listed = (await service.list({ scope: 'ALL', callerId: adminId })).data.map((c) => c.id);
+      // Assert the ORDER, not just the membership: with equal timestamps the tiebreak is
+      // the only thing making it total, so id-desc is what has to hold.
+      expect(listed).toEqual([...made].sort().reverse());
       const middle = await service.adjacent(listed[1], { scope: 'ALL', callerId: adminId });
       expect(middle!.prev?.id).toBe(listed[0]);
       expect(middle!.next?.id).toBe(listed[2]);
-      expect(new Set(listed)).toEqual(new Set(made));
     });
 
     it('never steps outside the caller scope', async () => {
       await seedDefaultStatus();
-      const a = await service.create({ subCategoryId, claimId: 'C-IN' }, adminId);
-      const b = await service.create({ subCategoryId, claimId: 'C-OUT' }, adminId);
-      // In scope for the anchor, but the neighbour lives in a sub-category the caller has
-      // no access to, so there is nothing to step to.
-      const scoped = await service.adjacent(a.id, {
+      // The neighbour has to live OUTSIDE the granted sub-category, or this passes with the
+      // scope filter deleted from the neighbour query.
+      const otherCat = await prisma.category.create({
+        data: { name: `adj-cat-${Date.now()}`, projectId: (await prisma.subCategory.findUnique({
+          where: { id: subCategoryId },
+          include: { category: true },
+        }))!.category.projectId },
+      });
+      const otherSub = await prisma.subCategory.create({
+        data: { name: `adj-sub-${Date.now()}`, categoryId: otherCat.id },
+      });
+      const anchor = await service.create({ subCategoryId, claimId: 'C-IN' }, adminId);
+      await service.create({ subCategoryId: otherSub.id, claimId: 'C-OUT' }, adminId);
+
+      const scoped = await service.adjacent(anchor.id, {
         scope: { subCategoryIds: [subCategoryId] },
         callerId: userId,
       });
-      expect(scoped!.prev?.id ?? null).not.toBe(undefined);
-      expect([scoped!.prev?.id, scoped!.next?.id].filter(Boolean)).toEqual([b.id]);
+      expect(scoped).toEqual({ prev: null, next: null });
+
+      // Same anchor, wider grant: now the neighbour is reachable, which proves the null
+      // above came from the scope filter and not from an empty table.
+      const wider = await service.adjacent(anchor.id, {
+        scope: { subCategoryIds: [subCategoryId, otherSub.id] },
+        callerId: userId,
+      });
+      expect([wider!.prev?.id, wider!.next?.id].filter(Boolean)).toHaveLength(1);
+
+      await prisma.claim.deleteMany({ where: { subCategoryId: otherSub.id } });
+      await prisma.subCategory.delete({ where: { id: otherSub.id } });
+      await prisma.category.delete({ where: { id: otherCat.id } });
     });
   });
 

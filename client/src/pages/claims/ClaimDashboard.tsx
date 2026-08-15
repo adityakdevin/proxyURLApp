@@ -99,6 +99,17 @@ export default function ClaimDashboard() {
     assignedToMe: boolean;
     search: string;
   }>({ assignedToMe: false, search: '' });
+  // The filters the CURRENT rows were fetched with. `filters` is the live form state and
+  // changes as the reviewer types; sending those to a bulk action while the count beside it
+  // still describes the old fetch is how "Select all 12 matching" becomes "delete every
+  // claim in scope". Only fetchData promotes live filters to applied ones.
+  const [appliedFilters, setAppliedFilters] = useState<{
+    subCategoryId?: string;
+    workflowStatusId?: string;
+    assignedToUserId?: string;
+    assignedToMe: boolean;
+    search: string;
+  }>({ assignedToMe: false, search: '' });
   const noAssignment = role !== 'ADMIN' && !user?.projectId;
   const [filterStatuses, setFilterStatuses] = useState<Status[]>([]);
 
@@ -134,6 +145,7 @@ export default function ClaimDashboard() {
 
   const fetchData = async (page = 1, limit = 10) => {
     setIsLoading(true);
+    setAppliedFilters(filters);
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (filters.subCategoryId) params.set('subCategoryId', filters.subCategoryId);
@@ -413,11 +425,11 @@ export default function ClaimDashboard() {
         onClear={() => setSelectedIds([])}
         matchingTotal={pagination.total}
         filters={{
-          subCategoryId: filters.subCategoryId,
-          workflowStatusId: filters.workflowStatusId,
-          assignedToUserId: filters.assignedToUserId,
-          assignedToMe: filters.assignedToMe,
-          search: filters.search.trim() || undefined,
+          subCategoryId: appliedFilters.subCategoryId,
+          workflowStatusId: appliedFilters.workflowStatusId,
+          assignedToUserId: appliedFilters.assignedToUserId,
+          assignedToMe: appliedFilters.assignedToMe,
+          search: appliedFilters.search.trim() || undefined,
         }}
         role={role}
         statusOptions={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}

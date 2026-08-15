@@ -4,7 +4,13 @@ import { api, DataResponse } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { Role } from '@/stores/authStore';
-import { BulkReport, ClaimAction, ClaimActionDialog, Option } from './ClaimActionDialog';
+import {
+  BulkReport,
+  ClaimAction,
+  ClaimActionDialog,
+  FAILURE_REASON,
+  Option,
+} from './ClaimActionDialog';
 
 interface ClaimBulkBarProps {
   /** Ids ticked on the pages the reviewer has visited. */
@@ -60,7 +66,7 @@ export function ClaimBulkBar({
         title: `Re-validation queued: ${succeeded} of ${requested}`,
         variant: failed.length ? 'destructive' : undefined,
         description: failed.length
-          ? `${failed.length} refused (${[...new Set(failed.map((f) => f.code))].join(', ')})`
+          ? `${failed.length} refused: ${[...new Set(failed.map((f) => FAILURE_REASON[f.code] ?? f.code))].join(', ')}`
           : undefined,
       });
       finish();

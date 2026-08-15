@@ -546,8 +546,13 @@ export class ClaimService {
         // id as a tiebreak so the order is total: claims imported by one scan share a
         // createdAt, and without it MySQL may repeat or skip rows across pages — and the
         // viewer's step arrows (which order by createdAt THEN id) would walk a different
-        // sequence than the list the reviewer is stepping through.
-        orderBy: [{ [sortBy]: sortOrder }, { id: sortOrder }],
+        // sequence than the list the reviewer is stepping through. Not applied to claimId,
+        // which is already unique per sub-category: appending id there matches no index and
+        // turns an index-ordered scan into a filesort of every ACTIVE claim.
+        orderBy:
+          sortBy === 'claimId'
+            ? [{ claimId: sortOrder }]
+            : [{ [sortBy]: sortOrder }, { id: sortOrder }],
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -589,11 +594,14 @@ export class ClaimService {
     const rows = await this.prisma.claim.findMany({
       where,
       select: { id: true },
-      // `take` because count and select are two statements: a claim inserted between them
-      // would otherwise push the batch past the cap the count just cleared. No orderBy —
-      // the caller uses this as a set, and sorting it was a filesort for nothing.
-      take: cap,
+      // cap + 1, and re-checked below: count and select are two statements, so a claim
+      // inserted between them would otherwise slip past the cap the count just cleared.
+      // Refusing the batch is the contract; returning an arbitrary cap-sized slice of it
+      // is exactly what this method promises never to do. No orderBy — the caller uses
+      // this as a set, and sorting it was a filesort for nothing.
+      take: cap + 1,
     });
+    if (rows.length > cap) return { ids: [], total: rows.length };
     return { ids: rows.map((r) => r.id), total };
   }
 

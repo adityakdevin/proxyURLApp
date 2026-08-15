@@ -70,6 +70,16 @@ Clear, plus non-admin storage states (only an ADMIN state exists today) to drive
 `isSelectable` and role-gated paths.
 Found by: /ship coverage audit + testing specialist, 2026-08-16.
 
+### Flaky: "enqueue coalesces and the drainer processes QUEUED runs serially"
+**Priority:** P2
+`server/src/services/__tests__/validationService.test.ts:89` failed once in three full-suite
+runs (expected 2 runs, got 3) and passes 3/3 in isolation. `enqueue` coalesces by looking for
+an existing QUEUED row, so if a drain starts between the two `enqueue(c1)` calls the first row
+is no longer QUEUED and a second run is created. The test depends on that timing.
+Fix: await the drain deterministically, or assert on coalescing directly rather than on the
+row count.
+Found by: /review, 2026-08-16.
+
 ## Database
 
 ### Migration history cannot rebuild the current schema

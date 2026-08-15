@@ -25,7 +25,7 @@ npm run dev:server       # Express on port 3001 (tsx watch)
 npm run dev:client       # Vite on port 5173
 
 # Database
-npm run db:migrate       # Run Prisma migrations (dev)
+npm run db:push          # Sync the DB to schema.prisma — this project's mechanism
 npm run db:seed          # Seed initial data
 npm run db:studio        # Open Prisma Studio GUI
 npm run db:generate      # Regenerate Prisma client
@@ -123,6 +123,8 @@ Admin seed credentials configured via `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN
 
 ## Database Notes
 
-- Use `npm run db:migrate` after schema changes
+- Use `npm run db:push` after schema changes. Do NOT run `db:migrate` (`prisma migrate
+  dev`): the migration history is ~71 lines behind `schema.prisma`, so it would auto-author
+  a migration dropping columns from three master tables. See `server/prisma/migrations/README.md`.
 - Prisma Client auto-regenerates on migrate
 - `server/prisma/seed.ts` creates initial admin user

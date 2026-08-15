@@ -148,15 +148,15 @@ router.post(
   bulkTargetValidators,
   validate,
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
-  try {
-    const ids = await bulkTargets(req, res);
-    if (!ids) return;
-    const service = getService(req);
-    const report = await runBulk(ids, async (id) => {
-      const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
-      if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
-      await enqueue(prismaOf(req), registry, id, 'MANUAL', req.session!.userId);
-    });
+    try {
+      const ids = await bulkTargets(req, res);
+      if (!ids) return;
+      const service = getService(req);
+      const report = await runBulk(ids, async (id) => {
+        const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
+        if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
+        await enqueue(prismaOf(req), registry, id, 'MANUAL', req.session!.userId);
+      });
       res.status(202).json({ data: report });
     } catch (err) {
       next(err);
@@ -170,7 +170,7 @@ router.post(
   '/bulk/remarks',
   [
     ...bulkTargetValidators,
-    body('remarkText').isString().trim().notEmpty(),
+    body('remarkText').isString().trim().notEmpty().isLength({ max: 2000 }),
     body('newStatusId').optional().isUUID(),
     body('newAssigneeId').optional({ nullable: true }).isUUID(),
   ],
@@ -284,7 +284,7 @@ router.post(
   '/:id/remarks',
   [
     param('id').isUUID(),
-    body('remarkText').isString().trim().notEmpty(),
+    body('remarkText').isString().trim().notEmpty().isLength({ max: 2000 }),
     body('newStatusId').optional().isUUID(),
     body('newAssigneeId').optional({ nullable: true }).isUUID(),
   ],
