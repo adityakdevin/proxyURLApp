@@ -296,6 +296,7 @@ export default function ClaimDashboard() {
       cell: ({ row }) => (
         <ClaimRowActions
           claimId={row.original.id}
+          claimLabel={row.original.claimId}
           canAct={canOpen(row.original)}
           role={role}
           statusOptions={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}

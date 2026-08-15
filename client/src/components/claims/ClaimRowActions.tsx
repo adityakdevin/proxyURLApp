@@ -13,6 +13,8 @@ import { ClaimAction, ClaimActionDialog, Option } from './ClaimActionDialog';
 
 interface ClaimRowActionsProps {
   claimId: string;
+  /** The human claim id, so a confirm names the claim rather than counting it. */
+  claimLabel: string;
   /** False for a claim this user may not work on — then nothing but the disabled row shows. */
   canAct: boolean;
   role: Role;
@@ -28,6 +30,7 @@ const iconButton =
  *  menu, where a label is worth more than the width an extra icon would cost. */
 export function ClaimRowActions({
   claimId,
+  claimLabel,
   canAct,
   role,
   statusOptions,
@@ -133,6 +136,7 @@ export function ClaimRowActions({
       <ClaimActionDialog
         action={action}
         count={1}
+        subject={claimLabel}
         target={{ ids: [claimId] }}
         statusOptions={statusOptions}
         assigneeOptions={assigneeOptions}

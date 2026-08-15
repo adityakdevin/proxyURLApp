@@ -43,6 +43,9 @@ interface ClaimActionDialogProps {
   action: ClaimAction;
   /** How many claims the action will touch — only used in the wording. */
   count: number;
+  /** The one claim's id, when the action came from a single row. Named in the wording so a
+   *  destructive confirm says WHICH claim, not just how many. */
+  subject?: string;
   target: ClaimTarget;
   statusOptions: Option[];
   assigneeOptions: Option[];
@@ -59,6 +62,7 @@ interface ClaimActionDialogProps {
 export function ClaimActionDialog({
   action,
   count,
+  subject,
   target,
   statusOptions,
   assigneeOptions,
@@ -127,6 +131,7 @@ export function ClaimActionDialog({
   };
 
   const plural = count === 1 ? '' : 's';
+  const subjectLabel = subject && count === 1 ? subject : `${count} claim${plural}`;
 
   return (
     <Dialog open={action !== null} onOpenChange={(open) => !open && close()}>
@@ -134,10 +139,10 @@ export function ClaimActionDialog({
         <DialogHeader>
           <DialogTitle>
             {action === 'delete'
-              ? `Delete ${count} claim${plural}?`
+              ? `Delete ${subjectLabel}?`
               : action === 'assign'
-                ? `Reassign ${count} claim${plural}`
-                : `Change status on ${count} claim${plural}`}
+                ? `Reassign ${subjectLabel}`
+                : `Change status on ${subjectLabel}`}
           </DialogTitle>
           <DialogDescription>
             {action === 'delete'

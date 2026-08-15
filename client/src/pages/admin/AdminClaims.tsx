@@ -281,6 +281,7 @@ export default function AdminClaims() {
       cell: ({ row }) => (
         <ClaimRowActions
           claimId={row.original.id}
+          claimLabel={row.original.claimId}
           canAct
           role="ADMIN"
           statusOptions={statusOptions}
