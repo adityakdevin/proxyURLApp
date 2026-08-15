@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ColumnDef,
   RowData,
@@ -55,6 +55,16 @@ import {
   ArrowDown,
 } from 'lucide-react';
 
+/** Row selection for bulk actions. Ids rather than row indexes, so a selection survives
+ *  paging and sorting; the owning page decides what "selected" then means. */
+export interface RowSelection<TData> {
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+  rowId: (row: TData) => string;
+  /** Rows that cannot be acted on get no checkbox (e.g. a claim the user may not edit). */
+  isSelectable?: (row: TData) => boolean;
+}
+
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
@@ -70,6 +80,36 @@ interface DataTableProps<TData, TValue> {
   /** Current server-side sort; when provided with onSortChange, headers with meta.sortField become clickable. */
   sort?: ServerSort;
   onSortChange?: (field: string) => void;
+  selection?: RowSelection<TData>;
+}
+
+/** Native checkbox — the only thing a component buys here is the indeterminate flag, which
+ *  has no HTML attribute and must be set on the element. */
+function SelectBox({
+  checked,
+  indeterminate,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  label: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate && !checked;
+  }, [indeterminate, checked]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="h-4 w-4 cursor-pointer align-middle accent-primary"
+      checked={checked}
+      onChange={onChange}
+      aria-label={label}
+    />
+  );
 }
 
 export function DataTable<TData, TValue>({
@@ -81,12 +121,60 @@ export function DataTable<TData, TValue>({
   isLoading,
   sort,
   onSortChange,
+  selection,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
+  const selected = new Set(selection?.selectedIds ?? []);
+  const pageIds = selection
+    ? data.filter((r) => selection.isSelectable?.(r) ?? true).map(selection.rowId)
+    : [];
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+
+  const toggleOne = (id: string) => {
+    if (!selection) return;
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selection.onChange([...next]);
+  };
+  // The header box acts on THIS page only; acting on everything the filters match is a
+  // separate, explicit choice the page offers once rows are ticked.
+  const togglePage = () => {
+    if (!selection) return;
+    const next = new Set(selected);
+    if (allPageSelected) pageIds.forEach((id) => next.delete(id));
+    else pageIds.forEach((id) => next.add(id));
+    selection.onChange([...next]);
+  };
+
+  const selectColumn: ColumnDef<TData, TValue> = {
+    id: '__select',
+    header: () => (
+      <SelectBox
+        checked={allPageSelected}
+        indeterminate={pageIds.some((id) => selected.has(id))}
+        onChange={togglePage}
+        label="Select all rows on this page"
+      />
+    ),
+    cell: ({ row }) => {
+      if (selection?.isSelectable && !selection.isSelectable(row.original)) return null;
+      const id = selection!.rowId(row.original);
+      return (
+        <SelectBox
+          checked={selected.has(id)}
+          onChange={() => toggleOne(id)}
+          label={`Select row ${id}`}
+        />
+      );
+    },
+  };
+  const allColumns = selection ? [selectColumn, ...columns] : columns;
+
   const table = useReactTable({
     data,
-    columns,
+    columns: allColumns,
     getCoreRowModel: getCoreRowModel(),
     onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
@@ -144,7 +232,7 @@ export function DataTable<TData, TValue>({
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
+                <TableCell colSpan={allColumns.length} className="h-24 text-center">
                   <div className="flex items-center justify-center">
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                     <span className="ml-2">Loading...</span>
@@ -163,7 +251,7 @@ export function DataTable<TData, TValue>({
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
+                <TableCell colSpan={allColumns.length} className="h-24 text-center">
                   No results.
                 </TableCell>
               </TableRow>
@@ -172,9 +260,9 @@ export function DataTable<TData, TValue>({
         </Table>
       </div>
 
-      {/* Pagination */}
-      <div className="flex items-center justify-between px-2">
-        <div className="flex items-center space-x-2">
+      {/* Pagination: one row — page size left, the range in the middle, the pager right. */}
+      <div className="flex items-center justify-between gap-4 px-2">
+        <div className="flex flex-1 items-center space-x-2">
           <p className="text-sm text-muted-foreground">Rows per page</p>
           <Select
             value={String(pagination?.limit ?? 10)}
@@ -193,7 +281,15 @@ export function DataTable<TData, TValue>({
           </Select>
         </div>
 
-        <div className="flex items-center space-x-6 lg:space-x-8">
+        {pagination && (
+          <div className="whitespace-nowrap text-center text-sm text-muted-foreground">
+            Showing {(pagination.page - 1) * pagination.limit + 1} to{' '}
+            {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}{' '}
+            entries
+          </div>
+        )}
+
+        <div className="flex flex-1 items-center justify-end space-x-6 lg:space-x-8">
           <div className="flex w-[100px] items-center justify-center text-sm text-muted-foreground">
             {pagination ? (
               <>
@@ -265,14 +361,6 @@ export function DataTable<TData, TValue>({
           </div>
         </div>
       </div>
-
-      {pagination && (
-        <div className="text-sm text-muted-foreground text-center">
-          Showing {(pagination.page - 1) * pagination.limit + 1} to{' '}
-          {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}{' '}
-          entries
-        </div>
-      )}
     </div>
   );
 }

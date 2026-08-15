@@ -4,6 +4,8 @@ import { ColumnDef } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
+import { ClaimBulkBar } from '@/components/claims/ClaimBulkBar';
+import { ClaimRowActions } from '@/components/claims/ClaimRowActions';
 import { FilterSelect } from '@/components/shared/FilterSelect';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -100,6 +102,10 @@ export default function ClaimDashboard() {
   const noAssignment = role !== 'ADMIN' && !user?.projectId;
   const [filterStatuses, setFilterStatuses] = useState<Status[]>([]);
 
+  // Bulk selection: ids, so ticks survive paging. Cleared on every fetch — the rows a
+  // reviewer ticked under one filter are not the rows the next filter shows.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [addForm, setAddForm] = useState<{
     subCategoryId?: string;
@@ -127,6 +133,7 @@ export default function ClaimDashboard() {
 
   const fetchData = async (page = 1, limit = 10) => {
     setIsLoading(true);
+    setSelectedIds([]);
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (filters.subCategoryId) params.set('subCategoryId', filters.subCategoryId);
@@ -286,18 +293,16 @@ export default function ClaimDashboard() {
     {
       id: 'actions',
       header: 'Actions',
-      cell: ({ row }) =>
-        canOpen(row.original) ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigate(`/claims/${row.original.id}`, { state: { siblings: data.map((c) => c.id) } })}
-          >
-            Open
-          </Button>
-        ) : (
-          <span className="text-muted-foreground text-xs">—</span>
-        ),
+      cell: ({ row }) => (
+        <ClaimRowActions
+          claimId={row.original.id}
+          canAct={canOpen(row.original)}
+          role={role}
+          statusOptions={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}
+          assigneeOptions={addUsers.map((u) => ({ value: u.id, label: u.fullName }))}
+          onDone={() => fetchData(pagination.page, pagination.limit)}
+        />
+      ),
     },
   ];
 
@@ -389,6 +394,22 @@ export default function ClaimDashboard() {
         </div>
       </div>
 
+      <ClaimBulkBar
+        selectedIds={selectedIds}
+        onClear={() => setSelectedIds([])}
+        matchingTotal={pagination.total}
+        filters={{
+          subCategoryId: filters.subCategoryId,
+          workflowStatusId: filters.workflowStatusId,
+          assignedToUserId: filters.assignedToUserId,
+          assignedToMe: filters.assignedToMe,
+          search: filters.search.trim() || undefined,
+        }}
+        role={role}
+        statusOptions={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}
+        assigneeOptions={addUsers.map((u) => ({ value: u.id, label: u.fullName }))}
+        onDone={() => fetchData(pagination.page, pagination.limit)}
+      />
       <DataTable
         columns={columns}
         data={data}
@@ -396,6 +417,14 @@ export default function ClaimDashboard() {
         onPageChange={(p) => fetchData(p, pagination.limit)}
         onPageSizeChange={(l) => fetchData(1, l)}
         isLoading={isLoading}
+        selection={{
+          selectedIds,
+          onChange: setSelectedIds,
+          rowId: (row) => row.id,
+          // A USER may only act on claims assigned to them — the same rule that decides
+          // whether the row opens at all, so the box never promises an action that 403s.
+          isSelectable: canOpen,
+        }}
       />
       </>
       )}

@@ -4,6 +4,8 @@ import { ColumnDef } from '@tanstack/react-table';
 import { Upload, Download } from 'lucide-react';
 import { api, DataResponse, PaginatedResponse } from '@/lib/api';
 import { DataTable, ServerSort, nextSort } from '@/components/shared/DataTable';
+import { ClaimBulkBar } from '@/components/claims/ClaimBulkBar';
+import { ClaimRowActions } from '@/components/claims/ClaimRowActions';
 import { TableToolbar } from '@/components/shared/TableToolbar';
 import { FilterSelect } from '@/components/shared/FilterSelect';
 import { Badge } from '@/components/ui/badge';
@@ -91,6 +93,17 @@ export default function AdminClaims() {
       .catch(() => setStatusOptions([]));
   }, []);
 
+  // Bulk selection: ids survive paging, so a reviewer can gather rows across pages before
+  // acting. Cleared whenever the filters change — those rows are no longer on screen.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [assigneeOptions, setAssigneeOptions] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    api
+      .get<{ data: { id: string; fullName: string }[] }>('/user/users-in-scope')
+      .then((r) => setAssigneeOptions(r.data.map((u) => ({ value: u.id, label: u.fullName }))))
+      .catch(() => setAssigneeOptions([]));
+  }, []);
+
   const [obsOpen, setObsOpen] = useState(false);
   const [picker, setPicker] = useState<Partial<SubCategoryPickerValue>>({});
   const [isUploading, setIsUploading] = useState(false);
@@ -129,9 +142,17 @@ export default function AdminClaims() {
 
   // Refetch (from page 1) whenever search, check filters, or sort change — including on mount.
   useEffect(() => {
+    setSelectedIds([]);
     fetchData(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, sort, checks, workflowStatusId]);
+
+  // What "all matching" acts on: the same filters the list was fetched with.
+  const bulkFilters = {
+    search: search.trim() || undefined,
+    workflowStatusId: workflowStatusId || undefined,
+    ...checks,
+  };
 
   // Clear the picker / file / report when the dialog closes so a stale selection
   // can't carry into the next open (and a wrong-sub-category upload).
@@ -254,6 +275,20 @@ export default function AdminClaims() {
       meta: { sortField: 'fullScanStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.fullScanStatus} />,
     },
+    {
+      id: 'actions',
+      header: 'Actions',
+      cell: ({ row }) => (
+        <ClaimRowActions
+          claimId={row.original.id}
+          canAct
+          role="ADMIN"
+          statusOptions={statusOptions}
+          assigneeOptions={assigneeOptions}
+          onDone={() => fetchData(pagination.page, pagination.limit)}
+        />
+      ),
+    },
   ];
 
   return (
@@ -301,6 +336,16 @@ export default function AdminClaims() {
           ))}
         </TableToolbar>
       </div>
+      <ClaimBulkBar
+        selectedIds={selectedIds}
+        onClear={() => setSelectedIds([])}
+        matchingTotal={pagination.total}
+        filters={bulkFilters}
+        role="ADMIN"
+        statusOptions={statusOptions}
+        assigneeOptions={assigneeOptions}
+        onDone={() => fetchData(pagination.page, pagination.limit)}
+      />
       <DataTable
         columns={columns}
         data={data}
@@ -308,6 +353,11 @@ export default function AdminClaims() {
         onPageChange={(p) => fetchData(p, pagination.limit)}
         onPageSizeChange={(l) => fetchData(1, l)}
         isLoading={isLoading}
+        selection={{
+          selectedIds,
+          onChange: setSelectedIds,
+          rowId: (row) => row.id,
+        }}
         sort={sort}
         onSortChange={(f) => setSort((p) => nextSort(p, f))}
       />

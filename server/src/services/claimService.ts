@@ -469,6 +469,49 @@ export class ClaimService {
     return claim;
   }
 
+  /**
+   * The claims either side of this one in the default list order (createdAt desc, id desc
+   * as the tiebreak so equal timestamps — a bulk import — still step deterministically),
+   * within the caller's scope. Each neighbour carries its first document, so the document
+   * viewer can walk claims without bouncing through the claim page to pick a file.
+   * ponytail: default order only. If the viewer ever has to follow the list's own sort and
+   * filters, pass them in — buildWhere already takes them.
+   */
+  async adjacent(id: string, filters: ListClaimsFilters) {
+    const current = await this.prisma.claim.findUnique({
+      where: { id },
+      select: { id: true, createdAt: true },
+    });
+    if (!current) return null;
+    const where = this.buildWhere(filters);
+    const neighbour = async (dir: 'prev' | 'next') => {
+      // 'prev' is the row ABOVE in the list — newer — because the list is newest-first.
+      const [cmp, order] = dir === 'prev' ? (['gt', 'asc'] as const) : (['lt', 'desc'] as const);
+      const c = await this.prisma.claim.findFirst({
+        where: {
+          AND: [
+            where,
+            {
+              OR: [
+                { createdAt: { [cmp]: current.createdAt } },
+                { createdAt: current.createdAt, id: { [cmp]: current.id } },
+              ],
+            },
+          ],
+        },
+        orderBy: [{ createdAt: order }, { id: order }],
+        select: {
+          id: true,
+          claimId: true,
+          documents: { orderBy: { createdAt: 'asc' }, take: 1, select: { id: true } },
+        },
+      });
+      return c && { id: c.id, claimId: c.claimId, documentId: c.documents[0]?.id ?? null };
+    };
+    const [prev, next] = await Promise.all([neighbour('prev'), neighbour('next')]);
+    return { prev, next };
+  }
+
   /** Columns clients may sort the claim list by (guards against arbitrary orderBy keys). */
   private static readonly SORTABLE_FIELDS = new Set([
     'claimId',
@@ -525,6 +568,23 @@ export class ClaimService {
     }
     const rows = data.map((c) => ({ ...c, spellSummary: spellByClaim.get(c.id) ?? null }));
     return { data: rows, total, page, limit };
+  }
+
+  /**
+   * Every claim id matching these filters, for "act on all matching" bulk calls. Counts
+   * first and returns the count untouched when it exceeds `cap`, so the caller can refuse
+   * the whole batch instead of acting on an arbitrary slice of it.
+   */
+  async idsMatching(filters: ListClaimsFilters, cap: number) {
+    const where = this.buildWhere(filters);
+    const total = await this.prisma.claim.count({ where });
+    if (total > cap) return { ids: [], total };
+    const rows = await this.prisma.claim.findMany({
+      where,
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return { ids: rows.map((r) => r.id), total };
   }
 
   private buildWhere(filters: ListClaimsFilters): Prisma.ClaimWhereInput {

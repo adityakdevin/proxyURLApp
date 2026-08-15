@@ -271,12 +271,16 @@ function FindingsCard({
   activeId,
   onSelect,
   onJumpToPage,
+  capHeight,
 }: {
   findings: Finding[];
   numberOf: Map<string, number>;
   activeId: string | null;
   onSelect: (id: string) => void;
   onJumpToPage?: (page: number) => void;
+  /** Cap the list so the field cards below it stay reachable. Off when findings are the
+   *  whole panel — a cap there cuts the list mid-row and leaves the rest of the panel blank. */
+  capHeight?: boolean;
 }) {
   const [sev, setSev] = useState<SevFilter>('ALL');
   const [query, setQuery] = useState('');
@@ -404,7 +408,7 @@ function FindingsCard({
         <p className="px-3 py-3 text-xs text-gray-400">No finding matches this filter.</p>
       ) : (
         // No horizontal padding: rows run edge to edge so a selected row fills the card.
-        <div className="max-h-[26rem] overflow-auto pb-1">
+        <div className={`overflow-auto pb-1 ${capHeight ? 'max-h-[26rem]' : ''}`}>
           {byPage.map(([page, list]) => (
             <div key={page ?? 'none'} className="group/page">
               {/* Sticky, so the reviewer always knows which page the rows below are on.
@@ -538,6 +542,7 @@ export function FieldPanes({
             activeId={activeId}
             onSelect={onSelect}
             onJumpToPage={onJumpToPage}
+            capHeight={showFields}
           />
         )}
 

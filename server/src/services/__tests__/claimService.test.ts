@@ -124,6 +124,44 @@ describe('ClaimService', () => {
     });
   });
 
+  describe('adjacent', () => {
+    it('walks the claims either side in list order, and stops at the ends', async () => {
+      await seedDefaultStatus();
+      for (const [i, claimId] of ['C-A', 'C-B', 'C-C'].entries()) {
+        const c = await service.create({ subCategoryId, claimId }, adminId);
+        // Distinct timestamps: created in the same millisecond, list order is a coin toss
+        // and there is no fixed "either side" to assert.
+        await prisma.claim.update({
+          where: { id: c.id },
+          data: { createdAt: new Date(Date.UTC(2026, 0, 1 + i)) },
+        });
+      }
+      // Newest first, so the list reads C-C, C-B, C-A.
+      const [newest, middle, oldest] = (await service.list({ scope: 'ALL', callerId: adminId }))
+        .data;
+      expect([newest.claimId, middle.claimId, oldest.claimId]).toEqual(['C-C', 'C-B', 'C-A']);
+
+      const mid = await service.adjacent(middle.id, { scope: 'ALL', callerId: adminId });
+      expect(mid!.prev?.id).toBe(newest.id);
+      expect(mid!.next?.id).toBe(oldest.id);
+      expect(mid!.prev?.documentId).toBeNull(); // no documents uploaded in this test
+
+      expect((await service.adjacent(newest.id, { scope: 'ALL', callerId: adminId }))!.prev).toBeNull();
+      expect((await service.adjacent(oldest.id, { scope: 'ALL', callerId: adminId }))!.next).toBeNull();
+    });
+
+    it('never steps outside the caller scope', async () => {
+      await seedDefaultStatus();
+      const a = await service.create({ subCategoryId, claimId: 'C-IN' }, adminId);
+      await service.create({ subCategoryId, claimId: 'C-OUT' }, adminId);
+      const scoped = await service.adjacent(a.id, {
+        scope: { subCategoryIds: [] },
+        callerId: userId,
+      });
+      expect(scoped).toEqual({ prev: null, next: null });
+    });
+  });
+
   describe('terminal status enforcement', () => {
     it('blocks a non-admin from moving a claim out of a terminal status; admin may override', async () => {
       const def = await seedDefaultStatus();

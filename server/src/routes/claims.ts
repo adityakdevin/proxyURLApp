@@ -1,17 +1,20 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { body, param, query } from 'express-validator';
-import { authMiddleware, passwordChangedMiddleware } from '../middleware/auth.js';
+import { adminMiddleware, authMiddleware, passwordChangedMiddleware } from '../middleware/auth.js';
 import {
   scopedMiddleware,
   teamLeadOrAdminMiddleware,
   ScopedRequest,
 } from '../middleware/roleGuard.js';
-import { ClaimService, ClaimServiceError } from '../services/claimService.js';
+import { AppendRemarkInput, ClaimService, ClaimServiceError } from '../services/claimService.js';
 import claimDocumentsRoutes from './claimDocuments.js';
 import claimValidationRoutes from './claimValidation.js';
 import { ClaimRuleService } from '../services/claimRuleService.js';
 import { buildClaimsWorkbook } from '../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../lib/routeHelpers.js';
+import { resolveTargets, runBulk } from '../lib/bulkClaims.js';
+import { enqueue } from '../services/validationQueue.js';
+import { registry } from '../validators/registry.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -107,6 +110,112 @@ router.get(
       );
       res.setHeader('Content-Disposition', `attachment; filename="claims-${date}.xlsx"`);
       res.send(Buffer.from(buf));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Bulk actions on a selection (or on everything matching the list filters). Registered
+// BEFORE '/:id/...' so "bulk" is never read as a claim id. Every claim still goes through
+// the same per-claim permission checks the single-claim routes use.
+const bulkTargets = async (req: ScopedRequest, res: Response) => {
+  const r = await resolveTargets(getService(req), req.body, {
+    scope: req.scope!,
+    callerId: req.session!.userId,
+  });
+  if (r.error) {
+    res.status(r.error.status).json({ error: r.error.message, code: r.error.code });
+    return null;
+  }
+  return r.ids;
+};
+
+router.post('/bulk/validate', async (req: ScopedRequest, res: Response, next: NextFunction) => {
+  try {
+    const ids = await bulkTargets(req, res);
+    if (!ids) return;
+    const service = getService(req);
+    const report = await runBulk(ids, async (id) => {
+      const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
+      if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
+      await enqueue(prismaOf(req), registry, id, 'MANUAL', req.session!.userId);
+    });
+    res.status(202).json({ data: report });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// One endpoint for both "change status" and "reassign": a bulk remark is the single-claim
+// remark applied N times, and that route already carries the status and assignee rules.
+router.post(
+  '/bulk/remarks',
+  [
+    body('remarkText').isString().trim().notEmpty(),
+    body('newStatusId').optional().isUUID(),
+    body('newAssigneeId')
+      .optional({ nullable: true })
+      .custom((v) => v === null || /^[0-9a-fA-F-]{36}$/.test(v)),
+  ],
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      const ids = await bulkTargets(req, res);
+      if (!ids) return;
+      const service = getService(req);
+      const { remarkText, newStatusId, newAssigneeId } = req.body;
+      const input: AppendRemarkInput = { remarkText };
+      if (newStatusId) input.newStatusId = newStatusId;
+      // Only forward a reassignment when one was actually sent — appendRemark treats the
+      // KEY's presence as "reassign", so an absent field must stay absent.
+      if (Object.prototype.hasOwnProperty.call(req.body, 'newAssigneeId')) {
+        input.newAssigneeId = newAssigneeId;
+      }
+      const report = await runBulk(ids, async (id) => {
+        const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
+        if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
+        await service.appendRemark(id, input, req.session!.userId, req.session!.role);
+      });
+      res.json({ data: report });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Soft-delete stays admin-only, exactly like DELETE /admin/claims/:id — it lives here so
+// all four bulk actions share one target-resolution path.
+router.post(
+  '/bulk/delete',
+  adminMiddleware,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      const ids = await bulkTargets(req, res);
+      if (!ids) return;
+      const service = getService(req);
+      const report = await runBulk(ids, (id) => service.softDelete(id, req.session!.userId));
+      res.json({ data: report });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Neighbours in the claim list, for the document viewer's step arrows — that window is
+// opened by URL and so has no list state of its own to step through.
+router.get(
+  '/:id/adjacent',
+  [param('id').isUUID()],
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      const r = await getService(req).adjacent(req.params.id, {
+        scope: req.scope!,
+        callerId: req.session!.userId,
+      });
+      if (!r) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+      res.json({ data: r });
     } catch (err) {
       next(err);
     }

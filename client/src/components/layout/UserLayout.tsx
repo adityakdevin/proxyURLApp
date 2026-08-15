@@ -301,7 +301,9 @@ export default function UserLayout() {
           </aside>
 
           {/* Main content */}
-          <main className="flex-1 p-6">
+          {/* min-w-0: a flex child defaults to min-width:auto, so a wide table would push
+              the whole page sideways instead of scrolling inside its own container. */}
+          <main className="min-w-0 flex-1 p-6">
             <Outlet />
           </main>
         </div>
