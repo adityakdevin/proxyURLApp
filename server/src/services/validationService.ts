@@ -98,7 +98,24 @@ export class ValidationService {
     });
   }
 
-  async runOne(runId: string): Promise<void> {
+  /**
+   * Execute one queued run. Returns false when this call did NOT execute it, because another
+   * worker had already claimed it.
+   *
+   * The return value exists so callers can tell the two apart. It used to return void, and
+   * the drainer logged a completion after every call — so the worker that LOST the race
+   * printed `claim <id> done in 0s` for work it never touched. In a 114-claim production run
+   * that put phantom entries in the log beside the real ones:
+   *
+   *     [validationQueue] claim 06282dfc... done in 0s,  95 queued   <- lost the race
+   *     [validationQueue] claim 06282dfc... done in 48s, 94 queued   <- actually ran it
+   *
+   * The guard below was working correctly the whole time; only the log was wrong. That is
+   * worse than it sounds for a line whose entire purpose is telling a slow queue from a
+   * wedged one — it reported work that did not happen, which is the failure this logging was
+   * added to catch.
+   */
+  async runOne(runId: string): Promise<boolean> {
     // Claim the run before doing anything with it. The WHERE still carries
     // `status: 'QUEUED'`, so when several drain workers (or a worker and a direct caller)
     // reach for the same row, exactly one update matches and everyone else returns here.
@@ -109,9 +126,9 @@ export class ValidationService {
       where: { id: runId, status: 'QUEUED' },
       data: { status: 'RUNNING', startedAt: new Date() },
     });
-    if (claimed.count !== 1) return;
+    if (claimed.count !== 1) return false;
     const run = await this.prisma.validationRun.findUnique({ where: { id: runId } });
-    if (!run) return;
+    if (!run) return false;
     const claim = await this.prisma.claim.findUnique({
       where: { id: run.claimId },
       include: { documents: true },
@@ -121,7 +138,7 @@ export class ValidationService {
         where: { id: runId },
         data: { status: 'FAILED', message: 'Claim no longer exists', finishedAt: new Date() },
       });
-      return;
+      return true;
     }
 
     if (claim.documents.length === 0) {
@@ -144,7 +161,7 @@ export class ValidationService {
           data: { status: 'COMPLETED', finishedAt: new Date() },
         });
       });
-      return;
+      return true;
     }
 
     // One OCR worker for the whole run (META OCRs every image/PDF); closed in finally.
@@ -283,6 +300,9 @@ export class ValidationService {
     } finally {
       await ocr.close();
     }
+    // Reached whether the run completed or was caught and marked FAILED above: either way
+    // THIS call did the work, which is the only question the return value answers.
+    return true;
   }
 
   /**
