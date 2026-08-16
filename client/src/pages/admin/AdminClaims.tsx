@@ -319,6 +319,7 @@ export default function AdminClaims() {
           claimId={row.original.id}
           claimLabel={row.original.claimId}
           canAct
+          running={hasRunningChecks([row.original])}
           role={role}
           statusOptions={statusOptions}
           assigneeOptions={assigneeOptions}
