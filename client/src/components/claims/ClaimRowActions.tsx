@@ -121,7 +121,15 @@ export function ClaimRowActions({
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" className={iconButton} title="More actions" aria-label="More actions">
+          {/* disabled while busy, like its two siblings — otherwise an in-flight re-validate
+              can have a status change or a delete started on top of it. */}
+          <button
+            type="button"
+            className={iconButton}
+            disabled={busy}
+            title="More actions"
+            aria-label="More actions"
+          >
             <MoreVertical className="h-4 w-4" />
           </button>
         </DropdownMenuTrigger>

@@ -184,7 +184,10 @@ export function ClaimJumpBox({
         // reader user never learned suggestions existed or which one Enter would take.
         role="combobox"
         aria-expanded={open && hits.length > 0}
-        aria-controls="claim-jump-list"
+        // Gated like its two siblings: the <ul> only exists while the list is open, and
+        // pointing aria-controls at an absent id is the attribute a future "why is the
+        // listbox not announced" debug would trust.
+        aria-controls={open && hits.length ? 'claim-jump-list' : undefined}
         aria-autocomplete="list"
         aria-activedescendant={open && hits.length ? `claim-jump-opt-${active}` : undefined}
         // Blur closes the list, but a click on a row blurs first — the rows commit on

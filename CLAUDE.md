@@ -126,5 +126,5 @@ Admin seed credentials configured via `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN
 - Use `npm run db:push` after schema changes. Do NOT run `db:migrate` (`prisma migrate
   dev`): the migration history is ~71 lines behind `schema.prisma`, so it would auto-author
   a migration dropping columns from three master tables. See `server/prisma/migrations/README.md`.
-- Prisma Client auto-regenerates on migrate
+- Prisma Client regenerates on `db:push`; run `npm run db:generate` if it does not
 - `server/prisma/seed.ts` creates initial admin user

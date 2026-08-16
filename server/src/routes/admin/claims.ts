@@ -10,15 +10,10 @@ import {
 import { buildObservationWorkbook } from '../../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
 
-/** The validation-check result values a claim can be filtered by. */
-const CHECK_STATUSES = [
-  'PENDING',
-  'IN_PROGRESS',
-  'PASSED',
-  'DOUBTFUL',
-  'FAILED',
-  'DOCS_NOT_AVAILABLE',
-];
+/** The validation-check result values a claim can be filtered by. From the Prisma enum, not
+ *  a hand-copied list: a new member was silently rejected here while the bulk route, which
+ *  already derives its set this way, accepted it. */
+const CHECK_STATUSES = Object.values(ValidationStatus);
 
 const router = Router();
 const getService = (req: Request) => new ClaimService(prismaOf(req));

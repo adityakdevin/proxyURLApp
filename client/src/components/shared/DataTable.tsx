@@ -225,11 +225,14 @@ export function DataTable<TData, TValue>({
                       // the second the header-only overrides, and cn() (twMerge) resolves the
                       // conflicts between them. `[&]:z-30` rather than `z-30` because
                       // TableHeader's `[&_th]:z-10` is a class+type selector and outranks a
-                      // bare utility on the th itself.
+                      // bare utility on the th itself. The shadow needs the same escape for
+                      // the same reason — TableHeader also sets `[&_th]:shadow-...`, so a
+                      // bare shadow utility here lost, and the pinned Actions header rendered
+                      // without the left rule its body cells have.
                       className={cn(
                         stickyActions(header.column.id),
                         stickyActions(header.column.id) &&
-                          '[&]:z-30 bg-background shadow-[inset_1px_0_0_hsl(var(--border)),inset_0_-1px_0_hsl(var(--border))]'
+                          '[&]:z-30 bg-background [&]:shadow-[inset_1px_0_0_hsl(var(--border)),inset_0_-1px_0_hsl(var(--border))]'
                       )}
                       // Sort direction was conveyed by an arrow icon alone, so a screen
                       // reader could not tell the table was sorted, or by what.

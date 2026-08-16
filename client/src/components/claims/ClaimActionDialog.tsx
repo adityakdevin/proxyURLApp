@@ -236,6 +236,10 @@ export function ClaimActionDialog({
                 onChange={(e) => setRemarkText(e.target.value)}
                 placeholder="Why is this changing?"
                 rows={3}
+                // Matches the server validator on /claims/bulk/remarks. Without it a long
+                // remark is only refused after the round-trip, as a bare express-validator
+                // 400 that names no field.
+                maxLength={2000}
               />
             </div>
           </div>

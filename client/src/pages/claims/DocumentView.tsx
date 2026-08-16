@@ -193,6 +193,11 @@ export default function DocumentView() {
 
   useEffect(() => {
     let cancelled = false;
+    // Clear FIRST. This effect is not behind the loading gate, so between stepping to a new
+    // claim and its neighbours landing the arrows still held the PREVIOUS claim's prev/next:
+    // one click of Back then skipped a claim entirely, and Next was a no-op onto the claim
+    // already on screen. Both were silent — the wrong claim, no error.
+    setNeighbours({ prev: null, next: null });
     api
       .get<{ data: { prev: Neighbour; next: Neighbour } }>(`/claims/${id}/adjacent`)
       .then((r) => !cancelled && setNeighbours(r.data))

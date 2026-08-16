@@ -831,6 +831,8 @@ export default function ClaimUpdate() {
             onChange={(e) => setRemarkText(e.target.value)}
             disabled={!canEdit}
             placeholder="Required"
+            // Matches the server validator on /claims/:id/remarks.
+            maxLength={2000}
           />
         </div>
         <div className="flex justify-end mt-4">
