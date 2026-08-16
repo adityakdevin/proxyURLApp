@@ -23,8 +23,80 @@ const COLUMNS = [
   'redFlagStatus',
 ] as const;
 
+/**
+ * The status a claim moves to when validation first completes.
+ *
+ * Configurable because StatusMaster is admin-managed per deployment — the names here are
+ * data, not code. Matched case-insensitively (MySQL collation) against an ACTIVE,
+ * non-terminal status; if no such status exists the transition is skipped rather than
+ * guessed at.
+ */
+function advanceTargetName(): string {
+  // Read per call, not once at import: a module-level const is fixed before any config is
+  // in place, and it makes the behaviour untestable — a test setting the variable after
+  // import changes nothing, so it passes or fails for reasons unrelated to the code.
+  return process.env.VALIDATION_ADVANCE_STATUS ?? 'In Progress';
+}
+
 export class ValidationService {
   constructor(private prisma: PrismaClient, private validators: Validator[]) {}
+
+  /**
+   * Move a claim out of the DEFAULT status once it has actually been checked.
+   *
+   * A claim sat at "New" forever, so a reviewer could not tell which claims had been
+   * machine-checked and were waiting on a person. This says only that: work happened.
+   *
+   * Deliberately narrow. It fires ONLY when the claim is still on the default status, so it
+   * can never move a claim a human has already placed, never walks it backwards, and is
+   * idempotent on re-validation. It never advances to Verified or any terminal status —
+   * a machine re-running a scan must not assert that a claim is acceptable, which is a
+   * judgement only a person makes and an insurer's audit trail has to be able to prove.
+   *
+   * Writes a ClaimRemark with statusBefore/statusAfter like every other status change, so
+   * the timeline shows the move and who it is attributed to. No attributable actor means no
+   * transition: a status that changed with nobody's name on it is worse than one that did
+   * not change.
+   */
+  private async advanceOffDefaultStatus(
+    tx: Prisma.TransactionClient,
+    claimId: string,
+    currentStatusId: string,
+    triggeredBy: string | null
+  ): Promise<void> {
+    const current = await tx.statusMaster.findUnique({
+      where: { id: currentStatusId },
+      select: { isDefault: true },
+    });
+    if (!current?.isDefault) return;
+
+    const target = await tx.statusMaster.findFirst({
+      where: { name: advanceTargetName(), status: 'ACTIVE', isTerminal: false },
+      select: { id: true },
+    });
+    if (!target || target.id === currentStatusId) return;
+
+    const actor =
+      triggeredBy ??
+      (await tx.user.findFirst({ where: { role: 'ADMIN' }, select: { id: true } }))?.id;
+    if (!actor) return;
+
+    await tx.claim.update({
+      where: { id: claimId },
+      data: { workflowStatusId: target.id, updatedBy: actor },
+    });
+    await tx.claimRemark.create({
+      data: {
+        claimId,
+        userId: actor,
+        remarkText:
+          'Validation completed, so this claim moved off the default status and now shows ' +
+          'as picked up. This says the checks have run — it does not say they passed.',
+        statusBeforeId: currentStatusId,
+        statusAfterId: target.id,
+      },
+    });
+  }
 
   async runOne(runId: string): Promise<void> {
     const run = await this.prisma.validationRun.findUnique({ where: { id: runId } });
@@ -171,6 +243,14 @@ export class ValidationService {
           where: { id: claim.id },
           data: Object.fromEntries(results.map((r) => [r.v.column, r.status])),
         });
+        // Same transaction as the results: a crash must not leave a claim advanced with no
+        // checks written, or checks written with the claim still reading as untouched.
+        await this.advanceOffDefaultStatus(
+          tx,
+          claim.id,
+          claim.workflowStatusId,
+          run.triggeredBy ?? null
+        );
         await tx.validationRun.update({
           where: { id: runId },
           data: { status: 'COMPLETED', finishedAt: new Date() },
