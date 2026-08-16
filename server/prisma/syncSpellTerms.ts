@@ -47,17 +47,46 @@ async function main() {
     ),
   ];
 
-  const existing = new Set((await prisma.spellTerm.findMany({ select: { term: true } })).map((r) => r.term));
-  const missing = wanted.filter((t) => !existing.has(t));
+  // Status matters: the validator loads `where: { status: 'ACTIVE' }`, so an INACTIVE row is
+  // invisible to the spell check. Counting rows regardless of status made this script report
+  // "0 missing / nothing to do" for a term that was present, inactive, and therefore doing
+  // nothing — and because the insert dedups on `term`, the script could never repair it
+  // either. A silent gap between "the word is in the table" and "the check can see it".
+  const rows = await prisma.spellTerm.findMany({ select: { term: true, status: true } });
+  const active = new Set(rows.filter((r) => r.status === 'ACTIVE').map((r) => r.term));
+  const inactive = new Set(rows.filter((r) => r.status !== 'ACTIVE').map((r) => r.term));
+  const missing = wanted.filter((t) => !active.has(t) && !inactive.has(t));
+  // Present but switched off. Not insertable (the term already exists), so it needs a human
+  // decision: reactivate in /admin/spell-terms, or accept that the word is not checked.
+  const dormant = wanted.filter((t) => inactive.has(t));
 
-  console.log(`spell_terms currently holds ${existing.size} term(s).`);
-  if (existing.size === 0) {
-    console.log('Table is EMPTY — the validator is already falling back to the built-in list.');
+  console.log(`spell_terms holds ${rows.length} row(s): ${active.size} ACTIVE, ${inactive.size} inactive.`);
+  if (active.size === 0) {
+    console.log('No ACTIVE rows — the validator is falling back to the built-in list.');
   }
   console.log(`Built-in list has ${wanted.length} usable term(s); ${missing.length} missing.`);
 
+  if (dormant.length) {
+    console.log(
+      `\n${dormant.length} built-in term(s) exist but are INACTIVE, so the spell check ignores ` +
+        `them. This script cannot fix that — reactivate them in /admin/spell-terms:\n  ${dormant.join(', ')}\n`
+    );
+  }
+
+  // Terms an admin added by hand. Worth printing because this is where false positives come
+  // from: the built-in list deliberately carries NO place or brand names (they are the worst
+  // OCR class and produced the loudest reviewer complaints, e.g. "lucnow" against 'lucknow'),
+  // so any such term in use was added here and can be switched off here.
+  const extra = [...active].filter((t) => !wanted.includes(t)).sort();
+  if (extra.length) {
+    console.log(
+      `\n${extra.length} ACTIVE term(s) are admin-added, not built-in. A false positive on a ` +
+        `place or brand name will be one of these:\n  ${extra.join(', ')}\n`
+    );
+  }
+
   if (missing.length === 0) {
-    console.log('Nothing to do.');
+    console.log(dormant.length ? 'Nothing to insert.' : 'Nothing to do.');
     return;
   }
   console.log(`\nWould insert:\n  ${missing.join(', ')}\n`);
