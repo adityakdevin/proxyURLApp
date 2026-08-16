@@ -205,7 +205,11 @@ export default function SpellTerms() {
                 id="term"
                 value={term}
                 onChange={(e) => setTerm(e.target.value)}
-                placeholder="e.g. profession, signatory, bajaj"
+                // Form words only. This used to read "…, bajaj" — a brand name, offered as
+                // an example directly under a heading that says to avoid them. Production
+                // had eight such terms, and 'lucknow' among them was the confirmed cause of
+                // a reported false positive.
+                placeholder="e.g. profession, signatory, allowance"
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
               />
               <p className="text-xs text-muted-foreground">
