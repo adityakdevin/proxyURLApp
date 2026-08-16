@@ -54,10 +54,38 @@ async function main() {
   console.log(`\n  ${apply ? 'CLEARING' : 'WOULD CLEAR'} ${untouched.length} never edited:`);
   for (const t of untouched) console.log(`    - ${t.name} (${t.status})`);
 
+  // What FULL will gate on afterwards. The count matters more than it looks: an empty
+  // required set is not "nothing to check", it is `completenessOutcome` returning PASSED
+  // unconditionally (logic.ts:68) — every claim's Full Scan goes green and says so. That is
+  // the correct starting point after clearing a default nobody chose, but it is a real
+  // change in what the column means, and an operator should read it here rather than infer
+  // it from a wall of green later.
+  const remaining = edited.length;
+  console.log(
+    `\n  Required after this run: ${remaining}` +
+      (remaining === 0
+        ? '\n    With none required, FULL passes every claim and reports\n' +
+          '    "No required document types configured." Tick the types that genuinely are\n' +
+          '    mandatory in Admin > Document Types; each one starts gating immediately.'
+        : '')
+  );
+
   if (!apply) {
     console.log('\nDry run. Re-run with --apply to commit.');
     return;
   }
+
+  // Print the undo BEFORE the write, and print it even though the operator may not want it:
+  // this rewrites master data, the previous value lives nowhere else, and `updatedAt` is
+  // @updatedAt — so the moment this commits, every row it touched looks "edited" and a
+  // second run of this script will skip it. There is no getting the old state back from the
+  // table itself. Cheap to print, unrecoverable to have skipped.
+  console.log('\n  To undo exactly this change, run against the same database:');
+  console.log(
+    `    UPDATE document_type_masters SET is_required = 1 WHERE id IN (${untouched
+      .map((t) => `'${t.id}'`)
+      .join(', ')});`
+  );
 
   const { count } = await prisma.documentTypeMaster.updateMany({
     where: { id: { in: untouched.map((t) => t.id) } },
