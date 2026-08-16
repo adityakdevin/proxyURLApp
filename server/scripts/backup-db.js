@@ -1,6 +1,7 @@
 const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
@@ -206,12 +207,55 @@ console.log(
  */
 const structureOnlyTables = ['sessions', 'audit_logs'];
 
-try {
-  // Base connection args
-  const baseArgs = ['-h', host, '-P', port, '-u', user];
-  if (password) {
-    baseArgs.push(`--password=${password}`);
+/**
+ * Hand mysqldump the password in a file, not on the command line.
+ *
+ * `--password=X` put the database password in this process's argv, where on Windows any
+ * account that can open Task Manager reads it, and `wmic process get commandline` prints it
+ * outright. mysqldump says so itself on every run:
+ *
+ *     mysqldump: [Warning] Using a password on the command line interface can be insecure.
+ *
+ * A warning printed nightly into a log nobody opens is not a control. MYSQL_PWD would silence
+ * it while keeping the secret in the environment, which MySQL's own documentation calls
+ * insecure for the same reason; a defaults-file is the mechanism they actually recommend.
+ *
+ * mkdtempSync creates the directory 0700, so on POSIX the file is unreadable by other users
+ * before a single byte is written to it — the order matters, since a chmod after the write
+ * leaves a window. Windows has no mode bits here, but the directory lands under the running
+ * account's own temp path rather than anywhere shared, and the file exists only for the few
+ * seconds of the dump.
+ */
+let secretsDir = null;
+// Registered once, on `exit`, because the failure path calls process.exit(1) — which
+// terminates immediately and never runs a `finally`. A credentials file surviving a failed
+// backup is exactly the leak this replaced argv to avoid.
+process.on('exit', () => {
+  if (secretsDir) {
+    try {
+      fs.rmSync(secretsDir, { recursive: true, force: true });
+    } catch {
+      /* best effort: the process is ending either way */
+    }
   }
+});
+function connectionDefaultsFile() {
+  secretsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'proxyapp-backup-'));
+  const file = path.join(secretsDir, 'my.cnf');
+  // Values are quoted because a password may legitimately contain '#' or spaces, either of
+  // which a bare my.cnf value would truncate or mangle.
+  fs.writeFileSync(
+    file,
+    `[client]\nhost="${host}"\nport=${port}\nuser="${user}"\n` +
+      (password ? `password="${password}"\n` : ''),
+    { mode: 0o600 }
+  );
+  return file;
+}
+
+try {
+  // --defaults-extra-file MUST be the first argument; mysqldump rejects it anywhere else.
+  const baseArgs = [`--defaults-extra-file=${connectionDefaultsFile()}`];
 
   // Step 1: Backup all tables except structure-only tables
   const dataArgs = [
