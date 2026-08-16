@@ -103,9 +103,33 @@ describe('ValidationService + drainer', () => {
     const run = await prisma.validationRun.create({
       data: { claimId: claim.id, trigger: 'AUTO', status: 'RUNNING', startedAt: new Date() },
     });
-    const n = await new ValidationService(prisma, fakes).sweepStaleRuns();
-    expect(n).toBeGreaterThanOrEqual(1);
+    const { count, claimIds } = await new ValidationService(prisma, fakes).sweepStaleRuns();
+    expect(count).toBeGreaterThanOrEqual(1);
     expect((await prisma.validationRun.findUnique({ where: { id: run.id } }))?.status).toBe('FAILED');
+    // The ids come back so startup can queue fresh runs: the sweep discards the claim's
+    // results, so reporting nothing to re-run would leave it blank with no work pending.
+    expect(claimIds).toContain(claim.id);
+  });
+
+  it('a swept claim ends up with work pending, not blank with nothing scheduled', async () => {
+    const claim = await makeClaim('C-V7');
+    const orphaned = await prisma.validationRun.create({
+      data: { claimId: claim.id, trigger: 'AUTO', status: 'RUNNING', startedAt: new Date() },
+    });
+
+    // Exactly what index.ts does on startup: sweep, then queue the claims it blanked.
+    const { claimIds } = await new ValidationService(prisma, fakes).sweepStaleRuns();
+    for (const id of claimIds) await enqueue(prisma, fakes, id, 'AUTO');
+    await kickDrain(prisma, fakes);
+
+    // The sweep discards the claim's five columns, so the fix is not "a run exists" but
+    // "a run OTHER than the one it just failed exists" — without it the claim sits at
+    // PENDING with its findings gone and nothing queued to regenerate them.
+    const fresh = await prisma.validationRun.findMany({
+      where: { claimId: claim.id, id: { not: orphaned.id } },
+    });
+    expect(fresh.length).toBeGreaterThanOrEqual(1);
+    expect(fresh.every((r) => r.status !== 'FAILED')).toBe(true);
   });
 
   it('sweepStaleRuns resets the crashed claim columns to PENDING (not stranded IN_PROGRESS)', async () => {

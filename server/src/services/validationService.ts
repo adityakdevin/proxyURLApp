@@ -205,8 +205,18 @@ export class ValidationService {
   /**
    * Fail runs left RUNNING by a crash AND reset their claims' five columns to
    * PENDING — otherwise a crashed-mid-run claim is stranded IN_PROGRESS forever.
+   *
+   * Returns the affected claim ids so the caller can queue fresh runs for them. Resetting a
+   * claim's five columns THROWS AWAY its previous results, so a sweep that schedules nothing
+   * leaves the claim worse off than not sweeping at all: findings gone, every check back to
+   * PENDING, and no work pending to regenerate them. Observed on a live box — a claim that
+   * was mid-validation during a `pm2 restart` came back with empty check tabs and stayed
+   * that way until someone re-validated it by hand.
+   *
+   * The caller re-queues rather than this method, because `enqueue` lives in
+   * validationQueue, which imports this service — calling it from here would be a cycle.
    */
-  async sweepStaleRuns(): Promise<number> {
+  async sweepStaleRuns(): Promise<{ count: number; claimIds: string[] }> {
     return this.prisma.$transaction(async (tx) => {
       const stale = await tx.validationRun.findMany({
         where: { status: 'RUNNING' },
@@ -223,7 +233,7 @@ export class ValidationService {
           data: Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])),
         });
       }
-      return res.count;
+      return { count: res.count, claimIds };
     });
   }
 }
