@@ -19,6 +19,7 @@
     "db:backfill-doctype-required": "tsx prisma/backfillDocTypeRequired.ts",
     "db:sync-spell-terms": "tsx prisma/syncSpellTerms.ts",
     "qa:diagnostics": "tsx prisma/qaCaseDiagnostics.ts",
+    "qa:qr-debug": "tsx prisma/qrDebug.ts",
     "db:reset-admin": "tsx prisma/resetAdminPassword.ts",
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",

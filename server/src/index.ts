@@ -10,7 +10,7 @@ import { getHeadlessManager } from './services/headlessManager.js';
 import { ScanService } from './services/scanService.js';
 import { FsDirectoryReader } from './services/fsDirectoryReader.js';
 import { ValidationService } from './services/validationService.js';
-import { kickDrain } from './services/validationQueue.js';
+import { enqueue, kickDrain } from './services/validationQueue.js';
 import { registry as validatorRegistry } from './validators/registry.js';
 
 const prisma = new PrismaClient();
@@ -62,8 +62,25 @@ function runStartupSweeps() {
   // resume QUEUED runs. kickDrain runs in finally so a sweep failure can't block it.
   new ValidationService(prisma, validatorRegistry)
     .sweepStaleRuns()
-    .then((n) => {
-      if (n > 0) console.log(`Swept ${n} stale validation run(s) to FAILED on startup.`);
+    .then(async ({ count, claimIds }) => {
+      if (count > 0) {
+        console.log(`Swept ${count} stale validation run(s) to FAILED on startup.`);
+      }
+      // Re-queue what the sweep just blanked. The sweep resets the claim's five columns to
+      // PENDING, which discards its findings — so without this a claim that happened to be
+      // mid-run during a restart comes back with empty check tabs and NOTHING scheduled to
+      // refill them, and stays that way until a human notices. Queue each one individually
+      // so a single bad claim cannot stop the rest from recovering.
+      for (const claimId of claimIds) {
+        try {
+          await enqueue(prisma, validatorRegistry, claimId, 'AUTO');
+        } catch (e) {
+          console.error(`Could not re-queue interrupted claim ${claimId}:`, e);
+        }
+      }
+      if (claimIds.length > 0) {
+        console.log(`Re-queued ${claimIds.length} claim(s) interrupted by the restart.`);
+      }
     })
     .catch((e) => console.error('Validation stale-run sweep failed:', e))
     .finally(() => kickDrain(prisma, validatorRegistry));
