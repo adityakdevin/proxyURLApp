@@ -56,6 +56,51 @@ function argValue(flag: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+/**
+ * The NATIVE pixel size of the images embedded on a page.
+ *
+ * The decisive measurement when a page renders large and still decodes nothing. rasterizePdf
+ * renders the PAGE at a scale, but a page carrying a 700x400 photo rendered at 4760px wide
+ * is 700x400 of real data interpolated up — it looks crisp on screen and the QR modules are
+ * mush. No decoder and no filter can recover detail that was never captured; the fix in that
+ * case is rescanning at a higher DPI, not code.
+ */
+async function embeddedImageSizes(absolutePath: string, pages: number[]): Promise<void> {
+  try {
+    const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const data = new Uint8Array(await fs.readFile(absolutePath));
+    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false }).promise;
+    for (const n of pages) {
+      if (n < 1 || n > doc.numPages) continue;
+      const page = await doc.getPage(n);
+      const ops = await page.getOperatorList();
+      const found: string[] = [];
+      for (let i = 0; i < ops.fnArray.length; i++) {
+        if (ops.fnArray[i] !== OPS.paintImageXObject) continue;
+        const name = ops.argsArray[i]?.[0];
+        if (typeof name !== 'string') continue;
+        // objs is callback-based; resolve it, and skip anything not yet available.
+        const img: unknown = await new Promise((res) => {
+          try {
+            page.objs.get(name, res);
+          } catch {
+            res(null);
+          }
+        }).catch(() => null);
+        const wh = img as { width?: number; height?: number } | null;
+        if (wh?.width) found.push(`${wh.width}x${wh.height}`);
+      }
+      console.log(
+        found.length
+          ? `  page ${n} embedded image(s): ${found.join(', ')}`
+          : `  page ${n} embedded image(s): none reported`
+      );
+    }
+  } catch (e) {
+    console.log(`  (could not read embedded image sizes: ${e instanceof Error ? e.message : e})`);
+  }
+}
+
 async function main() {
   const positional = process.argv.slice(2).filter((a) => !a.startsWith('--'));
   // Drop values that belong to a flag rather than being the claim id.
@@ -108,6 +153,10 @@ async function main() {
       continue;
     }
 
+    // Measure the source before rendering it: a page that renders big from a small image
+    // explains a miss that no scale or filter will ever fix.
+    if (onlyPages?.length) await embeddedImageSizes(resolved.absolutePath, onlyPages);
+
     for (const scale of SCALES) {
       const pages = await rasterizePdf(resolved.absolutePath, 60, scale, onlyPages);
       if (pages.length === 0) {
@@ -140,6 +189,53 @@ async function main() {
         // decodes is a concrete change to make in the validator, and all of them failing
         // is real evidence that preprocessing is not the answer.
         if (hits.length === 0) {
+          // Tiles first — it is the likeliest rescue and the one with a real fix behind it.
+          // A card QR is a few hundred pixels inside a page several thousand wide, and a
+          // binarizer working the whole frame at once can lose it. Overlapping tiles stop a
+          // code that straddles a boundary from being cut in half by the grid.
+          const TILES = 3;
+          const OVERLAP = 0.2;
+          let tileHit = false;
+          const tw = Math.floor(width / TILES);
+          const th = Math.floor(height / TILES);
+          const ox = Math.floor(tw * OVERLAP);
+          const oy = Math.floor(th * OVERLAP);
+          for (let ty = 0; ty < TILES && !tileHit; ty++) {
+            for (let tx = 0; tx < TILES && !tileHit; tx++) {
+              const x = Math.max(0, tx * tw - ox);
+              const y = Math.max(0, ty * th - oy);
+              const w = Math.min(width - x, tw + ox * 2);
+              const h = Math.min(height - y, th + oy * 2);
+              try {
+                const t = await Jimp.read(p.png);
+                t.crop({ x, y, w, h });
+                const got = await decodeAll(
+                  new Uint8ClampedArray(t.bitmap.data),
+                  t.bitmap.width,
+                  t.bitmap.height
+                );
+                if (got.length > 0) {
+                  const out = path.join(
+                    outDir,
+                    `${doc.fileName}.p${p.page}.s${scale}.tile-${tx}-${ty}.png`
+                  );
+                  await fs.writeFile(out, await t.getBuffer('image/png'));
+                  console.log(
+                    `      tile ${tx},${ty} (${w}x${h}): ${got.length} QR  -> ${path.basename(out)}`
+                  );
+                  for (const hh of got) {
+                    const v = hh.value.length > 60 ? `${hh.value.slice(0, 60)}…` : hh.value;
+                    console.log(`            value: ${v}`);
+                  }
+                  tileHit = true;
+                }
+              } catch {
+                /* a crop that falls outside the image is not interesting */
+              }
+            }
+          }
+          if (!tileHit) console.log(`      tiles ${TILES}x${TILES}: 0`);
+
           for (const [name, apply] of VARIANTS) {
             try {
               const v = await Jimp.read(p.png);
