@@ -52,9 +52,26 @@ function resolveMysqldump() {
   const searched = [];
 
   if (process.env.MYSQLDUMP_PATH) {
-    // Configured explicitly: do NOT fall through if it is wrong. Silently using some other
-    // mysqldump than the one an operator named is how you back up the wrong server.
-    return { path: process.env.MYSQLDUMP_PATH, how: 'MYSQLDUMP_PATH', searched };
+    const configured = process.env.MYSQLDUMP_PATH;
+    searched.push(`${configured} (MYSQLDUMP_PATH)`);
+    if (works(configured)) return { path: configured, how: 'MYSQLDUMP_PATH', searched };
+    // Warn and keep looking.
+    //
+    // This deliberately reverses an earlier decision. The rule was "an explicit setting wins
+    // and is never fallen back from", justified as not silently substituting a different
+    // mysqldump. That justification does not hold up: mysqldump connects to whichever host
+    // this script passes it, so the binary's location cannot change WHICH server is dumped.
+    // The cost, meanwhile, is real and was paid immediately — the deploy box had
+    // MYSQLDUMP_PATH pointing at "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe",
+    // a path copied from an error message's example rather than found on the machine, and
+    // that one stale guess hard-blocked the very search built to fix this.
+    //
+    // Falling back is not silent — it says so, loudly, every run until the setting is
+    // corrected, which keeps the only part of the original concern that was worth keeping.
+    console.warn(
+      `WARNING: MYSQLDUMP_PATH is set to "${configured}", which does not exist or will not run.\n` +
+        '         Ignoring it and searching instead. Fix or remove that line in server/.env.'
+    );
   }
 
   searched.push('(PATH)');
@@ -267,27 +284,26 @@ try {
 } catch (error) {
   console.error('Backup failed:', error.message);
   if (error.code === 'ENOENT') {
-    if (resolved.how === 'MYSQLDUMP_PATH') {
-      // No search happened — an explicit setting is used verbatim and never fallen back
-      // from. Printing an empty "looked in" list here reads as "searched nowhere", which is
-      // true and useless; naming the setting is the actionable half.
-      console.error(
-        `\n"${MYSQLDUMP}" was not found, and it came from MYSQLDUMP_PATH in server/.env.\n` +
-          'Correct or remove that setting — with it removed, this script searches PATH and the\n' +
-          'standard install locations itself.'
-      );
-    } else {
-      console.error(`\n"${MYSQLDUMP}" was not found. Looked in, in order:`);
-      for (const p of resolved.searched) console.error(`    ${p}`);
-    }
+    console.error('\nmysqldump was not found. Looked in, in order:');
+    for (const p of resolved.searched) console.error(`    ${p}`);
+    // Deliberately NOT offering an example path to copy. The previous version of this message
+    // ended with `MYSQLDUMP_PATH="C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe"`
+    // as an illustration, and that exact string came back set in the deploy box's .env —
+    // pointing at nothing. An example path on a machine where the tool is missing is a guess
+    // dressed as an answer. Give the command that finds the real one instead.
     console.error(
-      `\nIf mysqldump is installed somewhere else, set MYSQLDUMP_PATH in server/.env to its\n` +
-        `full path and this will use it verbatim, e.g.\n` +
-        `  MYSQLDUMP_PATH="C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqldump.exe"\n\n` +
-        `If it is installed NOWHERE, the MySQL client tools are missing from this machine and\n` +
-        `no amount of configuration will help — install them (MySQL Installer > "MySQL Server"\n` +
-        `or the standalone "MySQL Shell"/client package). The database server running on this\n` +
-        `box does not imply the client tools are present; they are a separate component.`
+      `\nFind it on this machine — mysqldump ships beside the running mysqld:\n` +
+        (process.platform === 'win32'
+          ? `  (Get-Process mysqld -ErrorAction SilentlyContinue).Path\n` +
+            `  Get-ChildItem 'C:\\Program Files' -Filter mysqldump.exe -Recurse -ErrorAction SilentlyContinue |\n` +
+            `    Select-Object -First 5 -ExpandProperty FullName\n`
+          : `  which mysqldump || ps -o comm= -p $(pgrep -n mysqld)\n`) +
+        `\nIf those print NOTHING, the MySQL client tools are not installed here and no setting\n` +
+        `will help — install them (MySQL Installer > "MySQL Server", or the standalone client\n` +
+        `package). A database server running on this box does NOT imply the client tools are\n` +
+        `present; they are a separate component.\n\n` +
+        `Once you have a real path, set MYSQLDUMP_PATH in server/.env to it. Leave it unset and\n` +
+        `this script searches on its own, which is the better default.`
     );
   }
   // A failed backup that leaves nothing behind is how this went two days unnoticed: the only
