@@ -323,7 +323,18 @@ export async function rasterizePdf(
       await doc.destroy?.();
     }
     return out;
-  } catch {
+  } catch (e) {
+    // Never silent. Every failure here — a missing file, a corrupt or password-protected
+    // PDF, a pdfjs import error, or @napi-rs/canvas failing to load its native binary —
+    // used to return the same empty array. Downstream that is indistinguishable from "this
+    // document genuinely has no QR code", so the REVIEWER was told the scan was too blurred
+    // while the truth was that no image ever reached the decoder. Observed in production:
+    // a claim reported "No QR code was found" on a page whose QR is large and crisp, and
+    // rasterizePdf had returned nothing at every scale with nothing written anywhere.
+    console.error(
+      `[pdf] rasterize failed for ${absolutePath} (scale ${scale}): ` +
+        `${e instanceof Error ? e.message : String(e)}`
+    );
     return [];
   }
 }

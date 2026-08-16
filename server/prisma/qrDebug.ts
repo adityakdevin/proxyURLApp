@@ -74,6 +74,18 @@ async function main() {
       console.log(`${doc.fileName}: FILE NOT FOUND on disk — nothing to decode.`);
       continue;
     }
+    // resolveServingPath builds a path from the DB row; it does NOT check the file is
+    // there (claimDocuments stats it separately). A document row can outlive its file on
+    // the scan share, which is its own reported bug — say so rather than let it surface as
+    // a mysterious rasterize failure.
+    const stat = await fs.stat(resolved.absolutePath).catch(() => null);
+    if (!stat) {
+      console.log(`${doc.fileName}: NOT ON DISK at ${resolved.absolutePath}`);
+      console.log('  The row exists, the file does not. Nothing can be decoded.\n');
+      continue;
+    }
+    console.log(`${doc.fileName}: ${(stat.size / 1024).toFixed(0)} KB at ${resolved.absolutePath}`);
+
     if (resolved.mimeType !== 'application/pdf') {
       console.log(`${doc.fileName}: not a PDF (${resolved.mimeType}) — skipped.`);
       continue;
