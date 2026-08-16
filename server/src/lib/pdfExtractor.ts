@@ -323,7 +323,70 @@ export async function rasterizePdf(
       await doc.destroy?.();
     }
     return out;
-  } catch {
+  } catch (e) {
+    // Never silent. Every failure here — a missing file, a corrupt or password-protected
+    // PDF, a pdfjs import error, or @napi-rs/canvas failing to load its native binary —
+    // used to return the same empty array. Downstream that is indistinguishable from "this
+    // document genuinely has no QR code", so the REVIEWER was told the scan was too blurred
+    // while the truth was that no image ever reached the decoder. Observed in production:
+    // a claim reported "No QR code was found" on a page whose QR is large and crisp, and
+    // rasterizePdf had returned nothing at every scale with nothing written anywhere.
+    console.error(
+      `[pdf] rasterize failed for ${absolutePath} (scale ${scale}): ` +
+        `${e instanceof Error ? e.message : String(e)}`
+    );
     return [];
   }
+}
+
+/**
+ * The NATIVE pixel width of the largest image embedded on each of the given pages.
+ *
+ * Rendering tells you nothing about capture. rasterizePdf renders a PAGE at a scale, so a
+ * page carrying a 777x488 photo comes out 4760px wide at scale 8 — a clean-looking upscale
+ * of data that was never there. A QR whose modules fell below ~2 source pixels each is
+ * unreadable by any decoder, and no scale, filter or crop recovers it. This is the only
+ * measurement that separates "our decoder missed it" from "the scan does not contain it".
+ *
+ * Largest image per page, because an ID-card page is one photo plus, sometimes, a small
+ * logo or signature strip; the card is the one that matters.
+ *
+ * Returns an empty map rather than throwing — this only ever decorates a message.
+ */
+export async function largestImageWidthPerPage(
+  absolutePath: string,
+  pages: number[]
+): Promise<Map<number, { width: number; height: number }>> {
+  const out = new Map<number, { width: number; height: number }>();
+  try {
+    const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const data = new Uint8Array(await fs.readFile(absolutePath));
+    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false }).promise;
+    for (const n of pages) {
+      if (n < 1 || n > doc.numPages) continue;
+      const page = await doc.getPage(n);
+      const ops = await page.getOperatorList();
+      let best: { width: number; height: number } | undefined;
+      for (let i = 0; i < ops.fnArray.length; i++) {
+        if (ops.fnArray[i] !== OPS.paintImageXObject) continue;
+        const name = ops.argsArray[i]?.[0];
+        if (typeof name !== 'string') continue;
+        const img = await new Promise<unknown>((res) => {
+          try {
+            page.objs.get(name, res);
+          } catch {
+            res(null);
+          }
+        });
+        const wh = img as { width?: number; height?: number } | null;
+        if (wh?.width && wh?.height && (!best || wh.width > best.width)) {
+          best = { width: wh.width, height: wh.height };
+        }
+      }
+      if (best) out.set(n, best);
+    }
+  } catch {
+    // Measurement is a nicety; never let it break a validation run.
+  }
+  return out;
 }

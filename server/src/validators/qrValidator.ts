@@ -8,7 +8,7 @@ import { classifyPage } from './segment.js';
 import { docFieldGroups } from './docFields.js';
 import { aadhaarQrAsFields, isUnreadableQrPayload } from './aadhaarSecureQr.js';
 import { compareQrToFields, QrFieldComparison } from './qrCompare.js';
-import { rasterizePdf, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
+import { rasterizePdf, largestImageWidthPerPage, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
 import { BBox, clamp01 } from '../lib/bbox.js';
 
 // Policy QR codes decode at scale 3; dense ones (Aadhaar Secure QR is ~330
@@ -280,6 +280,23 @@ export const OPAQUE_QR_GUIDANCE: Record<string, string> = {
  * QR at all, so treating absence as a fault would raise a false alarm on the majority of
  * genuine ID pages.
  */
+/**
+ * A card image narrower than this is too coarse for a dense ID-card QR.
+ *
+ * Both PAN and Aadhaar are ID-1 cards, 85.6mm wide, and their secure QR is roughly 20mm
+ * square. A PAN Secure QR runs to 77-97 modules across, and a decoder needs about 3 pixels
+ * per module to resolve them. That works back to ~1000px across the card.
+ *
+ * Measured, not guessed: a claim whose card image is 777x488 (~230 DPI) fails on every
+ * scale, filter, tile and upscale we can throw at it, while one at 1080x685 (~320 DPI)
+ * decodes first time. The threshold sits between them, nearer the failing end so the
+ * message only fires when the scan really is the problem.
+ */
+const MIN_CARD_IMAGE_WIDTH = 1000;
+
+/** ID-1 card width, for turning a pixel count into a DPI a scanner operator can act on. */
+const CARD_WIDTH_INCHES = 85.6 / 25.4;
+
 function idCardPagesWithoutQr(
   doc: ValidatorDoc,
   ctx: ValidatorContext,
@@ -458,27 +475,58 @@ export const qrValidator: Validator = {
       // Per-PAGE reporting for ID cards. The check above is per DOCUMENT, so one readable
       // policy QR on page 2 of a bundle silenced the Aadhaar on page 20 entirely. A card
       // page with no QR of its own is what a reviewer is actually being asked to judge.
-      for (const p of idCardPagesWithoutQr(doc, ctx, hits)) {
+      const idCardMisses = idCardPagesWithoutQr(doc, ctx, hits);
+      // Only parse the file again when there is actually something to explain.
+      const cardImages =
+        idCardMisses.length > 0 && doc.mimeType === 'application/pdf'
+          ? await largestImageWidthPerPage(
+              doc.readablePath,
+              idCardMisses.map((p) => p.page)
+            )
+          : new Map<number, { width: number; height: number }>();
+
+      for (const p of idCardMisses) {
         // Do not blame the scan when the server lost its decoder. zxing reads dense and
         // blurry codes that jsQR cannot, so on the fallback path a crisp, perfectly good
         // Aadhaar or PAN QR reads as "missing" — and the reviewer, told it is too blurred,
         // goes looking for a better copy of a document that was never the problem.
         const degraded = isDecoderDegraded();
+        const card = p.kind === 'PAN' ? 'a PAN card' : 'an Aadhaar card';
+        const img = cardImages.get(p.page);
+        // Say WHICH it is. "Too small or blurred" sent reviewers hunting for a better copy
+        // of documents that were fine, and left the one real cause — a scanner set too low
+        // — invisible. The source width is the measurement that tells them apart.
+        const tooCoarse = img !== undefined && img.width < MIN_CARD_IMAGE_WIDTH;
+        const dpi = img ? Math.round(img.width / CARD_WIDTH_INCHES) : 0;
         missing.push({
           documentId: doc.id,
           code: 'QR_MISSING',
           severity: 'INFO',
           message: degraded
             ? `No QR code was read on page ${p.page} of ${doc.fileName}, which reads as ` +
-              `${p.kind === 'PAN' ? 'a PAN card' : 'an Aadhaar card'} — but the high-accuracy ` +
-              `QR decoder was unavailable on the server for this run, so the weaker fallback ` +
-              `did the reading. Treat this as unchecked rather than as a bad scan; the server ` +
-              `log records the reason ("[qr] zxing decode unavailable").`
-            : `No QR code was found on page ${p.page} of ${doc.fileName}, which reads as ` +
-              `${p.kind === 'PAN' ? 'a PAN card' : 'an Aadhaar card'}. Many older card designs ` +
-              `carry no QR code at all; if this one does, the scan may be too small or blurred to read it.`,
+              `${card} — but the high-accuracy QR decoder was unavailable on the server for ` +
+              `this run, so the weaker fallback did the reading. Treat this as unchecked ` +
+              `rather than as a bad scan; the server log records the reason ` +
+              `("[qr] zxing decode unavailable").`
+            : tooCoarse
+              ? `No QR code could be read on page ${p.page} of ${doc.fileName}, which reads ` +
+                `as ${card}. The card image in this file is only ${img!.width}x${img!.height} ` +
+                `pixels (about ${dpi} DPI), which puts the QR below the detail any reader ` +
+                `needs — its squares are under ~2 pixels each, so they blur together in the ` +
+                `scan itself. This is not a fault in the document: rescan the card at 400 DPI ` +
+                `or higher and it will read.`
+              : `No QR code was found on page ${p.page} of ${doc.fileName}, which reads as ` +
+                `${card}. Many older card designs carry no QR code at all; if this one does, ` +
+                `the scan may be too small or blurred to read it.`,
           page: p.page,
-          data: { kind: p.kind, decoderDegraded: degraded },
+          data: {
+            kind: p.kind,
+            decoderDegraded: degraded,
+            sourceWidth: img?.width,
+            sourceHeight: img?.height,
+            approxDpi: img ? dpi : undefined,
+            tooCoarse,
+          },
         });
       }
     }

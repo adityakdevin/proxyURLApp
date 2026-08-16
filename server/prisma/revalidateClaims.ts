@@ -60,10 +60,18 @@ async function waitForRuns(prisma: PrismaClient, claimIds: string[], timeoutMs =
 }
 
 async function main() {
-  if (!process.env.CLAIMS_SCAN_ROOT) {
-    throw new Error(
-      'CLAIMS_SCAN_ROOT is not set — point it at the repo docs/samples dir so document ' +
-        'text can be read, e.g.\n  CLAIMS_SCAN_ROOT="$(cd .. && pwd)/docs/samples" npm run db:revalidate'
+  // NOT required, and demanding it was actively harmful on a deployed box.
+  // CLAIMS_SCAN_ROOT is a confinement jail, not a path prefix: when it is set,
+  // resolveServingPath refuses any document whose stored path falls outside it
+  // (documentService.ts). Production leaves it UNSET on purpose and serves the
+  // admin-configured path as-is — so a script that threw without it forced an operator to
+  // invent a value, and any value narrower than the real storage root silently made
+  // documents unresolvable mid-run. On a dev box it is still how you point at docs/samples.
+  if (process.env.CLAIMS_SCAN_ROOT) {
+    console.log(
+      `CLAIMS_SCAN_ROOT=${process.env.CLAIMS_SCAN_ROOT}\n` +
+        '  Documents outside this directory will NOT resolve. Leave it unset to use the ' +
+        'stored paths as-is, which is what the server does in production.\n'
     );
   }
 
