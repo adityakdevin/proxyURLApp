@@ -16,6 +16,7 @@
     "db:setup:samples": "tsx prisma/setupSampleClaims.ts",
     "db:setup:spelling": "tsx prisma/setupSpellingChecks.ts",
     "db:revalidate": "tsx prisma/revalidateClaims.ts",
+    "db:backfill-doctype-required": "tsx prisma/backfillDocTypeRequired.ts",
     "db:sync-spell-terms": "tsx prisma/syncSpellTerms.ts",
     "qa:diagnostics": "tsx prisma/qaCaseDiagnostics.ts",
     "db:reset-admin": "tsx prisma/resetAdminPassword.ts",

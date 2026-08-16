@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
@@ -145,17 +145,22 @@ export default function ClaimDashboard() {
 
   const fetchData = async (page = 1, limit = 10) => {
     setIsLoading(true);
-    setAppliedFilters(filters);
+    // Snapshot, but promote it only once the response lands (below, beside setPagination).
+    // Promoting here meant a FAILED fetch left the rows and the total describing the old
+    // filters while the bulk bar had already advanced to the new ones — the exact split this
+    // applied/live pair exists to prevent.
+    const requested = filters;
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-      if (filters.subCategoryId) params.set('subCategoryId', filters.subCategoryId);
-      if (filters.workflowStatusId) params.set('workflowStatusId', filters.workflowStatusId);
-      if (filters.assignedToMe) params.set('assignedToMe', 'true');
-      if (filters.assignedToUserId) params.set('assignedToUserId', filters.assignedToUserId);
-      if (filters.search) params.set('search', filters.search);
+      if (requested.subCategoryId) params.set('subCategoryId', requested.subCategoryId);
+      if (requested.workflowStatusId) params.set('workflowStatusId', requested.workflowStatusId);
+      if (requested.assignedToMe) params.set('assignedToMe', 'true');
+      if (requested.assignedToUserId) params.set('assignedToUserId', requested.assignedToUserId);
+      if (requested.search) params.set('search', requested.search);
       const r = await api.get<PaginatedResponse<ClaimRow>>(`/claims?${params}`);
       setData(r.data);
       setPagination(r.pagination);
+      setAppliedFilters(requested);
     } catch (e) {
       toast({
         title: 'Error',
@@ -227,6 +232,36 @@ export default function ClaimDashboard() {
     if (role === 'ADMIN' || role === 'TEAM_LEAD') return true;
     return !!row.assignedTo && row.assignedTo.id === user?.id;
   };
+
+  // Derived once per source change, not once per row per render: these were rebuilt inline
+  // inside the actions cell, so every render handed all 100 ClaimRowActions a brand new
+  // array identity.
+  const statusOptions = useMemo(
+    () => filterStatuses.map((s) => ({ value: s.id, label: s.name })),
+    [filterStatuses]
+  );
+  const assigneeOptions = useMemo(
+    () => addUsers.map((u) => ({ value: u.id, label: u.fullName })),
+    [addUsers]
+  );
+  const subCatOptions = useMemo(
+    () => subCats.map((s) => ({ value: s.id, label: s.name })),
+    [subCats]
+  );
+
+  /** The applied filters in words, for the bulk confirm — that path lists no rows. */
+  const filtersSummary = useMemo(() => {
+    const parts: string[] = [];
+    const sub = subCats.find((s) => s.id === appliedFilters.subCategoryId);
+    if (sub) parts.push(`Sub-Category ${sub.name}`);
+    const st = filterStatuses.find((s) => s.id === appliedFilters.workflowStatusId);
+    if (st) parts.push(`Status ${st.name}`);
+    if (appliedFilters.assignedToMe) parts.push('assigned to me');
+    const who = addUsers.find((u) => u.id === appliedFilters.assignedToUserId);
+    if (who) parts.push(`assigned to ${who.fullName}`);
+    if (appliedFilters.search.trim()) parts.push(`search "${appliedFilters.search.trim()}"`);
+    return parts.length ? parts.join(' · ') : 'no filters — every claim in your scope';
+  }, [appliedFilters, subCats, filterStatuses, addUsers]);
 
   const columns: ColumnDef<ClaimRow>[] = [
     {
@@ -312,8 +347,8 @@ export default function ClaimDashboard() {
           claimLabel={row.original.claimId}
           canAct={canOpen(row.original)}
           role={role}
-          statusOptions={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}
-          assigneeOptions={addUsers.map((u) => ({ value: u.id, label: u.fullName }))}
+          statusOptions={statusOptions}
+          assigneeOptions={assigneeOptions}
           onDone={() => {
             // Drop it from the selection too: acting on a row from its own menu used to
             // leave the id ticked, so the bulk bar counted a claim that was no longer there.
@@ -371,7 +406,7 @@ export default function ClaimDashboard() {
           }
           allLabel="All"
           prefix="Sub-Category"
-          options={subCats.map((s) => ({ value: s.id, label: s.name }))}
+          options={subCatOptions}
           className="w-[200px]"
         />
         <FilterSelect
@@ -379,7 +414,7 @@ export default function ClaimDashboard() {
           onChange={(v) => setFilters({ ...filters, workflowStatusId: v || undefined })}
           allLabel="All"
           prefix="Status"
-          options={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}
+          options={statusOptions}
           className="w-[170px]"
         />
         {role === 'USER' ? (
@@ -401,7 +436,7 @@ export default function ClaimDashboard() {
             onChange={(v) => setFilters({ ...filters, assignedToUserId: v || undefined })}
             allLabel="All"
             prefix="Assigned"
-            options={addUsers.map((u) => ({ value: u.id, label: u.fullName }))}
+            options={assigneeOptions}
             className="w-[180px]"
           />
         )}
@@ -431,9 +466,10 @@ export default function ClaimDashboard() {
           assignedToMe: appliedFilters.assignedToMe,
           search: appliedFilters.search.trim() || undefined,
         }}
+        filtersSummary={filtersSummary}
         role={role}
-        statusOptions={filterStatuses.map((s) => ({ value: s.id, label: s.name }))}
-        assigneeOptions={addUsers.map((u) => ({ value: u.id, label: u.fullName }))}
+        statusOptions={statusOptions}
+        assigneeOptions={assigneeOptions}
         onDone={() => fetchData(pagination.page, pagination.limit)}
       />
       <DataTable

@@ -11,6 +11,12 @@
 -- only migration in this folder still declared `DEFAULT true`, so a database built from the
 -- migration history kept creating required types — the behaviour that change removed.
 -- MODIFY is idempotent: re-declaring the same column definition is a no-op.
+--
+-- This governs NEW rows only. Types created while the baseline's `DEFAULT true` was in force
+-- still hold 1, and fullValidator reads `isRequired: true` — so changing the default does not
+-- by itself undo the behaviour this branch is named for. Existing rows are backfilled
+-- separately by `npm run db:backfill-doctype-required`, which is a script rather than a
+-- statement here because nothing in this project executes this folder (see README.md).
 ALTER TABLE `document_type_masters` MODIFY `is_required` BOOLEAN NOT NULL DEFAULT false;
 
 -- Keyset index for the claim list.

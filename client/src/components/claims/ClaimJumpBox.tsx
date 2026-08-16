@@ -49,8 +49,13 @@ export function ClaimJumpBox({
 }: ClaimJumpBoxProps) {
   const [expanded, setExpanded] = useState(!collapsible);
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<ClaimHit[]>([]);
+  // The term `hits` were fetched for. Enter used to commit hits[active] whatever the box now
+  // said, so typing past the 250ms debounce and hitting Enter navigated to the first match of
+  // a SHORTER prefix — a different claim that merely shares the start of the id, silently.
+  const [hitsTerm, setHitsTerm] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [error, setError] = useState('');
@@ -77,6 +82,7 @@ export function ClaimJumpBox({
         );
         if (cancelled) return;
         setHits(r.data);
+        setHitsTerm(term);
         setActive(0);
         setOpen(true);
       } catch {
@@ -101,6 +107,7 @@ export function ClaimJumpBox({
     skipNextSearch.current = true;
     setQuery('');
     setHits([]);
+    setHitsTerm('');
     setOpen(false);
     if (collapsible) setExpanded(false);
     await onPick(claim);
@@ -110,18 +117,25 @@ export function ClaimJumpBox({
    *  exact id wins, otherwise a single partial match is good enough to jump to. */
   const submit = async () => {
     if (!term) return;
-    if (open && hits[active]) return pick(hits[active]);
+    // Only commit the highlight when it belongs to what is CURRENTLY typed. Otherwise fall
+    // through to a fresh lookup, which is what this box did before it grew a dropdown.
+    if (open && hitsTerm === term && hits[active]) return pick(hits[active]);
     setBusy(true);
     setError('');
     try {
-      const r = await api.get<{ data: ClaimHit[] }>(
-        `/claims?search=${encodeURIComponent(term)}&limit=${LIMIT}`
-      );
-      const exact = r.data.find((c) => c.claimId.toLowerCase() === term.toLowerCase());
-      const target = exact ?? (r.data.length === 1 ? r.data[0] : null);
+      // Reuse the debounce's answer when it is for this exact term; the search is an
+      // unindexable LIKE '%…%' plus a COUNT, so the round trip is not cheap.
+      const data =
+        hitsTerm === term && hits.length
+          ? hits
+          : (await api.get<{ data: ClaimHit[] }>(
+              `/claims?search=${encodeURIComponent(term)}&limit=${LIMIT}`
+            )).data;
+      const exact = data.find((c) => c.claimId.toLowerCase() === term.toLowerCase());
+      const target = exact ?? (data.length === 1 ? data[0] : null);
       if (!target) {
         return flash(
-          r.data.length ? `${r.data.length} claims match — type the full ID` : 'No claim found'
+          data.length ? `${data.length} claims match — type the full ID` : 'No claim found'
         );
       }
       await pick(target);
@@ -143,13 +157,20 @@ export function ClaimJumpBox({
       setActive((i) => (i - 1 + hits.length) % hits.length);
     } else if (e.key === 'Escape') {
       setOpen(false);
-      if (collapsible && !term) setExpanded(false);
+      // Collapsing unmounts the focused input, so hand focus back to the trigger it folds
+      // into — otherwise activeElement falls to <body> and the keyboard user restarts
+      // tabbing from the top. The expand path already does the mirror of this.
+      if (collapsible && !term) {
+        setExpanded(false);
+        requestAnimationFrame(() => triggerRef.current?.focus());
+      }
     }
   };
 
   if (!expanded) {
     return (
       <button
+        ref={triggerRef}
         type="button"
         title="Go to claim ID"
         aria-label="Go to claim ID"
@@ -232,11 +253,14 @@ export function ClaimJumpBox({
               role="option"
               id={`claim-jump-opt-${i}`}
               aria-selected={i === active}
+              // mousedown, not click: the input's onBlur closes the list, and blur fires
+              // first. No onClick alongside it — that only ever double-fired-proof because
+              // pick() synchronously unmounts this <li>, which is an invisible dependency
+              // (give the list an exit animation and every pick becomes two navigations).
               onMouseDown={(e) => {
                 e.preventDefault();
                 pick(hit);
               }}
-              onClick={() => pick(hit)}
               onMouseEnter={() => setActive(i)}
               // blue-50 as the only marker was ~1.05:1 against the dropdown — invisible, on
               // the row Enter commits.

@@ -601,7 +601,10 @@ export class ClaimService {
       // this as a set, and sorting it was a filesort for nothing.
       take: cap + 1,
     });
-    if (rows.length > cap) return { ids: [], total: rows.length };
+    // Re-count rather than reporting rows.length, which is always exactly cap+1 and made the
+    // refusal say "501 claims match" no matter how many really did. The caller puts this
+    // number in front of the reviewer as the amount to narrow down to.
+    if (rows.length > cap) return { ids: [], total: await this.prisma.claim.count({ where }) };
     return { ids: rows.map((r) => r.id), total };
   }
 

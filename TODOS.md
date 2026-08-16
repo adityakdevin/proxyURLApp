@@ -125,6 +125,41 @@ the reviewer was looking at, so a reviewer who filtered to "spell FAILED" steps 
 unrelated claim. Documented as a `ponytail:` limitation in `claimService.ts`.
 Found by: /ship adversarial pass, 2026-08-16.
 
+### Existing document types stay required until the backfill is run
+**Priority:** P0 — operational, not code
+`npm run db:backfill-doctype-required` exists and is safe to dry-run, but it has NOT been
+run against any deployed database. Until it is, every type created under the old
+`DEFAULT true` still gates Full Scan and the symptom the `isRequired` flip was meant to
+remove persists. It deliberately skips rows edited since creation, so a type an admin
+genuinely ticked must be cleared by hand.
+Fix: run the dry run, eyeball the skip list, re-run with `--apply`, then `npm run db:revalidate`.
+Found by: /review adversarial pass, 2026-08-16.
+
+### Bulk delete counts an already-deleted claim as a success
+**Priority:** P3
+`softDelete` returns early when the claim is already INACTIVE, so re-deleting a stale
+selection reports "Deleted: 50 of 50" having changed nothing. Left as-is deliberately: the
+obvious fix (gate on `canEditClaim`, which is false for a non-ACTIVE claim) would report a
+whole batch as failures when a reviewer retries after the 504 this file's own P1 says to
+expect, and would replace the specific `NOT_FOUND` a missing claim reports with a vaguer
+`CLAIM_NOT_EDITABLE`. Retry-safety is worth more than the count.
+Fix, if it ever matters: report `alreadyInactive` as its own field on the bulk report.
+Found by: /review, 2026-08-16.
+
 ## Completed
 
-_(nothing yet)_
+- **Bulk actions on a filter set could target claims the reviewer never selected** — `allMatching`
+  survived the bulk bar rendering `null`, so unticking every row and ticking a different one
+  came back still aimed at every matching claim. Reset on an empty selection. (2026-08-16)
+- **The `isRequired` flip did not change existing rows** — the migration set only the column
+  DEFAULT. Added `npm run db:backfill-doctype-required`. (2026-08-16)
+- **Viewer step arrows carried the previous claim's neighbours** — `neighbours` is now cleared
+  before each fetch, so Back no longer skips a claim and Next is no longer a no-op. (2026-08-16)
+- **Type-ahead Enter could commit a suggestion from an earlier prefix** — hits are now tagged
+  with the term they were fetched for. (2026-08-16)
+- **A fully-refused batch read as success** — `describeBulkReport` is shared by the dialog and
+  the bulk bar, so neither can drift on the `succeeded === 0` case again. (2026-08-16)
+- **Non-JSON error responses surfaced as a JSON parse error** — `api.ts` checks `response.ok`
+  before parsing. (2026-08-16)
+- **Bulk filter values skipped the validation the read path enforces** — `filters.*` now gets the
+  same `isUUID`/`isLength` chain as `GET /claims`. (2026-08-16)

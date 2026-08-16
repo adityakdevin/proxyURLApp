@@ -92,10 +92,28 @@ describe('E2E: bulk claim actions', () => {
     expect(tooMany.body.error).toContain(String(BULK_MAX + 1));
 
     // The body gate still runs first on /bulk/remarks: an empty remark never
-    // reaches target resolution.
-    const emptyRemark = await tl.post('/api/claims/bulk/remarks').send({ ids: ['x'], remarkText: '  ' });
+    // reaches target resolution. A REAL uuid, so remarkText is the only invalid field —
+    // with `ids: ['x']` this passed on the isUUID error instead and would have kept passing
+    // with the remark validator deleted.
+    const emptyRemark = await tl
+      .post('/api/claims/bulk/remarks')
+      .send({ ids: [randomUUID()], remarkText: '  ' });
     expect(emptyRemark.status).toBe(400);
     expect(emptyRemark.body.code).toBe('VALIDATION_ERROR');
+
+    // A malformed id is its own 400, so the two gates are pinned independently.
+    const badId = await tl
+      .post('/api/claims/bulk/remarks')
+      .send({ ids: ['x'], remarkText: 'fine' });
+    expect(badId.status).toBe(400);
+    expect(badId.body.code).toBe('VALIDATION_ERROR');
+
+    // The 2000-char cap, and that the refusal names the limit rather than "Invalid value".
+    const tooLong = await tl
+      .post('/api/claims/bulk/remarks')
+      .send({ ids: [randomUUID()], remarkText: 'a'.repeat(2001) });
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.error).toContain('2000');
   });
 
   it('fails an out-of-scope claim on its own and still applies the rest of the batch', async () => {
@@ -204,10 +222,63 @@ describe('E2E: bulk claim actions', () => {
     ]);
   });
 
+  it('queues a MANUAL run per claim on the success path of /bulk/validate', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const a = await createClaim(tl, 'BV-1', g.subCategoryId);
+    const b = await createClaim(tl, 'BV-2', g.subCategoryId);
+
+    const res = await tl.post('/api/claims/bulk/validate').send({ ids: [a, b] });
+    expect(res.status).toBe(202);
+    expect(res.body.data).toEqual({ requested: 2, succeeded: 2, failed: [] });
+
+    // The report alone proved nothing: every other /bulk/validate case in this file asserts
+    // a refusal or a zero-claim batch, so deleting the enqueue() call left the suite green.
+    const runs = await prisma.validationRun.findMany({ where: { claimId: { in: [a, b] } } });
+    expect(runs).toHaveLength(2);
+    expect(runs.every((r) => r.trigger === 'MANUAL')).toBe(true);
+    expect(runs.every((r) => r.triggeredBy === g.teamLead.id)).toBe(true);
+  });
+
+  it('reassigns only when newAssigneeId is sent, and never unassigns otherwise', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const a = await createClaim(tl, 'RA-1', g.subCategoryId, { assignedToUserId: g.user.id });
+    const b = await createClaim(tl, 'RA-2', g.subCategoryId, { assignedToUserId: g.user.id });
+
+    // A status-only bulk remark must leave the assignee alone. appendRemark reads the KEY's
+    // presence as "reassign" and a falsy value as disconnect, so dropping the hasOwnProperty
+    // guard in the route would silently unassign every claim in the batch.
+    const statusOnly = await tl
+      .post('/api/claims/bulk/remarks')
+      .send({ ids: [a, b], remarkText: 'status only', newStatusId: terminalStatusId });
+    expect(statusOnly.body.data.succeeded).toBe(2);
+    let rows = await prisma.claim.findMany({ where: { id: { in: [a, b] } } });
+    expect(rows.every((r) => r.assignedToUserId === g.user.id)).toBe(true);
+
+    // An explicit null is the documented way to clear it.
+    const cleared = await tl
+      .post('/api/claims/bulk/remarks')
+      .send({ ids: [a, b], remarkText: 'unassign', newAssigneeId: null });
+    expect(cleared.body.data.succeeded).toBe(2);
+    rows = await prisma.claim.findMany({ where: { id: { in: [a, b] } } });
+    expect(rows.every((r) => r.assignedToUserId === null)).toBe(true);
+  });
+
   it('serves the claim neighbours and is not shadowed by the /:id route', async () => {
     const tl = await loginAs(app, g.teamLead.username);
     const first = await createClaim(tl, 'ADJ-1', g.subCategoryId);
     const second = await createClaim(tl, 'ADJ-2', g.subCategoryId);
+
+    // Pin the timestamps. createdAt is DATETIME(3), so two claims created in the same
+    // millisecond fall through to the id-desc tiebreak and "ADJ-2 is the top row" becomes a
+    // coin toss on random UUIDs. claimService.test.ts guards the same way.
+    await prisma.claim.update({
+      where: { id: first },
+      data: { createdAt: new Date(Date.UTC(2026, 0, 1)) },
+    });
+    await prisma.claim.update({
+      where: { id: second },
+      data: { createdAt: new Date(Date.UTC(2026, 0, 2)) },
+    });
 
     const res = await tl.get(`/api/claims/${second}/adjacent`);
     expect(res.status).toBe(200);

@@ -49,16 +49,26 @@ export function ClaimRowActions({
   const openDocuments = async () => {
     setBusy(true);
     const tab = window.open('', `doc-claim-${claimId}`);
-    // The tab is opened before the lookup, so it sits on about:blank meanwhile. Give it
-    // something to say, and on the empty path leave the reason THERE — closing it and
-    // toasting on the page the browser just left means nobody reads it.
-    tab?.document.write('<title>Opening documents…</title><p style="font:14px system-ui;padding:2rem">Opening documents…</p>');
+    // `window.open('', name)` does NOT navigate an existing window of that name — it hands
+    // back the one already open. Writing to it would wipe a viewer the reviewer is using
+    // (scroll position, selected finding), and closing it on error would take away a window
+    // they never asked to lose. So only touch a tab we actually just created: a fresh one is
+    // on about:blank with an empty body.
+    const isFresh = !!tab && tab.location.href === 'about:blank' && !tab.document.body?.hasChildNodes();
+    // A fresh tab sits on about:blank until the lookup resolves — give it something to say.
+    if (isFresh) {
+      tab!.document.write(
+        '<title>Opening documents…</title><p style="font:14px system-ui;padding:2rem">Opening documents…</p>'
+      );
+    }
     try {
       const r = await api.get<{ data: { id: string }[] }>(`/claims/${claimId}/documents`);
       const first = r.data[0];
       if (!first) {
-        if (tab) {
-          tab.document.body.innerHTML =
+        // Leave the reason THERE rather than closing and toasting on the page the browser
+        // just left, where nobody reads it.
+        if (isFresh) {
+          tab!.document.body.innerHTML =
             '<p style="font:14px system-ui;padding:2rem">This claim has no documents yet.</p>';
         }
         return toast({ title: 'No documents on this claim' });
@@ -67,7 +77,7 @@ export function ClaimRowActions({
       if (tab) tab.location.href = href;
       else window.open(href, `doc-claim-${claimId}`); // popup blocked: try once more on the click's tail
     } catch (e) {
-      tab?.close();
+      if (isFresh) tab!.close();
       toast({
         title: 'Could not open documents',
         variant: 'destructive',

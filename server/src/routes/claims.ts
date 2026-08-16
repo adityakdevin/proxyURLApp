@@ -125,12 +125,23 @@ const bulkTargetValidators = [
   body('ids').optional().isArray(),
   body('ids.*').optional().isUUID(),
   body('filters').optional().isObject(),
+  // Same value checks GET /claims runs on the same three fields. parseFilters type-checks
+  // but never format-checks them, so the MUTATING path was validated more loosely than the
+  // read path it mirrors; `search` in particular reached a leading-wildcard LIKE unbounded.
+  body('filters.subCategoryId').optional().isUUID(),
+  body('filters.workflowStatusId').optional().isUUID(),
+  body('filters.assignedToUserId').optional().isUUID(),
+  body('filters.search').optional().isString().isLength({ max: 200 }),
 ];
 
 // Bulk actions on a selection (or on everything matching the list filters). Registered
 // BEFORE '/:id/...' so "bulk" is never read as a claim id. Every claim still goes through
 // the same per-claim permission checks the single-claim routes use.
-const bulkTargets = async (req: ScopedRequest, res: Response) => {
+// Returns null ONLY when it has already answered the request. Callers must test for null
+// explicitly, not for truthiness: an empty array is a legitimate result (the filters matched
+// nothing) that has to flow through to a 200 with requested:0. The natural-looking tidy-up
+// to `if (!ids?.length) return;` would return without ever sending a response, and hang.
+const bulkTargets = async (req: ScopedRequest, res: Response): Promise<string[] | null> => {
   const r = await resolveTargets(getService(req), req.body ?? {}, {
     scope: req.scope!,
     callerId: req.session!.userId,
@@ -150,7 +161,7 @@ router.post(
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
       const ids = await bulkTargets(req, res);
-      if (!ids) return;
+      if (ids === null) return;
       const service = getService(req);
       const report = await runBulk(ids, async (id) => {
         const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
@@ -170,7 +181,14 @@ router.post(
   '/bulk/remarks',
   [
     ...bulkTargetValidators,
-    body('remarkText').isString().trim().notEmpty().isLength({ max: 2000 }),
+    body('remarkText')
+      .isString()
+      .trim()
+      .notEmpty()
+      // withMessage, because validate() surfaces only errors.array()[0].msg — the default
+      // "Invalid value" named neither the field nor the limit, and both clients show it raw.
+      .isLength({ max: 2000 })
+      .withMessage('A remark is limited to 2000 characters'),
     body('newStatusId').optional().isUUID(),
     body('newAssigneeId').optional({ nullable: true }).isUUID(),
   ],
@@ -178,7 +196,7 @@ router.post(
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
       const ids = await bulkTargets(req, res);
-      if (!ids) return;
+      if (ids === null) return;
       const service = getService(req);
       const { remarkText, newStatusId, newAssigneeId } = req.body;
       const input: AppendRemarkInput = { remarkText };
@@ -210,8 +228,16 @@ router.post(
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
       const ids = await bulkTargets(req, res);
-      if (!ids) return;
+      if (ids === null) return;
       const service = getService(req);
+      // No canEditClaim gate here, deliberately, and NOT an oversight: softDelete is
+      // idempotent by design (already-INACTIVE returns untouched), which is what makes a
+      // retry safe. Gating on canEditClaim — false for a non-ACTIVE claim — would report a
+      // whole batch as failures when a reviewer retries after the 504 that TODOS.md P1 says
+      // to expect on a 500-claim run, and would turn the specific NOT_FOUND a missing claim
+      // reports today into a vaguer CLAIM_NOT_EDITABLE. The cost is that re-deleting an
+      // already-deleted claim counts as a success; retry-safety is worth more than that
+      // count. Admin-only is enforced by adminMiddleware above.
       const report = await runBulk(ids, (id) => service.softDelete(id, req.session!.userId));
       res.json({ data: report });
     } catch (err) {
@@ -284,7 +310,14 @@ router.post(
   '/:id/remarks',
   [
     param('id').isUUID(),
-    body('remarkText').isString().trim().notEmpty().isLength({ max: 2000 }),
+    body('remarkText')
+      .isString()
+      .trim()
+      .notEmpty()
+      // withMessage, because validate() surfaces only errors.array()[0].msg — the default
+      // "Invalid value" named neither the field nor the limit, and both clients show it raw.
+      .isLength({ max: 2000 })
+      .withMessage('A remark is limited to 2000 characters'),
     body('newStatusId').optional().isUUID(),
     body('newAssigneeId').optional({ nullable: true }).isUUID(),
   ],

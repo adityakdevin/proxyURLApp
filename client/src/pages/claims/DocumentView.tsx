@@ -76,17 +76,16 @@ export default function DocumentView() {
 
   /** Open a claim in THIS window, staying on its documents and on the current check. A claim
    *  with no documents has nothing for the viewer to show, so it falls back to its page. */
-  const goToClaim = useCallback(
-    (claimUuid: string, docId: string | null) => {
-      navigate(
-        docId
-          ? `/claims/${claimUuid}/documents/${docId}${check ? `?v=${check}` : ''}`
-          : claimPath(claimUuid)
-      );
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate, check, isAdmin]
-  );
+  // Not memoized: nothing reads its identity (no dependency array references it), so a
+  // useCallback here bought nothing except an exhaustive-deps suppression on a function that
+  // will keep growing.
+  const goToClaim = (claimUuid: string, docId: string | null) => {
+    navigate(
+      docId
+        ? `/claims/${claimUuid}/documents/${docId}${check ? `?v=${check}` : ''}`
+        : claimPath(claimUuid)
+    );
+  };
 
   /** A jumped-to claim opens on its first document — the viewer has nothing else to show. */
   const jumpToClaim = async (claim: ClaimHit) => {
@@ -290,15 +289,6 @@ export default function DocumentView() {
     if (claimLabel) document.title = checkLabel ? `${claimLabel} — ${checkLabel}` : claimLabel;
   }, [claimLabel, checkLabel]);
 
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center gap-2 text-sm text-gray-500">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading document…
-      </div>
-    );
-  }
-
   const errors = findings.filter((f) => f.severity === 'ERROR').length;
   const warnings = findings.filter((f) => f.severity === 'WARNING').length;
 
@@ -447,8 +437,21 @@ export default function DocumentView() {
         </div>
       </header>
 
-      {/* The document is what the reviewer reads; the fields are a reference sidebar at a
-          fixed width, so every extra pixel of a wide window goes to the document. */}
+      {/* Stepping to another claim announces itself — the only other signal was
+          document.title, which a screen reader does not read on an in-page navigation. */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {loading ? 'Loading claim…' : claimLabel ? `Claim ${claimLabel}` : ''}
+      </p>
+
+      {/* The loading state swaps the BODY only. Returning a full-page spinner unmounted the
+          header, and with it the step arrow the reviewer had just activated — so walking a
+          batch by keyboard dropped focus onto <body> on every single step. */}
+      {loading ? (
+        <main className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading document…
+        </main>
+      ) : (
       <main
         className={`min-h-0 flex-1 gap-3 p-3 ${
           panelOpen ? 'grid grid-cols-[minmax(0,1fr)_340px]' : 'flex'
@@ -481,6 +484,7 @@ export default function DocumentView() {
           />
         )}
       </main>
+      )}
     </div>
   );
 }

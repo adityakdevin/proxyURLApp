@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ColumnDef } from '@tanstack/react-table';
 import { Upload, Download } from 'lucide-react';
@@ -25,6 +25,7 @@ import {
   SubCategoryPickerValue,
 } from '@/components/shared/SubCategoryPicker';
 import { useToast } from '@/components/ui/use-toast';
+import { useAuthStore } from '@/stores/authStore';
 
 interface ClaimRow {
   id: string;
@@ -209,6 +210,22 @@ export default function AdminClaims() {
     window.open(`/api/admin/claims/export-observations?${params.toString()}`, '_blank');
   };
 
+  // AdminClaims is mounted behind <ProtectedRoute requiredRole="ADMIN"> and the server
+  // re-checks every claim, but reading the session beats restating the authz fact in the
+  // view: the page then cannot show Delete/Reassign to whoever renders it if that route
+  // guard is ever relaxed or this page reused.
+  const role = useAuthStore().user?.role ?? 'USER';
+
+  /** The applied filters in words, for the bulk confirm — that path lists no rows. */
+  const filtersSummary = useMemo(() => {
+    const parts: string[] = [];
+    const st = statusOptions.find((s) => s.value === workflowStatusId);
+    if (st) parts.push(`Status ${st.label}`);
+    for (const [k, v] of Object.entries(checks)) if (v) parts.push(`${k} ${v}`);
+    if (search.trim()) parts.push(`search "${search.trim()}"`);
+    return parts.length ? parts.join(' · ') : 'no filters — every claim';
+  }, [statusOptions, workflowStatusId, checks, search]);
+
   const columns: ColumnDef<ClaimRow>[] = [
     {
       accessorKey: 'claimId',
@@ -283,7 +300,7 @@ export default function AdminClaims() {
           claimId={row.original.id}
           claimLabel={row.original.claimId}
           canAct
-          role="ADMIN"
+          role={role}
           statusOptions={statusOptions}
           assigneeOptions={assigneeOptions}
           onDone={() => {
@@ -347,7 +364,8 @@ export default function AdminClaims() {
         onClear={() => setSelectedIds([])}
         matchingTotal={pagination.total}
         filters={bulkFilters}
-        role="ADMIN"
+        filtersSummary={filtersSummary}
+        role={role}
         statusOptions={statusOptions}
         assigneeOptions={assigneeOptions}
         onDone={() => fetchData(pagination.page, pagination.limit)}

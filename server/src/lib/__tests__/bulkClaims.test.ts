@@ -8,6 +8,19 @@ const stubService = (result: { ids: string[]; total: number }) =>
 
 const base = { scope: 'ALL' as const, callerId: 'caller', role: 'ADMIN' as const };
 
+/** Captures the filters resolveTargets forwards, so parseFilters can be asserted on. */
+const capturingService = () => {
+  const seen: Record<string, unknown>[] = [];
+  const svc = {
+    idsMatching: async (f: Record<string, unknown>) => {
+      seen.push(f);
+      return { ids: [], total: 0 };
+    },
+  } as unknown as ClaimService;
+  return { svc, seen };
+};
+
+
 afterEach(() => jest.restoreAllMocks());
 
 describe('resolveTargets', () => {
@@ -120,6 +133,39 @@ describe('resolveTargets', () => {
     expect(seen).not.toHaveProperty('notAFilter');
     expect(seen).toMatchObject({ search: 'MZB' });
   });
+
+  it('dedupes ids the DATABASE would consider equal, not just byte-equal ones', async () => {
+    // claims.id is utf8mb4_unicode_ci, so MySQL matches these as one row; a case-sensitive
+    // Set let the same claim through 500 times and wrote 500 remarks to one timeline.
+    const id = '3F2504E0-4F89-11D3-9A0C-0305E82C3301';
+    const spellings = [id, id.toLowerCase(), id.toUpperCase()];
+    const r = await resolveTargets(stubService({ ids: [], total: 0 }), { ids: spellings }, base);
+    expect(r.ids).toEqual([id.toLowerCase()]);
+  });
+
+  it('validates the status filter rather than forwarding an arbitrary one', async () => {
+    const bad = await resolveTargets(
+      stubService({ ids: [], total: 0 }),
+      { filters: { status: 'ARCHIVED' } },
+      base
+    );
+    expect(bad.error?.code).toBe('INVALID_FILTER');
+
+    const { svc, seen } = capturingService();
+    await resolveTargets(svc, { filters: { status: 'INACTIVE' } }, base);
+    expect(seen[0].status).toBe('INACTIVE');
+  });
+
+  it('coerces assignedToMe from the string a query string would carry', async () => {
+    const { svc, seen } = capturingService();
+    await resolveTargets(svc, { filters: { assignedToMe: true } }, base);
+    await resolveTargets(svc, { filters: { assignedToMe: 'true' } }, base);
+    await resolveTargets(svc, { filters: { assignedToMe: 'false' } }, base);
+    await resolveTargets(svc, { filters: {} }, base);
+    // Anything that is not the boolean or the exact string 'true' means "not mine" — a
+    // looser coercion here widens the set a bulk MUTATION acts on.
+    expect(seen.map((f) => f.assignedToMe)).toEqual([true, true, false, false]);
+  });
 });
 
 describe('runBulk', () => {
@@ -147,14 +193,6 @@ describe('runBulk', () => {
     expect(logged).toHaveBeenCalled();
   });
 
-  it('dedupes ids the DATABASE would consider equal, not just byte-equal ones', async () => {
-    // claims.id is utf8mb4_unicode_ci, so MySQL matches these as one row; a case-sensitive
-    // Set let the same claim through 500 times and wrote 500 remarks to one timeline.
-    const id = '3F2504E0-4F89-11D3-9A0C-0305E82C3301';
-    const spellings = [id, id.toLowerCase(), id.toUpperCase()];
-    const r = await resolveTargets(stubService({ ids: [], total: 0 }), { ids: spellings }, base);
-    expect(r.ids).toEqual([id.toLowerCase()]);
-  });
 
   it('reports a no-op for an empty target list', async () => {
     expect(await runBulk([], async () => undefined)).toEqual({
