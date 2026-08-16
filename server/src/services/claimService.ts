@@ -578,7 +578,35 @@ export class ClaimService {
         if (r.summary) spellByClaim.set(r.claimId, r.summary);
       }
     }
-    const rows = data.map((c) => ({ ...c, spellSummary: spellByClaim.get(c.id) ?? null }));
+    // Whether each claim has validation work outstanding.
+    //
+    // The five status columns cannot answer this. They hold their PREVIOUS values until a
+    // validator actually starts writing, so a claim queued behind a hundred others looks
+    // byte-identical to one nobody touched. That is the whole of "re-validate does nothing":
+    // the work was queued correctly and the list had no way to say so, which is also why a
+    // list polling on those columns alone stops polling while its own work is still pending.
+    //
+    // One indexed query per page, on @@index([claimId]), bounded by the page size.
+    const claimIds = data.map((c) => c.id);
+    const runState = new Map<string, 'QUEUED' | 'RUNNING'>();
+    if (claimIds.length) {
+      const pending = await this.prisma.validationRun.findMany({
+        where: { claimId: { in: claimIds }, status: { in: ['QUEUED', 'RUNNING'] } },
+        select: { claimId: true, status: true },
+      });
+      for (const r of pending) {
+        // RUNNING wins: re-queueing a claim mid-run leaves both rows outstanding, and
+        // "running" is the more specific truth of the two.
+        if (r.status === 'RUNNING' || !runState.has(r.claimId)) {
+          runState.set(r.claimId, r.status as 'QUEUED' | 'RUNNING');
+        }
+      }
+    }
+    const rows = data.map((c) => ({
+      ...c,
+      spellSummary: spellByClaim.get(c.id) ?? null,
+      validationState: runState.get(c.id) ?? null,
+    }));
     return { data: rows, total, page, limit };
   }
 

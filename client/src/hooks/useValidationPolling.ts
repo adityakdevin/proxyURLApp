@@ -16,9 +16,22 @@ const POLL_MS = 4000;
  */
 const GRACE_MS = 30000;
 
-/** True when any visible row has a check currently executing. */
+/**
+ * True when any visible row has validation work outstanding — queued OR executing.
+ *
+ * `validationState` is the load-bearing half. The five status columns hold their PREVIOUS
+ * values until a validator starts writing, so a claim sitting in the queue is indistinguishable
+ * from one nobody touched. Queue 116 claims against a drainer running 2 at a time and 114 rows
+ * report "nothing happening" — which is exactly what "re-validate just queues it and no row
+ * shows anything" is. The columns alone can only ever light up the handful currently executing,
+ * and only if they happen to be on the page you are looking at.
+ *
+ * The columns are still checked, and not just for older payloads: a validator writes
+ * IN_PROGRESS to them, and the run row reaches RUNNING, at slightly different moments.
+ */
 export function hasRunningChecks(
   rows: {
+    validationState?: string | null;
     spellCheckStatus?: string;
     qrStatus?: string;
     metaExtractionStatus?: string;
@@ -28,6 +41,8 @@ export function hasRunningChecks(
 ): boolean {
   return rows.some(
     (r) =>
+      r.validationState === 'QUEUED' ||
+      r.validationState === 'RUNNING' ||
       r.spellCheckStatus === IN_FLIGHT ||
       r.qrStatus === IN_FLIGHT ||
       r.metaExtractionStatus === IN_FLIGHT ||

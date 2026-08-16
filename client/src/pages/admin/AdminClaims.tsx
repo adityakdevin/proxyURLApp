@@ -39,6 +39,9 @@ interface ClaimRow {
   metaExtractionStatus: string;
   intraClaimStatus: string;
   fullScanStatus: string;
+  /** Outstanding validation work, which the five columns above cannot express: they keep
+   *  their previous values until a validator starts writing. Null when nothing is pending. */
+  validationState: 'QUEUED' | 'RUNNING' | null;
   createdAt: string;
 }
 
@@ -319,7 +322,7 @@ export default function AdminClaims() {
           claimId={row.original.id}
           claimLabel={row.original.claimId}
           canAct
-          running={hasRunningChecks([row.original])}
+          validationState={row.original.validationState}
           role={role}
           statusOptions={statusOptions}
           assigneeOptions={assigneeOptions}
