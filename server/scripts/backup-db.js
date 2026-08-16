@@ -1,6 +1,7 @@
 const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
@@ -33,12 +34,24 @@ const [, user, password, host, port, database] = match;
  * Telling an operator to "add it to PATH" is a fix that has to be re-applied by hand on every
  * machine and after every MySQL upgrade; finding it is a fix that holds.
  *
- * Order is deliberate: an explicit setting always wins, then PATH, then the standard install
- * locations, and only then the running server — which is the slowest check but the one that
- * cannot be wrong, since mysqldump ships in the same bin folder as the mysqld that is
- * currently serving this database.
+ * Order: an explicit setting, then the server actually listening on this database's port,
+ * then PATH, then the standard install locations.
+ *
+ * The port lookup ranks above PATH on purpose, despite being the slowest, because it is the
+ * only one that identifies the RIGHT mysqldump rather than merely a working one. The deploy
+ * box runs two database servers side by side under WAMP —
+ *
+ *     c:\wamp64\bin\mysql\mysql5.7.40\bin\mysqld.exe        <- serving :3306, the app's data
+ *     c:\wamp64\bin\mariadb\mariadb10.6.11\bin\mysqld.exe   <- a second server, another port
+ *
+ * — and both ship a mysqldump.exe. An earlier version of this took the first `mysqld` the OS
+ * happened to list, which on that machine is a coin flip: half the time it would dump a MySQL
+ * 5.7 database using a MariaDB 10.6 client, producing a file that looks fine and may not
+ * restore. Matching on the port from DATABASE_URL removes the guess entirely — whatever is
+ * answering on that port is by definition the server being backed up, and its own bin folder
+ * holds the client that matches it.
  */
-function resolveMysqldump() {
+function resolveMysqldump(port) {
   const exe = process.platform === 'win32' ? 'mysqldump.exe' : 'mysqldump';
   const works = (p) => {
     try {
@@ -72,6 +85,46 @@ function resolveMysqldump() {
       `WARNING: MYSQLDUMP_PATH is set to "${configured}", which does not exist or will not run.\n` +
         '         Ignoring it and searching instead. Fix or remove that line in server/.env.'
     );
+  }
+
+  // The server actually listening on this database's port. Ranked above PATH because it is
+  // the only lookup that finds the client MATCHING the server, not merely a working one.
+  let serving = '';
+  try {
+    const cmd =
+      process.platform === 'win32'
+        ? [
+            'powershell',
+            [
+              '-NoProfile',
+              '-Command',
+              `(Get-Process -Id (Get-NetTCPConnection -LocalPort ${port} -State Listen ` +
+                `-ErrorAction SilentlyContinue).OwningProcess -ErrorAction SilentlyContinue | ` +
+                `Select-Object -First 1).Path`,
+            ],
+          ]
+        : [
+            'sh',
+            [
+              '-c',
+              // -t gives the pid alone; `ps -o comm=` turns it into the executable path.
+              // `|| true` because "nothing is listening" is an ordinary answer, not an error:
+              // without it the non-zero exit throws, and the attempt vanishes from the search
+              // list exactly when an operator most needs to see that it was tried.
+              `p=$(lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | head -1); ` +
+                `{ [ -n "$p" ] && ps -p "$p" -o comm= 2>/dev/null; } || true`,
+            ],
+          ];
+    serving = execFileSync(cmd[0], cmd[1], { encoding: 'utf8' }).trim();
+  } catch {
+    /* no shell, no lsof, or insufficient rights — recorded below as "could not identify" */
+  }
+  searched.push(`(server on port ${port}${serving ? `: ${serving}` : ': could not identify'})`);
+  if (serving && serving.includes(path.sep)) {
+    const candidate = path.join(path.dirname(serving), exe);
+    if (fs.existsSync(candidate) && works(candidate)) {
+      return { path: candidate, how: `the server listening on port ${port}`, searched };
+    }
   }
 
   searched.push('(PATH)');
@@ -112,36 +165,10 @@ function resolveMysqldump() {
     }
   }
 
-  // Last resort: ask the OS where the running mysqld lives. Slowest, and the only one that
-  // is right by construction on a box with a non-standard install.
-  try {
-    const cmd =
-      process.platform === 'win32'
-        ? [
-            'powershell',
-            [
-              '-NoProfile',
-              '-Command',
-              "(Get-Process mysqld -ErrorAction SilentlyContinue | Select-Object -First 1).Path",
-            ],
-          ]
-        : ['sh', ['-c', 'ps -o comm= -C mysqld 2>/dev/null | head -1']];
-    const mysqld = execFileSync(cmd[0], cmd[1], { encoding: 'utf8' }).trim();
-    searched.push(`(alongside running mysqld${mysqld ? `: ${mysqld}` : ', not found'})`);
-    if (mysqld) {
-      const candidate = path.join(path.dirname(mysqld), exe);
-      if (fs.existsSync(candidate) && works(candidate)) {
-        return { path: candidate, how: 'alongside the running mysqld', searched };
-      }
-    }
-  } catch {
-    /* no shell, no mysqld, or not permitted — fall through to the reported failure */
-  }
-
   return { path: exe, how: 'not found', searched };
 }
 
-const resolved = resolveMysqldump();
+const resolved = resolveMysqldump(port);
 const MYSQLDUMP = resolved.path;
 
 // Create backups directory with date-wise subfolder
@@ -180,12 +207,55 @@ console.log(
  */
 const structureOnlyTables = ['sessions', 'audit_logs'];
 
-try {
-  // Base connection args
-  const baseArgs = ['-h', host, '-P', port, '-u', user];
-  if (password) {
-    baseArgs.push(`--password=${password}`);
+/**
+ * Hand mysqldump the password in a file, not on the command line.
+ *
+ * `--password=X` put the database password in this process's argv, where on Windows any
+ * account that can open Task Manager reads it, and `wmic process get commandline` prints it
+ * outright. mysqldump says so itself on every run:
+ *
+ *     mysqldump: [Warning] Using a password on the command line interface can be insecure.
+ *
+ * A warning printed nightly into a log nobody opens is not a control. MYSQL_PWD would silence
+ * it while keeping the secret in the environment, which MySQL's own documentation calls
+ * insecure for the same reason; a defaults-file is the mechanism they actually recommend.
+ *
+ * mkdtempSync creates the directory 0700, so on POSIX the file is unreadable by other users
+ * before a single byte is written to it — the order matters, since a chmod after the write
+ * leaves a window. Windows has no mode bits here, but the directory lands under the running
+ * account's own temp path rather than anywhere shared, and the file exists only for the few
+ * seconds of the dump.
+ */
+let secretsDir = null;
+// Registered once, on `exit`, because the failure path calls process.exit(1) — which
+// terminates immediately and never runs a `finally`. A credentials file surviving a failed
+// backup is exactly the leak this replaced argv to avoid.
+process.on('exit', () => {
+  if (secretsDir) {
+    try {
+      fs.rmSync(secretsDir, { recursive: true, force: true });
+    } catch {
+      /* best effort: the process is ending either way */
+    }
   }
+});
+function connectionDefaultsFile() {
+  secretsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'proxyapp-backup-'));
+  const file = path.join(secretsDir, 'my.cnf');
+  // Values are quoted because a password may legitimately contain '#' or spaces, either of
+  // which a bare my.cnf value would truncate or mangle.
+  fs.writeFileSync(
+    file,
+    `[client]\nhost="${host}"\nport=${port}\nuser="${user}"\n` +
+      (password ? `password="${password}"\n` : ''),
+    { mode: 0o600 }
+  );
+  return file;
+}
+
+try {
+  // --defaults-extra-file MUST be the first argument; mysqldump rejects it anywhere else.
+  const baseArgs = [`--defaults-extra-file=${connectionDefaultsFile()}`];
 
   // Step 1: Backup all tables except structure-only tables
   const dataArgs = [
