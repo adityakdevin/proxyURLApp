@@ -1,7 +1,6 @@
-import nspell from 'nspell';
-import enDictionary from 'dictionary-en';
 import { PrismaClient } from '@prisma/client';
 import { Validator, FindingInput, WordBox } from './types.js';
+import { getSpell, isRealWord as dictHasWord, type Spell } from './dictionary.js';
 import {
   spellCandidates,
   findTermMisspellings,
@@ -52,31 +51,6 @@ function indexBoxes(boxes: WordBox[]): Map<string, WordBox[]> {
  *  than as a misspelling. Digital PDF text has no confidence and is never softened. */
 const LOW_OCR_CONFIDENCE = 70;
 
-interface Spell {
-  correct(word: string): boolean;
-}
-
-let spellPromise: Promise<Spell> | null = null;
-
-function loadSpell(): Promise<Spell> {
-  return new Promise<Spell>((resolve, reject) => {
-    // dictionary-en@3 is callback-style: load((err, {aff, dic}) => ...).
-    enDictionary((err, dict) => (err ? reject(err) : resolve(nspell(dict))));
-  });
-}
-
-async function getSpell(): Promise<Spell> {
-  // Don't cache a rejected promise — clear the singleton on failure so the next
-  // run retries instead of marking every claim FAILED until restart.
-  if (!spellPromise) {
-    spellPromise = loadSpell().catch((e) => {
-      spellPromise = null;
-      throw new Error(`Dictionary load failed: ${e instanceof Error ? e.message : String(e)}`);
-    });
-  }
-  return spellPromise;
-}
-
 export const spellValidator: Validator = {
   key: 'SPELL',
   column: 'spellCheckStatus',
@@ -99,7 +73,7 @@ export const spellValidator: Validator = {
       const s = spell ?? (spell = await getSpell());
       // A token counts as a real word if the dictionary accepts it in its own case
       // or lowercased (dictionary-en holds many proper nouns only capitalised).
-      const isRealWord = (w: string) => s.correct(w) || s.correct(w.toLowerCase());
+      const isRealWord = (w: string) => dictHasWord(s, w);
       // OCR word boxes let us anchor each hit to a region on an image (Phase 2).
       const boxIndex = indexBoxes(ctx.wordBoxes.get(documentId) ?? []);
       for (const hit of findTermMisspellings(words, isRealWord, terms)) {

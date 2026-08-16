@@ -19,6 +19,12 @@ interface UseCrudResourceOptions {
   pageSize?: number;
   /** Extra query params, appended when truthy; a change refetches from page 1. */
   filters?: Record<string, string>;
+  /** Called with the raw response body after ANY successful mutation here — create, update,
+   *  delete and status toggle all route through one runner, so a handler must not assume it
+   *  is a create. Lets a page act on fields beyond `data` (e.g. an advisory `warning`)
+   *  without this hook knowing about them. Additive: `submit` still returns a plain boolean,
+   *  so no existing caller's `if (await submit(...))` changes meaning. */
+  onMutationResponse?: (body: unknown) => void;
 }
 
 type Statusful = { id: string; status?: 'ACTIVE' | 'INACTIVE' };
@@ -36,6 +42,7 @@ export function useCrudResource<T extends Statusful>(opts: UseCrudResourceOption
     defaultSort = { field: 'name', order: 'asc' },
     pageSize = 10,
     filters,
+    onMutationResponse,
   } = opts;
   const { toast } = useToast();
 
@@ -103,8 +110,9 @@ export function useCrudResource<T extends Statusful>(opts: UseCrudResourceOption
   ): Promise<boolean> => {
     setIsSubmitting(true);
     try {
-      await fn();
+      const body = await fn();
       toast({ title: 'Success', description: successMsg });
+      onMutationResponse?.(body);
       fetchData(pagination.page, pagination.limit);
       return true;
     } catch (error) {

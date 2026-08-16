@@ -41,6 +41,16 @@ export default function SpellTerms() {
     endpoint: '/admin/spell-terms',
     entityName: 'Spell term',
     defaultSort: { field: 'term', order: 'asc' },
+    // The server saves the term either way and returns an advisory when it looks like a
+    // place or brand name. Shown as its own toast, after the success one, so the admin sees
+    // that it saved AND why it may need watching. Deletes and status toggles carry no
+    // warning, so this is a no-op for them.
+    onMutationResponse: (body) => {
+      const warning = (body as { warning?: string | null } | null)?.warning;
+      if (warning) {
+        toast({ title: 'Saved — worth a look', description: warning, duration: 12000 });
+      }
+    },
   });
   const {
     data,
