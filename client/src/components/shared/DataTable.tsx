@@ -289,7 +289,11 @@ export function DataTable<TData, TValue>({
                 // here, which meant a ticked row got no row-level feedback at all.
                 <TableRow
                   key={row.id}
-                  className="bg-background"
+                  // hover:bg-muted, overriding TableRow's own hover:bg-muted/50, because the
+                  // pinned Actions cell paints with bg-inherit — and inheriting a 50%-alpha
+                  // colour left it see-through on exactly the row the pointer is over, so a
+                  // scrolled-under status badge showed through the action icons.
+                  className="bg-background hover:bg-muted"
                   data-state={
                     selection && selected.has(selection.rowId(row.original)) ? 'selected' : undefined
                   }

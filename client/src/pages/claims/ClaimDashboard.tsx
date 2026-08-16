@@ -260,7 +260,9 @@ export default function ClaimDashboard() {
     const who = addUsers.find((u) => u.id === appliedFilters.assignedToUserId);
     if (who) parts.push(`assigned to ${who.fullName}`);
     if (appliedFilters.search.trim()) parts.push(`search "${appliedFilters.search.trim()}"`);
-    return parts.length ? parts.join(' · ') : 'no filters — every claim in your scope';
+    // Empty when nothing is filtered — the dialog has its own wording for that case, and a
+    // fallback phrase here read as "Every claim matching no filters — every claim."
+    return parts.join(' · ');
   }, [appliedFilters, subCats, filterStatuses, addUsers]);
 
   const columns: ColumnDef<ClaimRow>[] = [
