@@ -55,10 +55,13 @@
     "fsevents@2.3.2": true,
     "fsevents@2.3.3": true
   },
-  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and the Windows deploy box cannot resolve its own. Listing the win32 variants here forces them into the lockfile; npm skips them on macOS because each declares os/cpu. Keep the versions in step with rollup/esbuild/@napi-rs/canvas.",
+  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and no other platform can resolve its own -- `npm ci` refuses to write the lockfile, so a binary absent from it is silently skipped, not fetched. Listing every platform we run on forces them all in; npm installs only the matching one because each declares os/cpu. win32-x64 is the deploy box, linux-x64 is CI (ubuntu-latest) -- without it esbuild is missing, `vite` dies at startup, and the ui-e2e job times out waiting for a dev server that never booted. Keep the versions in step with rollup/esbuild/@napi-rs/canvas.",
   "optionalDependencies": {
+    "@esbuild/linux-x64": "0.28.1",
     "@esbuild/win32-x64": "0.28.1",
+    "@napi-rs/canvas-linux-x64-gnu": "0.1.100",
     "@napi-rs/canvas-win32-x64-msvc": "0.1.100",
+    "@rollup/rollup-linux-x64-gnu": "4.62.2",
     "@rollup/rollup-win32-x64-msvc": "4.62.2"
   },
   "overrides": {
