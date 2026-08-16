@@ -98,6 +98,101 @@ describe('ValidationService + drainer', () => {
     expect(runs.every((r) => r.status === 'COMPLETED')).toBe(true);
   });
 
+  it('moves a claim off the default status once validation completes, once only', async () => {
+    const target = await prisma.statusMaster.create({
+      data: { name: `vs-next-${SUF}`, isDefault: false, createdBy: adminId, updatedBy: adminId },
+    });
+    const prev = process.env.VALIDATION_ADVANCE_STATUS;
+    process.env.VALIDATION_ADVANCE_STATUS = target.name;
+    try {
+      const claim = await makeClaim('C-W1');
+      // Zero documents short-circuits to DOCS_NOT_AVAILABLE before any validator runs, and
+      // that path deliberately does NOT advance the status — nothing was actually checked.
+      await prisma.document.create({
+        data: {
+          claimId: claim.id,
+          source: 'UPLOADED',
+          fileName: 'doc.pdf',
+          storagePath: `/tmp/${SUF}-C-W1.pdf`,
+          createdBy: adminId,
+        },
+      });
+      const run = await enqueue(prisma, fakes, claim.id, 'MANUAL', adminId);
+      await new ValidationService(prisma, fakes).runOne(run.id);
+
+      const moved = await prisma.claim.findUnique({
+        where: { id: claim.id },
+        select: { workflowStatusId: true },
+      });
+      expect(moved!.workflowStatusId).toBe(target.id);
+
+      // On the timeline, attributed, both ends recorded — a status that changed with
+      // nobody's name on it would be worse than no change at all.
+      const remark = await prisma.claimRemark.findFirst({
+        where: { claimId: claim.id, statusAfterId: target.id },
+      });
+      expect(remark).toBeTruthy();
+      expect(remark!.statusBeforeId).toBe(workflowStatusId);
+      expect(remark!.userId).toBe(adminId);
+
+      // Re-validating must NOT move it again: it is off the default now, and a second run
+      // must never walk a claim a human may since have placed somewhere deliberately.
+      const run2 = await enqueue(prisma, fakes, claim.id, 'MANUAL', adminId);
+      await new ValidationService(prisma, fakes).runOne(run2.id);
+      const after2 = await prisma.claim.findUnique({
+        where: { id: claim.id },
+        select: { workflowStatusId: true },
+      });
+      expect(after2!.workflowStatusId).toBe(target.id);
+      expect(
+        await prisma.claimRemark.count({ where: { claimId: claim.id, statusAfterId: target.id } })
+      ).toBe(1);
+    } finally {
+      // Restore the env var only. The status row stays: a claim still references it, and
+      // this suite already leaves its per-test 'Pending' rows behind.
+      process.env.VALIDATION_ADVANCE_STATUS = prev;
+    }
+  });
+
+  it('never advances to a terminal status, even when configured to', async () => {
+    const closed = await prisma.statusMaster.create({
+      data: {
+        name: `vs-closed-${SUF}`,
+        isDefault: false,
+        isTerminal: true,
+        createdBy: adminId,
+        updatedBy: adminId,
+      },
+    });
+    const prev = process.env.VALIDATION_ADVANCE_STATUS;
+    process.env.VALIDATION_ADVANCE_STATUS = closed.name;
+    try {
+      const claim = await makeClaim('C-W2');
+      // Zero documents short-circuits to DOCS_NOT_AVAILABLE before any validator runs, and
+      // that path deliberately does NOT advance the status — nothing was actually checked.
+      await prisma.document.create({
+        data: {
+          claimId: claim.id,
+          source: 'UPLOADED',
+          fileName: 'doc.pdf',
+          storagePath: `/tmp/${SUF}-C-W2.pdf`,
+          createdBy: adminId,
+        },
+      });
+      const run = await enqueue(prisma, fakes, claim.id, 'MANUAL', adminId);
+      await new ValidationService(prisma, fakes).runOne(run.id);
+
+      // A machine must not be able to close a claim, even by misconfiguration.
+      const after = await prisma.claim.findUnique({
+        where: { id: claim.id },
+        select: { workflowStatusId: true },
+      });
+      expect(after!.workflowStatusId).toBe(workflowStatusId);
+    } finally {
+      process.env.VALIDATION_ADVANCE_STATUS = prev;
+    }
+  });
+
   it('sweepStaleRuns fails orphaned RUNNING runs', async () => {
     const claim = await makeClaim('C-V4');
     const run = await prisma.validationRun.create({
