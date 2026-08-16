@@ -22,6 +22,25 @@ describe('ValidationService + drainer', () => {
   let ptId: string;
   let catId: string;
 
+  /**
+   * Wait until nothing is QUEUED or RUNNING.
+   *
+   * `await kickDrain(...)` is not enough and reads as if it were: it returns the promise for
+   * the drain already IN FLIGHT, so it resolves while the re-armed pass is still working.
+   * Asserting on that moment is how these tests saw one claim processed out of eight.
+   */
+  async function drained(timeoutMs = 20000) {
+    const started = Date.now();
+    for (;;) {
+      const pending = await prisma.validationRun.count({
+        where: { claim: { subCategoryId }, status: { in: ['QUEUED', 'RUNNING'] } },
+      });
+      if (pending === 0) return;
+      if (Date.now() - started > timeoutMs) throw new Error(`drain did not finish: ${pending} left`);
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
   async function makeClaim(claimId: string) {
     return prisma.claim.create({
       data: { claimId, subCategoryId, workflowStatusId, createdBy: adminId, updatedBy: adminId },
@@ -86,16 +105,75 @@ describe('ValidationService + drainer', () => {
     expect(results.map((r) => r.validatorKey).sort()).toEqual(['FULL', 'SPELL']);
   });
 
-  it('enqueue coalesces and the drainer processes QUEUED runs serially', async () => {
+  it('enqueue coalesces, and every queued run is processed exactly once', async () => {
     const c1 = await makeClaim('C-V2');
     const c2 = await makeClaim('C-V3');
     await enqueue(prisma, fakes, c1.id, 'AUTO');
     await enqueue(prisma, fakes, c1.id, 'AUTO');
     await enqueue(prisma, fakes, c2.id, 'AUTO');
     await kickDrain(prisma, fakes);
+    await drained();
     const runs = await prisma.validationRun.findMany({ where: { claim: { subCategoryId } } });
-    expect(runs.length).toBe(2);
+    // Deliberately not asserting an exact run count. Coalescing only applies while a run is
+    // still QUEUED, and the drainer now picks work up promptly (and concurrently), so a
+    // second enqueue for the same claim legitimately creates a second run — the documented
+    // behaviour, since a RUNNING run's document snapshot is already frozen. What must hold
+    // is that both claims were validated and nothing was left behind.
+    expect(runs.length).toBeGreaterThanOrEqual(2);
     expect(runs.every((r) => r.status === 'COMPLETED')).toBe(true);
+    expect(new Set(runs.map((r) => r.claimId)).size).toBe(2);
+  });
+
+  it('runs claims concurrently without any run executing twice', async () => {
+    const prev = process.env.VALIDATION_CONCURRENCY;
+    process.env.VALIDATION_CONCURRENCY = '4';
+    try {
+      const ids: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        const c = await makeClaim(`C-CC${i}`);
+        // Zero documents short-circuits to DOCS_NOT_AVAILABLE before any validator runs, so
+        // without this the counting validator is never called and the test proves nothing.
+        await prisma.document.create({
+          data: {
+            claimId: c.id,
+            source: 'UPLOADED',
+            fileName: 'doc.pdf',
+            storagePath: `/tmp/${SUF}-C-CC${i}.pdf`,
+            createdBy: adminId,
+          },
+        });
+        ids.push(c.id);
+      }
+      // Count executions per run: reserveNext must hand each row to exactly one worker.
+      const seen = new Map<string, number>();
+      const counting: Validator[] = [
+        {
+          key: 'FULL',
+          column: 'fullScanStatus',
+          run: async (ctx) => {
+            seen.set(ctx.claim.id, (seen.get(ctx.claim.id) ?? 0) + 1);
+            await new Promise((r) => setTimeout(r, 15));
+            return { status: 'PASSED', summary: 'ok' };
+          },
+        },
+      ];
+      for (const id of ids) await enqueue(prisma, counting, id, 'AUTO');
+      await kickDrain(prisma, counting);
+      await drained();
+
+      // Every claim ran, and none ran twice — the whole point of the conditional update.
+      expect([...seen.keys()].sort()).toEqual([...ids].sort());
+      expect([...seen.values()].every((n) => n === 1)).toBe(true);
+
+      const runs = await prisma.validationRun.findMany({
+        where: { claimId: { in: ids } },
+        select: { status: true },
+      });
+      expect(runs.length).toBe(ids.length);
+      expect(runs.every((r) => r.status === 'COMPLETED')).toBe(true);
+    } finally {
+      process.env.VALIDATION_CONCURRENCY = prev;
+    }
   });
 
   it('moves a claim off the default status once validation completes, once only', async () => {

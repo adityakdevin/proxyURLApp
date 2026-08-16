@@ -99,6 +99,17 @@ export class ValidationService {
   }
 
   async runOne(runId: string): Promise<void> {
+    // Claim the run before doing anything with it. The WHERE still carries
+    // `status: 'QUEUED'`, so when several drain workers (or a worker and a direct caller)
+    // reach for the same row, exactly one update matches and everyone else returns here.
+    // Guarding inside runOne rather than in the drainer means no caller can execute a run
+    // twice, whoever they are — a double execution writes the results twice and, since
+    // validation now advances a claim off its default status, would move it twice too.
+    const claimed = await this.prisma.validationRun.updateMany({
+      where: { id: runId, status: 'QUEUED' },
+      data: { status: 'RUNNING', startedAt: new Date() },
+    });
+    if (claimed.count !== 1) return;
     const run = await this.prisma.validationRun.findUnique({ where: { id: runId } });
     if (!run) return;
     const claim = await this.prisma.claim.findUnique({
@@ -115,10 +126,6 @@ export class ValidationService {
 
     if (claim.documents.length === 0) {
       await this.prisma.$transaction(async (tx) => {
-        await tx.validationRun.update({
-          where: { id: runId },
-          data: { status: 'RUNNING', startedAt: new Date() },
-        });
         await tx.validationResult.createMany({
           data: this.validators.map((v): Prisma.ValidationResultCreateManyInput => ({
             runId,
@@ -143,10 +150,6 @@ export class ValidationService {
     // One OCR worker for the whole run (META OCRs every image/PDF); closed in finally.
     const ocr = new TesseractOcrPort();
     try {
-      await this.prisma.validationRun.update({
-        where: { id: runId },
-        data: { status: 'RUNNING', startedAt: new Date() },
-      });
       // Reset all five columns to IN_PROGRESS for this run.
       await this.prisma.claim.update({
         where: { id: claim.id },
