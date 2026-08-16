@@ -6,6 +6,7 @@ import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
 import { ClaimBulkBar } from '@/components/claims/ClaimBulkBar';
 import { ClaimRowActions } from '@/components/claims/ClaimRowActions';
+import { hasRunningChecks, useValidationPolling } from '@/hooks/useValidationPolling';
 import { FilterSelect } from '@/components/shared/FilterSelect';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -265,6 +266,14 @@ export default function ClaimDashboard() {
     return parts.join(' · ');
   }, [appliedFilters, subCats, filterStatuses, addUsers]);
 
+  // The list used to refetch once, the instant work was QUEUED, and then never again — so
+  // every badge still showed its old value and re-validating looked like it did nothing.
+  // Poll while anything is running, and for a window after queueing, since queued work does
+  // not change a column until the drainer reaches it.
+  const { watch: watchValidation, polling } = useValidationPolling(hasRunningChecks(data), () =>
+    fetchData(pagination.page, pagination.limit)
+  );
+
   const columns: ColumnDef<ClaimRow>[] = [
     {
       accessorKey: 'claimId',
@@ -356,6 +365,8 @@ export default function ClaimDashboard() {
             // leave the id ticked, so the bulk bar counted a claim that was no longer there.
             setSelectedIds((ids) => ids.filter((x) => x !== row.original.id));
             fetchData(pagination.page, pagination.limit);
+            // Re-validate queues work that will not show for a few seconds.
+            watchValidation();
           }}
         />
       ),
@@ -457,6 +468,14 @@ export default function ClaimDashboard() {
         </div>
       </div>
 
+      {polling && (
+        // Says the quiet part out loud: queued work changes nothing on screen until the
+        // drainer reaches it, and silence there is what made this look broken.
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+          Validation running — this list refreshes itself until it finishes.
+        </div>
+      )}
       <ClaimBulkBar
         selectedIds={selectedIds}
         onClear={() => setSelectedIds([])}
@@ -472,7 +491,10 @@ export default function ClaimDashboard() {
         role={role}
         statusOptions={statusOptions}
         assigneeOptions={assigneeOptions}
-        onDone={() => fetchData(pagination.page, pagination.limit)}
+        onDone={() => {
+          fetchData(pagination.page, pagination.limit);
+          watchValidation();
+        }}
       />
       <DataTable
         columns={columns}
