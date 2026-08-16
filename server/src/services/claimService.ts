@@ -469,6 +469,52 @@ export class ClaimService {
     return claim;
   }
 
+  /**
+   * The claims either side of this one in the default list order (createdAt desc, id desc
+   * as the tiebreak so equal timestamps — a bulk import — still step deterministically),
+   * within the caller's scope. Each neighbour carries its first document, so the document
+   * viewer can walk claims without bouncing through the claim page to pick a file.
+   * ponytail: default order only. If the viewer ever has to follow the list's own sort and
+   * filters, pass them in — buildWhere already takes them.
+   */
+  async adjacent(id: string, filters: ListClaimsFilters) {
+    const where = this.buildWhere(filters);
+    // The anchor goes through the SAME scope as its neighbours. An unscoped findUnique here
+    // answered 200 for a claim in another project — telling the caller that id exists and
+    // where it sits in their own timeline.
+    const current = await this.prisma.claim.findFirst({
+      where: { AND: [where, { id }] },
+      select: { id: true, createdAt: true },
+    });
+    if (!current) return null;
+    const neighbour = async (dir: 'prev' | 'next') => {
+      // 'prev' is the row ABOVE in the list — newer — because the list is newest-first.
+      const [cmp, order] = dir === 'prev' ? (['gt', 'asc'] as const) : (['lt', 'desc'] as const);
+      const c = await this.prisma.claim.findFirst({
+        where: {
+          AND: [
+            where,
+            {
+              OR: [
+                { createdAt: { [cmp]: current.createdAt } },
+                { createdAt: current.createdAt, id: { [cmp]: current.id } },
+              ],
+            },
+          ],
+        },
+        orderBy: [{ createdAt: order }, { id: order }],
+        select: {
+          id: true,
+          claimId: true,
+          documents: { orderBy: { createdAt: 'asc' }, take: 1, select: { id: true } },
+        },
+      });
+      return c && { id: c.id, claimId: c.claimId, documentId: c.documents[0]?.id ?? null };
+    };
+    const [prev, next] = await Promise.all([neighbour('prev'), neighbour('next')]);
+    return { prev, next };
+  }
+
   /** Columns clients may sort the claim list by (guards against arbitrary orderBy keys). */
   private static readonly SORTABLE_FIELDS = new Set([
     'claimId',
@@ -497,7 +543,16 @@ export class ClaimService {
           workflowStatus: { select: { id: true, name: true, isTerminal: true } },
           assignedTo: { select: { id: true, fullName: true } },
         },
-        orderBy: { [sortBy]: sortOrder },
+        // id as a tiebreak so the order is total: claims imported by one scan share a
+        // createdAt, and without it MySQL may repeat or skip rows across pages — and the
+        // viewer's step arrows (which order by createdAt THEN id) would walk a different
+        // sequence than the list the reviewer is stepping through. Not applied to claimId,
+        // which is already unique per sub-category: appending id there matches no index and
+        // turns an index-ordered scan into a filesort of every ACTIVE claim.
+        orderBy:
+          sortBy === 'claimId'
+            ? [{ claimId: sortOrder }]
+            : [{ [sortBy]: sortOrder }, { id: sortOrder }],
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -527,6 +582,32 @@ export class ClaimService {
     return { data: rows, total, page, limit };
   }
 
+  /**
+   * Every claim id matching these filters, for "act on all matching" bulk calls. Counts
+   * first and returns the count untouched when it exceeds `cap`, so the caller can refuse
+   * the whole batch instead of acting on an arbitrary slice of it.
+   */
+  async idsMatching(filters: ListClaimsFilters, cap: number) {
+    const where = this.buildWhere(filters);
+    const total = await this.prisma.claim.count({ where });
+    if (total > cap) return { ids: [], total };
+    const rows = await this.prisma.claim.findMany({
+      where,
+      select: { id: true },
+      // cap + 1, and re-checked below: count and select are two statements, so a claim
+      // inserted between them would otherwise slip past the cap the count just cleared.
+      // Refusing the batch is the contract; returning an arbitrary cap-sized slice of it
+      // is exactly what this method promises never to do. No orderBy — the caller uses
+      // this as a set, and sorting it was a filesort for nothing.
+      take: cap + 1,
+    });
+    // Re-count rather than reporting rows.length, which is always exactly cap+1 and made the
+    // refusal say "501 claims match" no matter how many really did. The caller puts this
+    // number in front of the reviewer as the amount to narrow down to.
+    if (rows.length > cap) return { ids: [], total: await this.prisma.claim.count({ where }) };
+    return { ids: rows.map((r) => r.id), total };
+  }
+
   private buildWhere(filters: ListClaimsFilters): Prisma.ClaimWhereInput {
     const where: Prisma.ClaimWhereInput = {};
     // Only admins (scope 'ALL') may view non-ACTIVE claims; default ACTIVE.
@@ -546,7 +627,16 @@ export class ClaimService {
     if (filters.intraClaimStatus) where.intraClaimStatus = filters.intraClaimStatus;
     if (filters.fullScanStatus) where.fullScanStatus = filters.fullScanStatus;
     if (filters.scope && filters.scope !== 'ALL') {
-      where.subCategoryId = { in: filters.scope.subCategoryIds };
+      // Intersect, never overwrite. Overwriting silently discarded a scoped caller's own
+      // sub-category filter — harmless while this only fed a list, but bulk MUTATES through
+      // the same where: "select all 12 matching" then acted on every claim in their scope.
+      // An out-of-scope pick matches nothing rather than falling back to everything.
+      const allowed = filters.scope.subCategoryIds;
+      where.subCategoryId = filters.subCategoryId
+        ? allowed.includes(filters.subCategoryId)
+          ? filters.subCategoryId
+          : { in: [] }
+        : { in: allowed };
     }
     return where;
   }

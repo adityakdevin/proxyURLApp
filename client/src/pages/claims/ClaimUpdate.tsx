@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuthStore } from '@/stores/authStore';
+import { ClaimHit, ClaimJumpBox } from '@/components/claims/ClaimJumpBox';
 
 interface Status {
   id: string;
@@ -220,35 +221,9 @@ export default function ClaimUpdate() {
     if (next) navigate(claimPath(next), { state: { siblings } });
   };
 
-  const [jumpQuery, setJumpQuery] = useState('');
-  const [jumpError, setJumpError] = useState('');
-
-  /** Look the typed claim id up through the same search the list uses, then open it. An
-   *  exact id wins; otherwise a single partial match is good enough to jump to. */
-  const jumpToClaim = async () => {
-    const q = jumpQuery.trim();
-    if (!q) return;
-    setJumpError('');
-    try {
-      const r = await api.get<{ data: { id: string; claimId: string }[] }>(
-        `/claims?search=${encodeURIComponent(q)}&limit=10`
-      );
-      const hits = r.data;
-      const exact = hits.find((c) => c.claimId.toLowerCase() === q.toLowerCase());
-      const target = exact ?? (hits.length === 1 ? hits[0] : null);
-      if (!target) {
-        setJumpError(hits.length ? `${hits.length} claims match — type the full ID` : 'No claim found');
-        setTimeout(() => setJumpError(''), 3000);
-        return;
-      }
-      setJumpQuery('');
-      // No siblings: this claim did not come from the list, so the arrows step nothing.
-      navigate(claimPath(target.id));
-    } catch {
-      setJumpError('Search failed');
-      setTimeout(() => setJumpError(''), 3000);
-    }
-  };
+  // No siblings passed on: a jumped-to claim did not come from the list, so the step arrows
+  // have nothing to walk.
+  const jumpToClaim = (claim: ClaimHit) => navigate(claimPath(claim.id));
 
   const [claim, setClaim] = useState<ClaimDetail | null>(null);
   const [statuses, setStatuses] = useState<Status[]>([]);
@@ -574,23 +549,9 @@ export default function ClaimUpdate() {
           Back to Claims
         </Button>
 
-        {/* Jump straight to a claim by its id, instead of Back → find it → open. Matches the
-            same claim ids the list search does, and opens the only hit. */}
-        <div className="relative ml-auto">
-          <Search className="pointer-events-none absolute left-2 top-2.5 h-3.5 w-3.5 text-gray-400" />
-          <input
-            value={jumpQuery}
-            onChange={(e) => setJumpQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && jumpToClaim()}
-            placeholder="Go to claim ID…"
-            aria-label="Go to claim ID"
-            className="h-9 w-52 rounded-md border border-gray-200 pl-7 pr-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-          />
-          {jumpError && (
-            <p className="absolute left-0 top-9 z-10 whitespace-nowrap rounded bg-red-50 px-2 py-1 text-xs text-red-600 shadow">
-              {jumpError}
-            </p>
-          )}
+        {/* Jump straight to a claim by its id, instead of Back → find it → open. */}
+        <div className="ml-auto">
+          <ClaimJumpBox onPick={jumpToClaim} />
         </div>
 
         {siblings.length > 1 && (
@@ -870,6 +831,8 @@ export default function ClaimUpdate() {
             onChange={(e) => setRemarkText(e.target.value)}
             disabled={!canEdit}
             placeholder="Required"
+            // Matches the server validator on /claims/:id/remarks.
+            maxLength={2000}
           />
         </div>
         <div className="flex justify-end mt-4">

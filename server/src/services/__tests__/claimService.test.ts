@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { ClaimService } from '../claimService.js';
 import { StatusMasterService } from '../statusMasterService.js';
@@ -121,6 +122,145 @@ describe('ClaimService', () => {
       expect(active.data.find((x) => x.id === c.id)).toBeUndefined();
       const inactive = await service.list({ scope: 'ALL', callerId: adminId, status: 'INACTIVE' });
       expect(inactive.data.find((x) => x.id === c.id)).toBeDefined();
+    });
+  });
+
+  describe('adjacent', () => {
+    it('walks the claims either side in list order, and stops at the ends', async () => {
+      await seedDefaultStatus();
+      for (const [i, claimId] of ['C-A', 'C-B', 'C-C'].entries()) {
+        const c = await service.create({ subCategoryId, claimId }, adminId);
+        // Distinct timestamps: created in the same millisecond, list order is a coin toss
+        // and there is no fixed "either side" to assert.
+        await prisma.claim.update({
+          where: { id: c.id },
+          data: { createdAt: new Date(Date.UTC(2026, 0, 1 + i)) },
+        });
+      }
+      // Newest first, so the list reads C-C, C-B, C-A.
+      const [newest, middle, oldest] = (await service.list({ scope: 'ALL', callerId: adminId }))
+        .data;
+      expect([newest.claimId, middle.claimId, oldest.claimId]).toEqual(['C-C', 'C-B', 'C-A']);
+
+      const mid = await service.adjacent(middle.id, { scope: 'ALL', callerId: adminId });
+      expect(mid!.prev?.id).toBe(newest.id);
+      expect(mid!.next?.id).toBe(oldest.id);
+      expect(mid!.prev?.documentId).toBeNull(); // no documents uploaded in this test
+
+      expect((await service.adjacent(newest.id, { scope: 'ALL', callerId: adminId }))!.prev).toBeNull();
+      expect((await service.adjacent(oldest.id, { scope: 'ALL', callerId: adminId }))!.next).toBeNull();
+    });
+
+    it('refuses an anchor claim the caller may not see', async () => {
+      await seedDefaultStatus();
+      const c = await service.create({ subCategoryId, claimId: 'C-OOS' }, adminId);
+      // Out-of-scope anchor: same answer as a claim that does not exist, or the endpoint
+      // becomes an oracle for "does this id exist, and where does it sit in my timeline".
+      expect(
+        await service.adjacent(c.id, { scope: { subCategoryIds: [] }, callerId: userId })
+      ).toBeNull();
+      expect(
+        await service.adjacent(randomUUID(), { scope: 'ALL', callerId: adminId })
+      ).toBeNull();
+    });
+
+    it('steps deterministically when neighbours share a createdAt (scan import)', async () => {
+      await seedDefaultStatus();
+      const sameMoment = new Date(Date.UTC(2026, 1, 2));
+      const made: string[] = [];
+      for (const claimId of ['S-1', 'S-2', 'S-3']) {
+        const c = await service.create({ subCategoryId, claimId }, adminId);
+        await prisma.claim.update({ where: { id: c.id }, data: { createdAt: sameMoment } });
+        made.push(c.id);
+      }
+      // A scan creates every claim in one moment, so createdAt alone cannot order them; the
+      // id tiebreak has to give the same sequence the list walks.
+      const listed = (await service.list({ scope: 'ALL', callerId: adminId })).data.map((c) => c.id);
+      // Assert the ORDER, not just the membership: with equal timestamps the tiebreak is
+      // the only thing making it total, so id-desc is what has to hold.
+      expect(listed).toEqual([...made].sort().reverse());
+      const middle = await service.adjacent(listed[1], { scope: 'ALL', callerId: adminId });
+      expect(middle!.prev?.id).toBe(listed[0]);
+      expect(middle!.next?.id).toBe(listed[2]);
+    });
+
+    it('never steps outside the caller scope', async () => {
+      await seedDefaultStatus();
+      // The neighbour has to live OUTSIDE the granted sub-category, or this passes with the
+      // scope filter deleted from the neighbour query.
+      const otherCat = await prisma.category.create({
+        data: { name: `adj-cat-${Date.now()}`, projectId: (await prisma.subCategory.findUnique({
+          where: { id: subCategoryId },
+          include: { category: true },
+        }))!.category.projectId },
+      });
+      const otherSub = await prisma.subCategory.create({
+        data: { name: `adj-sub-${Date.now()}`, categoryId: otherCat.id },
+      });
+      const anchor = await service.create({ subCategoryId, claimId: 'C-IN' }, adminId);
+      await service.create({ subCategoryId: otherSub.id, claimId: 'C-OUT' }, adminId);
+
+      const scoped = await service.adjacent(anchor.id, {
+        scope: { subCategoryIds: [subCategoryId] },
+        callerId: userId,
+      });
+      expect(scoped).toEqual({ prev: null, next: null });
+
+      // Same anchor, wider grant: now the neighbour is reachable, which proves the null
+      // above came from the scope filter and not from an empty table.
+      const wider = await service.adjacent(anchor.id, {
+        scope: { subCategoryIds: [subCategoryId, otherSub.id] },
+        callerId: userId,
+      });
+      expect([wider!.prev?.id, wider!.next?.id].filter(Boolean)).toHaveLength(1);
+
+      await prisma.claim.deleteMany({ where: { subCategoryId: otherSub.id } });
+      await prisma.subCategory.delete({ where: { id: otherSub.id } });
+      await prisma.category.delete({ where: { id: otherCat.id } });
+    });
+  });
+
+  describe('idsMatching', () => {
+    it('stays inside scope and refuses over the cap without returning ids', async () => {
+      await seedDefaultStatus();
+      const a = await service.create({ subCategoryId, claimId: 'IM-1' }, adminId);
+      await service.create({ subCategoryId, claimId: 'IM-2' }, adminId);
+
+      const scoped = await service.idsMatching(
+        { scope: { subCategoryIds: [subCategoryId] }, callerId: userId },
+        10
+      );
+      expect(scoped.ids).toContain(a.id);
+      expect(scoped.ids).toHaveLength(2);
+      expect(scoped.total).toBe(2);
+
+      const none = await service.idsMatching(
+        { scope: { subCategoryIds: [] }, callerId: userId },
+        10
+      );
+      expect(none).toEqual({ ids: [], total: 0 });
+
+      // Over the cap the caller gets the true total and NO ids — the refusal must not be
+      // silently downgraded to acting on an arbitrary slice.
+      const capped = await service.idsMatching({ scope: 'ALL', callerId: adminId }, 1);
+      expect(capped.ids).toEqual([]);
+      expect(capped.total).toBe(2);
+    });
+
+    it('does not let a scoped caller widen past their own sub-category filter', async () => {
+      await seedDefaultStatus();
+      await service.create({ subCategoryId, claimId: 'IM-3' }, adminId);
+      // Naming a sub-category the caller has no access to must match nothing, not fall back
+      // to every sub-category they DO have — bulk mutates through this where.
+      const outside = await service.idsMatching(
+        {
+          subCategoryId: randomUUID(),
+          scope: { subCategoryIds: [subCategoryId] },
+          callerId: userId,
+        },
+        10
+      );
+      expect(outside).toEqual({ ids: [], total: 0 });
     });
   });
 

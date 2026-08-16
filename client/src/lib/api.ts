@@ -3,17 +3,30 @@
 const API_BASE = '/api';
 
 async function handleResponse<T>(response: Response): Promise<T> {
-  const data = await response.json();
+  // Parse defensively: not every failure comes back as JSON. A proxy 504 or 502 is an HTML
+  // page and an empty 413 is nothing at all, and parsing before the ok check turned those
+  // into "Unexpected token '<'" — which names the parser, not the timeout. Bulk actions make
+  // that the expected failure of a long-running call, so it has to read correctly.
+  const body = await response.text();
+  let data: { error?: string } | null = null;
+  try {
+    data = body ? JSON.parse(body) : null;
+  } catch {
+    data = null;
+  }
 
   if (!response.ok) {
     if (response.status === 401) {
       localStorage.removeItem('auth-storage');
       window.location.href = '/login';
     }
-    throw new Error(data.error || 'An error occurred');
+    throw new Error(
+      data?.error || `${response.status} ${response.statusText || 'Request failed'}`
+    );
   }
 
-  return data;
+  if (data === null && body) throw new Error('The server sent a response that could not be read');
+  return data as T;
 }
 
 export const api = {

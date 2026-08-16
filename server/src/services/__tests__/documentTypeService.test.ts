@@ -48,6 +48,27 @@ describe('DocumentTypeService', () => {
     ).rejects.toMatchObject({ code: 'GOVT_CODE_NOT_ALLOWED' });
   });
 
+  // The regression this guards: isRequired defaulted to true, so every type ever
+  // added silently became mandatory for EVERY claim and Full Scan failed claims
+  // carrying exactly the documents they should. A type is required only when asked for.
+  it('does not make a new type required unless asked', async () => {
+    const implicit = await service.create({ name: 'Optional Form', category: 'CUSTOM' }, actorId);
+    expect(implicit.isRequired).toBe(false);
+
+    const explicit = await service.create(
+      { name: 'Mandatory Form', category: 'CUSTOM', isRequired: true },
+      actorId
+    );
+    expect(explicit.isRequired).toBe(true);
+
+    // Only the explicitly-ticked type gates FULL completeness.
+    const gating = await prisma.documentTypeMaster.findMany({
+      where: { status: 'ACTIVE', isRequired: true },
+      select: { name: true },
+    });
+    expect(gating).toEqual([{ name: 'Mandatory Form' }]);
+  });
+
   it('rejects duplicate GOVT code within same SubCategory', async () => {
     await service.create(
       { name: 'PAN', category: 'GOVT', govtCode: 'PAN' },

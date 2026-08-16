@@ -62,6 +62,13 @@ A claim should normally have an owner so someone is responsible for it.
 The reassignment is recorded in the **Remarks Timeline**, so there's always a record of
 who handed the claim to whom and why.
 
+**Reassigning several at once.** You don't have to open each claim. On the dashboard,
+tick the rows (or use **"Select all N matching the filters"**) and click **Reassign** in
+the blue action bar — see
+[Acting on several claims at once](02-end-user-guide.md#acting-on-several-claims-at-once).
+The same remark is written to every claim, and each one still lands in its own Remarks
+Timeline. One batch covers at most 500 claims.
+
 > ⚠️ Once you reassign a claim to an End User, **only that user** (and Team
 > Leads/Admins) will see it. Make sure you pick the right person.
 

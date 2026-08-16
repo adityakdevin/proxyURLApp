@@ -1,17 +1,20 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { body, param, query } from 'express-validator';
-import { authMiddleware, passwordChangedMiddleware } from '../middleware/auth.js';
+import { adminMiddleware, authMiddleware, passwordChangedMiddleware } from '../middleware/auth.js';
 import {
   scopedMiddleware,
   teamLeadOrAdminMiddleware,
   ScopedRequest,
 } from '../middleware/roleGuard.js';
-import { ClaimService, ClaimServiceError } from '../services/claimService.js';
+import { AppendRemarkInput, ClaimService, ClaimServiceError } from '../services/claimService.js';
 import claimDocumentsRoutes from './claimDocuments.js';
 import claimValidationRoutes from './claimValidation.js';
 import { ClaimRuleService } from '../services/claimRuleService.js';
 import { buildClaimsWorkbook } from '../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../lib/routeHelpers.js';
+import { resolveTargets, runBulk } from '../lib/bulkClaims.js';
+import { enqueue } from '../services/validationQueue.js';
+import { registry } from '../validators/registry.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -113,6 +116,156 @@ router.get(
   }
 );
 
+// Shape checks for the two ways a bulk call names its targets. The resolver re-checks
+// both, but a malformed body should be a 400 here rather than a per-claim "FAILED" later.
+const bulkTargetValidators = [
+  // No max here: the cap belongs to resolveTargets, which refuses with 422 BULK_TOO_LARGE
+  // and names the number the caller actually sent. An isArray max would shadow that with a
+  // bare 400 carrying no count.
+  body('ids').optional().isArray(),
+  body('ids.*').optional().isUUID(),
+  body('filters').optional().isObject(),
+  // Same value checks GET /claims runs on the same three fields. parseFilters type-checks
+  // but never format-checks them, so the MUTATING path was validated more loosely than the
+  // read path it mirrors; `search` in particular reached a leading-wildcard LIKE unbounded.
+  body('filters.subCategoryId').optional().isUUID(),
+  body('filters.workflowStatusId').optional().isUUID(),
+  body('filters.assignedToUserId').optional().isUUID(),
+  body('filters.search').optional().isString().isLength({ max: 200 }),
+];
+
+// Bulk actions on a selection (or on everything matching the list filters). Registered
+// BEFORE '/:id/...' so "bulk" is never read as a claim id. Every claim still goes through
+// the same per-claim permission checks the single-claim routes use.
+// Returns null ONLY when it has already answered the request. Callers must test for null
+// explicitly, not for truthiness: an empty array is a legitimate result (the filters matched
+// nothing) that has to flow through to a 200 with requested:0. The natural-looking tidy-up
+// to `if (!ids?.length) return;` would return without ever sending a response, and hang.
+const bulkTargets = async (req: ScopedRequest, res: Response): Promise<string[] | null> => {
+  const r = await resolveTargets(getService(req), req.body ?? {}, {
+    scope: req.scope!,
+    callerId: req.session!.userId,
+    role: req.session!.role,
+  });
+  if (r.error) {
+    res.status(r.error.status).json({ error: r.error.message, code: r.error.code });
+    return null;
+  }
+  return r.ids;
+};
+
+router.post(
+  '/bulk/validate',
+  bulkTargetValidators,
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      const ids = await bulkTargets(req, res);
+      if (ids === null) return;
+      const service = getService(req);
+      const report = await runBulk(ids, async (id) => {
+        const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
+        if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
+        await enqueue(prismaOf(req), registry, id, 'MANUAL', req.session!.userId);
+      });
+      res.status(202).json({ data: report });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// One endpoint for both "change status" and "reassign": a bulk remark is the single-claim
+// remark applied N times, and that route already carries the status and assignee rules.
+router.post(
+  '/bulk/remarks',
+  [
+    ...bulkTargetValidators,
+    body('remarkText')
+      .isString()
+      .trim()
+      .notEmpty()
+      // withMessage, because validate() surfaces only errors.array()[0].msg — the default
+      // "Invalid value" named neither the field nor the limit, and both clients show it raw.
+      .isLength({ max: 2000 })
+      .withMessage('A remark is limited to 2000 characters'),
+    body('newStatusId').optional().isUUID(),
+    body('newAssigneeId').optional({ nullable: true }).isUUID(),
+  ],
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      const ids = await bulkTargets(req, res);
+      if (ids === null) return;
+      const service = getService(req);
+      const { remarkText, newStatusId, newAssigneeId } = req.body;
+      const input: AppendRemarkInput = { remarkText };
+      if (newStatusId) input.newStatusId = newStatusId;
+      // Only forward a reassignment when one was actually sent — appendRemark treats the
+      // KEY's presence as "reassign", so an absent field must stay absent.
+      if (Object.prototype.hasOwnProperty.call(req.body, 'newAssigneeId')) {
+        input.newAssigneeId = newAssigneeId;
+      }
+      const report = await runBulk(ids, async (id) => {
+        const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
+        if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
+        await service.appendRemark(id, input, req.session!.userId, req.session!.role);
+      });
+      res.json({ data: report });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Soft-delete stays admin-only, exactly like DELETE /admin/claims/:id — it lives here so
+// all four bulk actions share one target-resolution path.
+router.post(
+  '/bulk/delete',
+  adminMiddleware,
+  bulkTargetValidators,
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      const ids = await bulkTargets(req, res);
+      if (ids === null) return;
+      const service = getService(req);
+      // No canEditClaim gate here, deliberately, and NOT an oversight: softDelete is
+      // idempotent by design (already-INACTIVE returns untouched), which is what makes a
+      // retry safe. Gating on canEditClaim — false for a non-ACTIVE claim — would report a
+      // whole batch as failures when a reviewer retries after the 504 that TODOS.md P1 says
+      // to expect on a 500-claim run, and would turn the specific NOT_FOUND a missing claim
+      // reports today into a vaguer CLAIM_NOT_EDITABLE. The cost is that re-deleting an
+      // already-deleted claim counts as a success; retry-safety is worth more than that
+      // count. Admin-only is enforced by adminMiddleware above.
+      const report = await runBulk(ids, (id) => service.softDelete(id, req.session!.userId));
+      res.json({ data: report });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Neighbours in the claim list, for the document viewer's step arrows — that window is
+// opened by URL and so has no list state of its own to step through.
+router.get(
+  '/:id/adjacent',
+  [param('id').isUUID()],
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      const r = await getService(req).adjacent(req.params.id, {
+        scope: req.scope!,
+        callerId: req.session!.userId,
+      });
+      if (!r) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+      res.json({ data: r });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 router.get(
   '/:id',
   [param('id').isUUID()],
@@ -157,11 +310,16 @@ router.post(
   '/:id/remarks',
   [
     param('id').isUUID(),
-    body('remarkText').isString().trim().notEmpty(),
+    body('remarkText')
+      .isString()
+      .trim()
+      .notEmpty()
+      // withMessage, because validate() surfaces only errors.array()[0].msg — the default
+      // "Invalid value" named neither the field nor the limit, and both clients show it raw.
+      .isLength({ max: 2000 })
+      .withMessage('A remark is limited to 2000 characters'),
     body('newStatusId').optional().isUUID(),
-    body('newAssigneeId')
-      .optional({ nullable: true })
-      .custom((v) => v === null || /^[0-9a-fA-F-]{36}$/.test(v)),
+    body('newAssigneeId').optional({ nullable: true }).isUUID(),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {

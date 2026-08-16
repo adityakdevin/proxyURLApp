@@ -25,7 +25,7 @@ npm run dev:server       # Express on port 3001 (tsx watch)
 npm run dev:client       # Vite on port 5173
 
 # Database
-npm run db:migrate       # Run Prisma migrations (dev)
+npm run db:push          # Sync the DB to schema.prisma — this project's mechanism
 npm run db:seed          # Seed initial data
 npm run db:studio        # Open Prisma Studio GUI
 npm run db:generate      # Regenerate Prisma client
@@ -51,6 +51,8 @@ npm run start            # Run production server
 - `server/src/routes/proxy.ts` - Main proxy handler (~700 lines) with HTML/CSS/JS URL rewriting
 - `server/src/services/authService.ts` - Login, password changes, session creation
 - `server/src/services/proxyService.ts` - URL access validation
+- `server/src/routes/claims.ts` - Claim routes; the `bulk/*` routes are registered before `/:id/*` so "bulk" is never parsed as a claim id
+- `server/src/lib/bulkClaims.ts` - Bulk target resolution (explicit ids vs list filters), the `BULK_MAX` cap, and the per-claim succeeded/failed report
 - `server/prisma/schema.prisma` - Data models
 
 ### Key Frontend Files
@@ -88,6 +90,9 @@ User → UserAssignment (single Project) → determines menu/URL access
 - `/api/auth/*` - Login, logout, change-password, impersonation
 - `/api/admin/*` - CRUD for Users, Projects, Categories, SubCategories, UrlConfigs
 - `/api/user/*` - Menu, dashboard endpoints
+- `/api/claims/*` - Claim list/detail, documents, validation runs, remarks
+  - `POST /api/claims/bulk/{validate,remarks,delete}` - Act on an explicit selection of ids, or on every claim matching the current list filters. Capped at `BULK_MAX` (500); over the cap the whole call is refused with 422 `BULK_TOO_LARGE` rather than trimmed. Every claim still goes through the same per-claim permission check as the single-claim route; `bulk/delete` is additionally admin-only.
+  - `GET /api/claims/:id/adjacent` - Previous/next claim in the default list order (createdAt desc, id tiebreak), each with its first document. Powers the document viewer's step arrows.
 - `/proxy/:opaqueId/*` - Proxy handler (all HTTP methods)
 
 ## Environment Variables
@@ -118,6 +123,8 @@ Admin seed credentials configured via `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN
 
 ## Database Notes
 
-- Use `npm run db:migrate` after schema changes
-- Prisma Client auto-regenerates on migrate
+- Use `npm run db:push` after schema changes. Do NOT run `db:migrate` (`prisma migrate
+  dev`): the migration history is ~71 lines behind `schema.prisma`, so it would auto-author
+  a migration dropping columns from three master tables. See `server/prisma/migrations/README.md`.
+- Prisma Client regenerates on `db:push`; run `npm run db:generate` if it does not
 - `server/prisma/seed.ts` creates initial admin user

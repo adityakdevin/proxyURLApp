@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ColumnDef } from '@tanstack/react-table';
 import { Upload, Download } from 'lucide-react';
 import { api, DataResponse, PaginatedResponse } from '@/lib/api';
 import { DataTable, ServerSort, nextSort } from '@/components/shared/DataTable';
+import { ClaimBulkBar } from '@/components/claims/ClaimBulkBar';
+import { ClaimRowActions } from '@/components/claims/ClaimRowActions';
 import { TableToolbar } from '@/components/shared/TableToolbar';
 import { FilterSelect } from '@/components/shared/FilterSelect';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +25,7 @@ import {
   SubCategoryPickerValue,
 } from '@/components/shared/SubCategoryPicker';
 import { useToast } from '@/components/ui/use-toast';
+import { useAuthStore } from '@/stores/authStore';
 
 interface ClaimRow {
   id: string;
@@ -91,6 +94,17 @@ export default function AdminClaims() {
       .catch(() => setStatusOptions([]));
   }, []);
 
+  // Bulk selection: ids survive paging, so a reviewer can gather rows across pages before
+  // acting. Cleared whenever the filters change — those rows are no longer on screen.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [assigneeOptions, setAssigneeOptions] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    api
+      .get<{ data: { id: string; fullName: string }[] }>('/user/users-in-scope')
+      .then((r) => setAssigneeOptions(r.data.map((u) => ({ value: u.id, label: u.fullName }))))
+      .catch(() => setAssigneeOptions([]));
+  }, []);
+
   const [obsOpen, setObsOpen] = useState(false);
   const [picker, setPicker] = useState<Partial<SubCategoryPickerValue>>({});
   const [isUploading, setIsUploading] = useState(false);
@@ -129,9 +143,17 @@ export default function AdminClaims() {
 
   // Refetch (from page 1) whenever search, check filters, or sort change — including on mount.
   useEffect(() => {
+    setSelectedIds([]);
     fetchData(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, sort, checks, workflowStatusId]);
+
+  // What "all matching" acts on: the same filters the list was fetched with.
+  const bulkFilters = {
+    search: search.trim() || undefined,
+    workflowStatusId: workflowStatusId || undefined,
+    ...checks,
+  };
 
   // Clear the picker / file / report when the dialog closes so a stale selection
   // can't carry into the next open (and a wrong-sub-category upload).
@@ -187,6 +209,22 @@ export default function AdminClaims() {
     const params = new URLSearchParams({ subCategoryId: exportPicker.subCategoryId });
     window.open(`/api/admin/claims/export-observations?${params.toString()}`, '_blank');
   };
+
+  // AdminClaims is mounted behind <ProtectedRoute requiredRole="ADMIN"> and the server
+  // re-checks every claim, but reading the session beats restating the authz fact in the
+  // view: the page then cannot show Delete/Reassign to whoever renders it if that route
+  // guard is ever relaxed or this page reused.
+  const role = useAuthStore().user?.role ?? 'USER';
+
+  /** The applied filters in words, for the bulk confirm — that path lists no rows. */
+  const filtersSummary = useMemo(() => {
+    const parts: string[] = [];
+    const st = statusOptions.find((s) => s.value === workflowStatusId);
+    if (st) parts.push(`Status ${st.label}`);
+    for (const [k, v] of Object.entries(checks)) if (v) parts.push(`${k} ${v}`);
+    if (search.trim()) parts.push(`search "${search.trim()}"`);
+    return parts.length ? parts.join(' · ') : 'no filters — every claim';
+  }, [statusOptions, workflowStatusId, checks, search]);
 
   const columns: ColumnDef<ClaimRow>[] = [
     {
@@ -254,6 +292,26 @@ export default function AdminClaims() {
       meta: { sortField: 'fullScanStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.fullScanStatus} />,
     },
+    {
+      id: 'actions',
+      header: 'Actions',
+      cell: ({ row }) => (
+        <ClaimRowActions
+          claimId={row.original.id}
+          claimLabel={row.original.claimId}
+          canAct
+          role={role}
+          statusOptions={statusOptions}
+          assigneeOptions={assigneeOptions}
+          onDone={() => {
+            // Drop it from the selection too: acting on a row from its own menu used to
+            // leave the id ticked, so the bulk bar counted a claim that was no longer there.
+            setSelectedIds((ids) => ids.filter((x) => x !== row.original.id));
+            fetchData(pagination.page, pagination.limit);
+          }}
+        />
+      ),
+    },
   ];
 
   return (
@@ -301,6 +359,17 @@ export default function AdminClaims() {
           ))}
         </TableToolbar>
       </div>
+      <ClaimBulkBar
+        selectedIds={selectedIds}
+        onClear={() => setSelectedIds([])}
+        matchingTotal={pagination.total}
+        filters={bulkFilters}
+        filtersSummary={filtersSummary}
+        role={role}
+        statusOptions={statusOptions}
+        assigneeOptions={assigneeOptions}
+        onDone={() => fetchData(pagination.page, pagination.limit)}
+      />
       <DataTable
         columns={columns}
         data={data}
@@ -308,6 +377,12 @@ export default function AdminClaims() {
         onPageChange={(p) => fetchData(p, pagination.limit)}
         onPageSizeChange={(l) => fetchData(1, l)}
         isLoading={isLoading}
+        selection={{
+          selectedIds,
+          onChange: setSelectedIds,
+          rowId: (row) => row.id,
+          rowLabel: (row) => row.claimId,
+        }}
         sort={sort}
         onSortChange={(f) => setSort((p) => nextSort(p, f))}
       />

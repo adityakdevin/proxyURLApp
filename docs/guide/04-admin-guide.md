@@ -177,7 +177,8 @@ can use to confirm a claim has all its needed documents.
 1. Open the sub-category's **Document Types** screen.
 2. **Add** a type: give it a **Name**, choose whether it's a **Government** ID (with a
    code like AADHAR/PAN) or a **Custom** type, set its order, and whether it's
-   **Required**.
+   **Required**. A new type is **not** required unless you tick the box — so Full Scan
+   won't start failing claims for a type you only just created.
 3. Save.
 
 > 📷 **Screenshot placeholder:** _The Document Types screen._
@@ -342,6 +343,10 @@ Category → Sub-Category. The app opens it safely "through" itself and logs the
 
 - **Deactivate, don't delete**, when you can — setting something **Inactive** hides it
   while preserving history.
+- **Bulk delete is admin-only, and it is a soft delete.** On the claims list you can tick
+  rows and delete them from the blue action bar. Nothing is erased — the claims are
+  marked deleted and drop out of everyone else's list. One batch covers at most 500
+  claims; larger selections are refused outright rather than half-applied.
 - **One default status** per sub-category, always.
 - **Match scopes** — a user only sees a Category if their User Type + Project
   match it exactly. "User can't see anything" almost always means a scope mismatch;

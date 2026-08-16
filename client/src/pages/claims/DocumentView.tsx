@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   Loader2,
   PanelRightClose,
@@ -12,6 +14,8 @@ import { DocumentViewerPanel } from '@/components/claims/DocumentViewer';
 import { FieldPanes, FieldGroup, QrFieldCheck } from '@/components/claims/FieldPanes';
 import { api } from '@/lib/api';
 import { Finding } from '@/lib/claimTypes';
+import { useAuthStore } from '@/stores/authStore';
+import { ClaimHit, ClaimJumpBox } from '@/components/claims/ClaimJumpBox';
 
 interface ValResult {
   validatorKey: string;
@@ -26,6 +30,8 @@ interface ValResult {
 interface ValRun {
   status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 }
+/** A claim either side of this one in the list, with the document to open it on. */
+type Neighbour = { id: string; claimId: string; documentId: string | null } | null;
 const RUNNING_STATES = new Set(['QUEUED', 'RUNNING']);
 
 const CHECK_LABEL: Record<string, string> = {
@@ -54,9 +60,44 @@ export default function DocumentView() {
   // the SAME document, not another tab of the same file.
   const [params, setParams] = useSearchParams();
   const check = params.get('v');
+  // The claim page lives on a different route for an admin, and this window is opened
+  // straight from a URL, so it has to pick the route the reviewer belongs on itself.
+  const isAdmin = useAuthStore().user?.role === 'ADMIN';
+  const claimPath = (claimUuid: string) => `${isAdmin ? '/admin' : ''}/claims/${claimUuid}`;
+  const claimHref = claimPath(id ?? '');
+  const navigate = useNavigate();
+
+  // Stepping claims without leaving the viewer: the neighbours come from the server because
+  // this window is opened by URL and so has no list state to walk.
+  const [neighbours, setNeighbours] = useState<{ prev: Neighbour; next: Neighbour }>({
+    prev: null,
+    next: null,
+  });
+
+  /** Open a claim in THIS window, staying on its documents and on the current check. A claim
+   *  with no documents has nothing for the viewer to show, so it falls back to its page. */
+  // Not memoized: nothing reads its identity (no dependency array references it), so a
+  // useCallback here bought nothing except an exhaustive-deps suppression on a function that
+  // will keep growing.
+  const goToClaim = (claimUuid: string, docId: string | null) => {
+    navigate(
+      docId
+        ? `/claims/${claimUuid}/documents/${docId}${check ? `?v=${check}` : ''}`
+        : claimPath(claimUuid)
+    );
+  };
+
+  /** A jumped-to claim opens on its first document — the viewer has nothing else to show. */
+  const jumpToClaim = async (claim: ClaimHit) => {
+    const docs = await api
+      .get<{ data: { id: string }[] }>(`/claims/${claim.id}/documents`)
+      .catch(() => ({ data: [] as { id: string }[] }));
+    goToClaim(claim.id, docs.data[0]?.id ?? null);
+  };
   // The QR check gets the split layout: document beside the fields read off it.
   const compare = check === 'QR';
   const [fileName, setFileName] = useState('');
+  const [claimLabel, setClaimLabel] = useState('');
   const [results, setResults] = useState<ValResult[]>([]);
   const [groups, setGroups] = useState<FieldGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,13 +165,21 @@ export default function DocumentView() {
 
   useEffect(() => {
     let cancelled = false;
+    // Stepping to another claim swaps the document under the same component: hold the
+    // loading state until its findings arrive, or the header names the new file while the
+    // panes still show the old claim's findings.
+    setLoading(true);
     Promise.all([
       api.get<{ data: { id: string; fileName: string }[] }>(`/claims/${id}/documents`),
+      // The claim id is what a reviewer works in; the file name only says which of its
+      // documents is on screen.
+      api.get<{ data: { claimId: string } }>(`/claims/${id}`),
       loadValidation(),
     ])
-      .then(([docsRes]) => {
+      .then(([docsRes, claimRes]) => {
         if (cancelled) return;
         setFileName(docsRes.data.find((d) => d.id === documentId)?.fileName ?? '');
+        setClaimLabel(claimRes.data.claimId);
       })
       .catch(() => {
         /* the panel reports an unreadable file on its own; findings just stay empty */
@@ -140,6 +189,22 @@ export default function DocumentView() {
       cancelled = true;
     };
   }, [id, documentId, loadValidation]);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Clear FIRST. This effect is not behind the loading gate, so between stepping to a new
+    // claim and its neighbours landing the arrows still held the PREVIOUS claim's prev/next:
+    // one click of Back then skipped a claim entirely, and Next was a no-op onto the claim
+    // already on screen. Both were silent — the wrong claim, no error.
+    setNeighbours({ prev: null, next: null });
+    api
+      .get<{ data: { prev: Neighbour; next: Neighbour } }>(`/claims/${id}/adjacent`)
+      .then((r) => !cancelled && setNeighbours(r.data))
+      .catch(() => !cancelled && setNeighbours({ prev: null, next: null }));
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   // While a run is in flight, poll so the findings on screen become the NEW ones without the
   // reviewer reloading the tab. Stops as soon as the run leaves QUEUED/RUNNING.
@@ -218,35 +283,28 @@ export default function DocumentView() {
 
   const checkLabel = check ? CHECK_LABEL[check] ?? check : null;
 
-  // Name the tab after the file and the check, so a reviewer with several open — often the
-  // same document under different checks — can tell them apart from the tab strip alone.
+  // Name the tab after the CLAIM and the check, so a reviewer with several open — often the
+  // same claim under different checks — can tell them apart from the tab strip alone.
   useEffect(() => {
-    if (fileName) document.title = checkLabel ? `${fileName} — ${checkLabel}` : fileName;
-  }, [fileName, checkLabel]);
-
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center gap-2 text-sm text-gray-500">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading document…
-      </div>
-    );
-  }
+    if (claimLabel) document.title = checkLabel ? `${claimLabel} — ${checkLabel}` : claimLabel;
+  }, [claimLabel, checkLabel]);
 
   const errors = findings.filter((f) => f.severity === 'ERROR').length;
   const warnings = findings.filter((f) => f.severity === 'WARNING').length;
 
   return (
-    <div className="flex h-screen min-h-0 flex-col bg-gray-100">
-      {/* Sticky identity bar: which file, under which check, on which claim. Without it a
-          reviewer with six tabs open cannot tell them apart from the page itself. */}
+    <div className="flex h-screen min-h-0 flex-col overflow-x-hidden bg-gray-100">
+      {/* Sticky identity bar: which claim, under which check. The file name lives in the
+          viewer panel — with six tabs open it is the claim id that tells them apart. */}
       <header className="flex shrink-0 items-center gap-3 border-b bg-white px-4 py-2.5 shadow-sm">
-        <h1 className="min-w-0 truncate text-base font-semibold text-gray-900" title={fileName}>
-          {fileName || 'Document'}
+        <h1 className="min-w-0 shrink truncate text-base font-semibold text-gray-900" title={claimLabel}>
+          {claimLabel || 'Claim'}
         </h1>
         {/* Check switcher. Was a static badge, which meant going back to the claim page and
             reopening the same file to see it under another check. */}
-        <nav className="flex shrink-0 items-center gap-0.5 rounded-lg bg-gray-100 p-0.5">
+        {/* The tab strip is the one part of the bar that may shrink: it scrolls on a narrow
+            window so the actions on the right stay on screen instead of the page going wide. */}
+        <nav className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-lg bg-gray-100 p-0.5">
           {CHECK_TABS.map((key) => {
             const activeTab = key === (check ?? 'ALL');
             const count = key === 'ALL' ? null : key === 'QR' ? qrCount : countByCheck.get(key) ?? 0;
@@ -262,7 +320,7 @@ export default function DocumentView() {
                       ? `${qrCount} QR code${qrCount === 1 ? '' : 's'} read from this document`
                       : `${countByCheck.get(key) ?? 0} finding(s) on this document`
                 }
-                className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition ${
+                className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition ${
                   activeTab
                     ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
                     : 'text-gray-500 hover:text-gray-800'
@@ -295,6 +353,42 @@ export default function DocumentView() {
               {warnings} advisory
             </span>
           )}
+          {/* Three groups, in the order a reviewer needs them: GO somewhere (step, jump),
+              DO something to this claim (re-validate, open it), then how the page LOOKS.
+              Stepping leads because a batch is walked far more often than a claim is jumped
+              to by id; the panel toggle is pinned last, where a view control is looked for. */}
+          <div className="flex items-center">
+            <button
+              type="button"
+              disabled={!neighbours.prev}
+              onClick={() => neighbours.prev && goToClaim(neighbours.prev.id, neighbours.prev.documentId)}
+              title={neighbours.prev ? `Previous claim — ${neighbours.prev.claimId}` : 'No previous claim'}
+              aria-label="Previous claim"
+              className="rounded-l border border-r-0 p-1.5 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              disabled={!neighbours.next}
+              onClick={() => neighbours.next && goToClaim(neighbours.next.id, neighbours.next.documentId)}
+              title={neighbours.next ? `Next claim — ${neighbours.next.claimId}` : 'No next claim'}
+              aria-label="Next claim"
+              className="rounded-r border p-1.5 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {/* Jump straight to a claim by its id, instead of stepping to it. Lands on that
+              claim's first document, under the check already selected here. */}
+          <ClaimJumpBox
+            onPick={jumpToClaim}
+            collapsible
+            inputClassName="h-7 w-44 rounded-md border border-gray-200 pl-7 pr-8 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600"
+          />
+
+          <span className="mx-0.5 h-5 w-px bg-gray-200" />
+
           {/* Re-run every check on this claim without going back to the claim page — the
               reviewer who just fixed a scan wants the new findings in the tab they are in. */}
           <button
@@ -303,23 +397,28 @@ export default function DocumentView() {
             disabled={running}
             title={running ? 'Validation in progress…' : 'Re-validate this claim'}
             aria-label={running ? 'Validation in progress' : 'Re-validate this claim'}
-            className="flex items-center gap-1 rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center rounded border p-1.5 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {running ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <RotateCw className="h-3.5 w-3.5" />
             )}
-            {running ? 'Validating…' : 'Re-validate'}
+            {/* Icon-only in the bar; the tooltip carries the meaning and the label stays in
+                the accessibility tree. */}
+            <span className="sr-only">{running ? 'Validating…' : 'Re-validate'}</span>
           </button>
           <a
-            href={`/claims/${id}`}
+            href={claimHref}
             target={`claim-${id}`}
-            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 hover:underline"
+            title="Open claim"
+            className="flex items-center rounded border p-1.5 text-blue-600 hover:bg-blue-50"
           >
-            Open claim
-            <ExternalLink className="h-3 w-3" />
+            <ExternalLink className="h-3.5 w-3.5" />
+            <span className="sr-only">Open claim</span>
           </a>
+
+          <span className="mx-0.5 h-5 w-px bg-gray-200" />
           <button
             type="button"
             onClick={() => setPanelOpen((o) => !o)}
@@ -338,8 +437,21 @@ export default function DocumentView() {
         </div>
       </header>
 
-      {/* The document is what the reviewer reads; the fields are a reference sidebar at a
-          fixed width, so every extra pixel of a wide window goes to the document. */}
+      {/* Stepping to another claim announces itself — the only other signal was
+          document.title, which a screen reader does not read on an in-page navigation. */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {loading ? 'Loading claim…' : claimLabel ? `Claim ${claimLabel}` : ''}
+      </p>
+
+      {/* The loading state swaps the BODY only. Returning a full-page spinner unmounted the
+          header, and with it the step arrow the reviewer had just activated — so walking a
+          batch by keyboard dropped focus onto <body> on every single step. */}
+      {loading ? (
+        <main className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading document…
+        </main>
+      ) : (
       <main
         className={`min-h-0 flex-1 gap-3 p-3 ${
           panelOpen ? 'grid grid-cols-[minmax(0,1fr)_340px]' : 'flex'
@@ -372,6 +484,7 @@ export default function DocumentView() {
           />
         )}
       </main>
+      )}
     </div>
   );
 }
