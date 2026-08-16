@@ -34,6 +34,23 @@ const prisma = new PrismaClient();
 /** Production values, mirrored from qrValidator: the cheap first pass and the retry. */
 const SCALES = [3, 8];
 
+/**
+ * Rescues to try when a page that rendered fine still decodes nothing.
+ *
+ * Each is a plausible reason a photographed ID card defeats a binarizer: washed-out
+ * contrast, a colour cast over the code, a light-on-dark print, or a card small enough in
+ * frame that the modules land under a pixel. Whichever one succeeds names the fix; all of
+ * them failing says preprocessing is not where the answer is.
+ */
+type Op = (img: { greyscale(): unknown; contrast(n: number): unknown; invert(): unknown; normalize(): unknown; scale(n: number): unknown }) => void;
+const VARIANTS: [string, Op][] = [
+  ['greyscale+contrast', (i) => { i.greyscale(); i.contrast(0.5); }],
+  ['normalize', (i) => { i.normalize(); }],
+  ['greyscale+normalize', (i) => { i.greyscale(); i.normalize(); }],
+  ['invert', (i) => { i.invert(); }],
+  ['upscale-x2', (i) => { i.scale(2); }],
+];
+
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
   return i >= 0 ? process.argv[i + 1] : undefined;
@@ -116,6 +133,37 @@ async function main() {
         for (const h of hits) {
           const v = h.value.length > 60 ? `${h.value.slice(0, 60)}…` : h.value;
           console.log(`            value: ${v}`);
+        }
+
+        // Nothing read from a page that renders fine is where the guessing usually starts.
+        // Try the standard rescues instead and report which one works — a variant that
+        // decodes is a concrete change to make in the validator, and all of them failing
+        // is real evidence that preprocessing is not the answer.
+        if (hits.length === 0) {
+          for (const [name, apply] of VARIANTS) {
+            try {
+              const v = await Jimp.read(p.png);
+              apply(v);
+              const got = await decodeAll(
+                new Uint8ClampedArray(v.bitmap.data),
+                v.bitmap.width,
+                v.bitmap.height
+              );
+              if (got.length > 0) {
+                const out = path.join(outDir, `${doc.fileName}.p${p.page}.s${scale}.${name}.png`);
+                await fs.writeFile(out, await v.getBuffer('image/png'));
+                console.log(`      ${name}: ${got.length} QR  -> ${path.basename(out)}`);
+                for (const h of got) {
+                  const t = h.value.length > 60 ? `${h.value.slice(0, 60)}…` : h.value;
+                  console.log(`            value: ${t}`);
+                }
+              } else {
+                console.log(`      ${name}: 0`);
+              }
+            } catch (e) {
+              console.log(`      ${name}: failed (${e instanceof Error ? e.message : e})`);
+            }
+          }
         }
       }
       console.log('');
