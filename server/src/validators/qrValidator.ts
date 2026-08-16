@@ -133,6 +133,21 @@ async function loadZxing(): Promise<ZxingReader> {
   return zxingPromise;
 }
 
+/**
+ * Set when a decode had to fall back to jsQR. zxing reads blurry and dense codes that jsQR
+ * cannot, so once this is true every "no QR found" in the run is suspect: the code may be
+ * perfectly readable and the server simply lost the decoder that reads it. Module-level and
+ * reset per scan because the fallback happens deep inside a per-page call.
+ */
+let decoderDegraded = false;
+
+export function resetDecoderDegraded(): void {
+  decoderDegraded = false;
+}
+export function isDecoderDegraded(): boolean {
+  return decoderDegraded;
+}
+
 export async function decodeAll(
   data: Uint8ClampedArray,
   width: number,
@@ -156,7 +171,10 @@ export async function decodeAll(
         };
       });
   } catch (e) {
-    // Never silent: a failed wasm load turns every QR check in the system weak.
+    // Never silent: a failed wasm load turns every QR check in the system weak. The log
+    // alone was not enough — it lands in the server journal while the REVIEWER is told the
+    // scan is too blurred, so an infrastructure fault reads as a document problem.
+    decoderDegraded = true;
     console.warn(`[qr] zxing decode unavailable, falling back to jsQR: ${(e as Error).message}`);
     const hit = decodePixels(data, width, height);
     return hit ? [hit] : [];
@@ -184,6 +202,9 @@ export interface PdfQrScan {
   skippedPages: number;
   /** Pages that missed at low resolution and did not fit in the high-res retry budget. */
   skippedRetries: number;
+  /** True when zxing was unavailable and the weaker jsQR path did the reading, so a miss
+   *  says more about this server than about the document. */
+  decoderDegraded: boolean;
 }
 
 export async function decodeQrPdf(absolutePath: string): Promise<PdfQrScan> {
@@ -220,6 +241,7 @@ export async function decodeQrPdf(absolutePath: string): Promise<PdfQrScan> {
     totalPages,
     skippedPages: Math.max(0, totalPages - pages.length),
     skippedRetries,
+    decoderDegraded: isDecoderDegraded(),
   };
 }
 
@@ -335,6 +357,10 @@ export const qrValidator: Validator = {
     // ERROR findings for the ones that disagree.
     const comparisons: (QrFieldComparison & { documentId: string; page?: number })[] = [];
     const mismatches: FindingInput[] = [];
+    // Once per run, so a degradation on document 1 still colours the report for document 5.
+    // Reset here rather than inside decodeQrPdf: an image decoded after a PDF would
+    // otherwise clear a flag the PDF had already raised.
+    resetDecoderDegraded();
     for (const doc of scannable) {
       let hits: (QrHit & { page?: number })[];
       if (doc.mimeType === 'application/pdf') {
@@ -433,16 +459,26 @@ export const qrValidator: Validator = {
       // policy QR on page 2 of a bundle silenced the Aadhaar on page 20 entirely. A card
       // page with no QR of its own is what a reviewer is actually being asked to judge.
       for (const p of idCardPagesWithoutQr(doc, ctx, hits)) {
+        // Do not blame the scan when the server lost its decoder. zxing reads dense and
+        // blurry codes that jsQR cannot, so on the fallback path a crisp, perfectly good
+        // Aadhaar or PAN QR reads as "missing" — and the reviewer, told it is too blurred,
+        // goes looking for a better copy of a document that was never the problem.
+        const degraded = isDecoderDegraded();
         missing.push({
           documentId: doc.id,
           code: 'QR_MISSING',
           severity: 'INFO',
-          message:
-            `No QR code was found on page ${p.page} of ${doc.fileName}, which reads as ` +
-            `${p.kind === 'PAN' ? 'a PAN card' : 'an Aadhaar card'}. Many older card designs ` +
-            `carry no QR code at all; if this one does, the scan may be too small or blurred to read it.`,
+          message: degraded
+            ? `No QR code was read on page ${p.page} of ${doc.fileName}, which reads as ` +
+              `${p.kind === 'PAN' ? 'a PAN card' : 'an Aadhaar card'} — but the high-accuracy ` +
+              `QR decoder was unavailable on the server for this run, so the weaker fallback ` +
+              `did the reading. Treat this as unchecked rather than as a bad scan; the server ` +
+              `log records the reason ("[qr] zxing decode unavailable").`
+            : `No QR code was found on page ${p.page} of ${doc.fileName}, which reads as ` +
+              `${p.kind === 'PAN' ? 'a PAN card' : 'an Aadhaar card'}. Many older card designs ` +
+              `carry no QR code at all; if this one does, the scan may be too small or blurred to read it.`,
           page: p.page,
-          data: { kind: p.kind },
+          data: { kind: p.kind, decoderDegraded: degraded },
         });
       }
     }

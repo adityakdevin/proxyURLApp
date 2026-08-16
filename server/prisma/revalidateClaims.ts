@@ -18,6 +18,47 @@ import { registry } from '../src/validators/registry.js';
 
 const prisma = new PrismaClient();
 
+/**
+ * Block until the runs just queued for these claims have actually finished.
+ *
+ * `await kickDrain(...)` is NOT enough and reads as if it were. kickDrain returns the
+ * promise for the drain already IN FLIGHT when a drain is running (validationQueue.ts:35-38),
+ * and `enqueue` kicks one itself (line 28) — so the first claim in the loop starts a drain,
+ * and the await at the end resolves as soon as THAT pass ends, with the re-armed pass still
+ * working through the rest. The script then printed whatever statuses happened to be stored
+ * at that moment: the pre-run values, for most of the batch.
+ *
+ * That is worse than slow. It reported 20 claims as PASSED while the runs behind them were
+ * still going, and the real results — misspellings correctly caught — landed minutes later.
+ * A verification tool that reports the state it was asked to change is actively misleading.
+ *
+ * Polls the rows rather than the queue's internals, so it is correct no matter who else is
+ * draining (the API server shares this database).
+ */
+async function waitForRuns(prisma: PrismaClient, claimIds: string[], timeoutMs = 30 * 60_000) {
+  const startedAt = Date.now();
+  let lastReported = -1;
+  for (;;) {
+    const pending = await prisma.validationRun.count({
+      where: { claimId: { in: claimIds }, status: { in: ['QUEUED', 'RUNNING'] } },
+    });
+    if (pending === 0) return;
+    if (Date.now() - startedAt > timeoutMs) {
+      console.warn(
+        `\nStill ${pending} run(s) in flight after ${Math.round(timeoutMs / 60_000)} minutes. ` +
+          'Reporting anyway — the statuses below may be stale for those claims.'
+      );
+      return;
+    }
+    // Progress, because a large batch on a serial drainer is otherwise a silent wait.
+    if (pending !== lastReported) {
+      process.stdout.write(`\r  waiting on ${pending} run(s)…          `);
+      lastReported = pending;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 async function main() {
   if (!process.env.CLAIMS_SCAN_ROOT) {
     throw new Error(
@@ -44,6 +85,10 @@ async function main() {
   console.log(`Re-validating ${claims.length} claim(s): ${claims.map((c) => c.claimId).join(', ')}`);
   for (const c of claims) await enqueue(prisma, registry, c.id, 'MANUAL', admin?.id);
   await kickDrain(prisma, registry);
+  await waitForRuns(
+    prisma,
+    claims.map((c) => c.id)
+  );
 
   console.log('\nSPELL results:');
   for (const c of claims) {
