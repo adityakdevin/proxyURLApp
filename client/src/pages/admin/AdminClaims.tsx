@@ -114,8 +114,16 @@ export default function AdminClaims() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportPicker, setExportPicker] = useState<Partial<SubCategoryPickerValue>>({});
 
-  const fetchData = async (page = pagination.page, limit = pagination.limit) => {
-    setIsLoading(true);
+  /** `quiet` refetches WITHOUT the loading state: the poll runs every few seconds, and
+   *  DataTable replaces every row with a "Loading..." cell while isLoading is true, so a
+   *  background refresh blanked the whole table on a timer. A user-initiated fetch still
+   *  shows the spinner, because there the wait is the thing being reported. */
+  const fetchData = async (
+    page = pagination.page,
+    limit = pagination.limit,
+    quiet = false
+  ) => {
+    if (!quiet) setIsLoading(true);
     try {
       const params = new URLSearchParams({
         page: String(page),
@@ -138,7 +146,7 @@ export default function AdminClaims() {
         description: e instanceof Error ? e.message : 'Failed',
       });
     } finally {
-      setIsLoading(false);
+      if (!quiet) setIsLoading(false);
     }
   };
 
@@ -234,7 +242,7 @@ export default function AdminClaims() {
   // Poll while anything is running, and for a window after queueing, since queued work does
   // not change a column until the drainer reaches it.
   const { watch: watchValidation, polling } = useValidationPolling(hasRunningChecks(data), () =>
-    fetchData(pagination.page, pagination.limit)
+    fetchData(pagination.page, pagination.limit, true)
   );
 
   const columns: ColumnDef<ClaimRow>[] = [

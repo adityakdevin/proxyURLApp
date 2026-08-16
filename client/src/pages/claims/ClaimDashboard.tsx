@@ -144,8 +144,12 @@ export default function ClaimDashboard() {
     setAddUsers(r.data);
   };
 
-  const fetchData = async (page = 1, limit = 10) => {
-    setIsLoading(true);
+  /** `quiet` refetches WITHOUT the loading state: the poll runs every few seconds, and
+   *  DataTable replaces every row with a "Loading..." cell while isLoading is true, so a
+   *  background refresh blanked the whole table on a timer. A user-initiated fetch still
+   *  shows the spinner, because there the wait is the thing being reported. */
+  const fetchData = async (page = 1, limit = 10, quiet = false) => {
+    if (!quiet) setIsLoading(true);
     // Snapshot, but promote it only once the response lands (below, beside setPagination).
     // Promoting here meant a FAILED fetch left the rows and the total describing the old
     // filters while the bulk bar had already advanced to the new ones — the exact split this
@@ -169,7 +173,7 @@ export default function ClaimDashboard() {
         description: e instanceof Error ? e.message : 'Failed',
       });
     } finally {
-      setIsLoading(false);
+      if (!quiet) setIsLoading(false);
     }
   };
 
@@ -271,7 +275,7 @@ export default function ClaimDashboard() {
   // Poll while anything is running, and for a window after queueing, since queued work does
   // not change a column until the drainer reaches it.
   const { watch: watchValidation, polling } = useValidationPolling(hasRunningChecks(data), () =>
-    fetchData(pagination.page, pagination.limit)
+    fetchData(pagination.page, pagination.limit, true)
   );
 
   const columns: ColumnDef<ClaimRow>[] = [
