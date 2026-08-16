@@ -17,6 +17,16 @@ interface ClaimRowActionsProps {
   claimLabel: string;
   /** False for a claim this user may not work on — then nothing but the disabled row shows. */
   canAct: boolean;
+  /**
+   * True while THIS claim's checks are actually executing.
+   *
+   * Distinct from `busy`, which only covers the POST. Queueing returns in a few hundred
+   * milliseconds and the run itself takes far longer, so a spinner tied to the request
+   * blinks once and goes idle while the work it started has not begun — a row showing five
+   * IN PROGRESS badges next to a resting ↻ is what "the icon never loads" actually looks
+   * like. The row already knows this; it renders those badges from the same object.
+   */
+  running?: boolean;
   role: Role;
   statusOptions: Option[];
   assigneeOptions: Option[];
@@ -32,6 +42,7 @@ export function ClaimRowActions({
   claimId,
   claimLabel,
   canAct,
+  running = false,
   role,
   statusOptions,
   assigneeOptions,
@@ -124,14 +135,18 @@ export function ClaimRowActions({
         className={iconButton}
         onClick={revalidate}
         disabled={busy}
-        title={busy ? 'Queueing re-validation…' : 'Re-validate'}
-        aria-label={busy ? 'Queueing re-validation' : 'Re-validate'}
+        title={busy ? 'Queueing re-validation…' : running ? 'Validation running…' : 'Re-validate'}
+        aria-label={busy ? 'Queueing re-validation' : running ? 'Validation running' : 'Re-validate'}
       >
-        {/* Spin while the request is out. The button only greyed out before, which on a
-            fast queue-and-return is easy to miss entirely — the viewer's re-validate has
-            always shown a spinner, and a row action that silently does nothing visible is
-            how "did that work?" starts. */}
-        {busy ? (
+        {/* Spins for the request AND for the run it starts. Tying it to the request alone
+            was the earlier mistake: queueing returns in about 200ms, so the spinner flashed
+            and the icon sat still through the minutes of work that followed.
+
+            Deliberately NOT disabled while `running`. Re-queueing a claim mid-run is
+            harmless — the drainer claims each run atomically — and a wedged run is exactly
+            when a reviewer needs the button most. Greying it out would take the retry away
+            at the only moment it matters. */}
+        {busy || running ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           <RotateCw className="h-4 w-4" />

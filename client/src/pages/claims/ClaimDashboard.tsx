@@ -361,6 +361,7 @@ export default function ClaimDashboard() {
           claimId={row.original.id}
           claimLabel={row.original.claimId}
           canAct={canOpen(row.original)}
+          running={hasRunningChecks([row.original])}
           role={role}
           statusOptions={statusOptions}
           assigneeOptions={assigneeOptions}
