@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { SpellTermService, SpellTermServiceError } from '../../services/spellTermService.js';
+import { SpellTermService, properNounWarning, SpellTermServiceError } from '../../services/spellTermService.js';
 import { body, param, query } from 'express-validator';
 import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
 
@@ -55,7 +55,9 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const created = await getService(req).create(req.body, req.session!.userId);
-      res.status(201).json({ data: created });
+      // Advisory only, and computed after the write: the term is saved either way, so a
+      // dictionary hiccup can never block an admin from adding one.
+      res.status(201).json({ data: created, warning: await properNounWarning(created.term) });
     } catch (err) {
       handleErr(err, res, next);
     }
@@ -88,7 +90,7 @@ router.put(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const updated = await getService(req).update(req.params.id, req.body, req.session!.userId);
-      res.json({ data: updated });
+      res.json({ data: updated, warning: await properNounWarning(updated.term) });
     } catch (err) {
       handleErr(err, res, next);
     }
