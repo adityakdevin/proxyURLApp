@@ -60,5 +60,12 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 120_000,
     env: webServerEnv,
+    // Playwright ignores webServer output by default, so a stack that dies on
+    // boot reports only "Timed out waiting 120000ms" with no cause. This job sat
+    // red from 2026-07-30 to 2026-08-16 on a one-line vite crash (a missing
+    // linux-x64 esbuild binary) that never reached the log. Piping it costs a bit
+    // of noise on a green run and is the whole diagnosis on a red one.
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
 });
