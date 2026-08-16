@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye, MoreVertical, RotateCw, Tag, Trash2, UserCheck } from 'lucide-react';
+import { Eye, Loader2, MoreVertical, RotateCw, Tag, Trash2, UserCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import {
   DropdownMenu,
@@ -124,10 +124,18 @@ export function ClaimRowActions({
         className={iconButton}
         onClick={revalidate}
         disabled={busy}
-        title="Re-validate"
-        aria-label="Re-validate"
+        title={busy ? 'Queueing re-validation…' : 'Re-validate'}
+        aria-label={busy ? 'Queueing re-validation' : 'Re-validate'}
       >
-        <RotateCw className="h-4 w-4" />
+        {/* Spin while the request is out. The button only greyed out before, which on a
+            fast queue-and-return is easy to miss entirely — the viewer's re-validate has
+            always shown a spinner, and a row action that silently does nothing visible is
+            how "did that work?" starts. */}
+        {busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <RotateCw className="h-4 w-4" />
+        )}
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
