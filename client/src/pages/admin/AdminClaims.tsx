@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ColumnDef } from '@tanstack/react-table';
-import { Upload, Download } from 'lucide-react';
+import { Upload, Download, Loader2 } from 'lucide-react';
 import { api, DataResponse, PaginatedResponse } from '@/lib/api';
 import { DataTable, ServerSort, nextSort } from '@/components/shared/DataTable';
 import { ClaimBulkBar } from '@/components/claims/ClaimBulkBar';
@@ -241,7 +241,7 @@ export default function AdminClaims() {
   // every badge still showed its old value and re-validating looked like it did nothing.
   // Poll while anything is running, and for a window after queueing, since queued work does
   // not change a column until the drainer reaches it.
-  const { watch: watchValidation, polling } = useValidationPolling(hasRunningChecks(data), () =>
+  const { watch: watchValidation, polling, refreshing } = useValidationPolling(hasRunningChecks(data), () =>
     fetchData(pagination.page, pagination.limit, true)
   );
 
@@ -384,7 +384,11 @@ export default function AdminClaims() {
         // Says the quiet part out loud: queued work changes nothing on screen until the
         // drainer reaches it, and silence there is what made this look broken.
         <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+          {refreshing ? (
+            <Loader2 className="h-3 w-3 animate-spin text-amber-600" />
+          ) : (
+            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+          )}
           Validation running — this list refreshes itself until it finishes.
         </div>
       )}
