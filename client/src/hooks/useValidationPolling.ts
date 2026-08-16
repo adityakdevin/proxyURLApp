@@ -53,9 +53,13 @@ export function hasRunningChecks(
  */
 export function useValidationPolling(
   hasRunning: boolean,
-  refetch: () => void
-): { watch: () => void; polling: boolean } {
+  refetch: () => void | Promise<unknown>
+): { watch: () => void; polling: boolean; refreshing: boolean } {
   const [graceUntil, setGraceUntil] = useState(0);
+  // Surfaced so the list can show a small spinner while a refresh is in flight. The table
+  // itself must never blank for a background refresh — that is the bug this hook caused
+  // once already — so the only honest signal is a quiet one beside the status text.
+  const [refreshing, setRefreshing] = useState(false);
 
   // Held in a ref because the pages pass a plain (unmemoized) fetchData: putting it in the
   // effect's deps would tear down and rebuild the interval on every render, and it could
@@ -63,12 +67,24 @@ export function useValidationPolling(
   const refetchRef = useRef(refetch);
   refetchRef.current = refetch;
 
+  // One poll at a time. setInterval fires on a clock, not on completion, so on a box busy
+  // draining validation — exactly when this hook is active — a list query slower than the
+  // tick stacks request on request and adds to the load that made it slow. Skip the tick
+  // instead of queueing behind it.
+  const inFlight = useRef(false);
+
   const polling = hasRunning || Date.now() < graceUntil;
 
   useEffect(() => {
     if (!polling) return;
     const t = setInterval(() => {
-      refetchRef.current();
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setRefreshing(true);
+      Promise.resolve(refetchRef.current()).finally(() => {
+        inFlight.current = false;
+        setRefreshing(false);
+      });
       // Expire the window from inside the tick so the effect re-evaluates and can stop.
       setGraceUntil((g) => (Date.now() >= g ? 0 : g));
     }, POLL_MS);
@@ -76,5 +92,5 @@ export function useValidationPolling(
   }, [polling]);
 
   const watch = useCallback(() => setGraceUntil(Date.now() + GRACE_MS), []);
-  return { watch, polling };
+  return { watch, polling, refreshing };
 }
