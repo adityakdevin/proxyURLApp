@@ -79,6 +79,36 @@ describe('ValidationService + drainer', () => {
     await disconnectTestPrisma();
   });
 
+  it('runOne reports whether THIS call executed the run, so a loser cannot log a completion', async () => {
+    // The drainer prints its progress line only when runOne returns true. While that value
+    // was void it printed one after every call, so the worker that lost the race logged
+    // `claim <id> done in 0s` for work it never touched — phantom entries beside the real
+    // ones for the same claim, in the one line meant to tell a slow queue from a wedged one.
+    const claim = await makeClaim('C-RACE');
+    await prisma.document.create({
+      data: {
+        claimId: claim.id,
+        source: 'UPLOADED',
+        fileName: 'doc.pdf',
+        storagePath: `/tmp/${SUF}-C-RACE.pdf`,
+        createdBy: adminId,
+      },
+    });
+    const run = await prisma.validationRun.create({
+      data: { claimId: claim.id, trigger: 'MANUAL', status: 'QUEUED' },
+    });
+    const svc = new ValidationService(prisma, fakes);
+
+    expect(await svc.runOne(run.id)).toBe(true);
+    // Second call on the same run: the row is no longer QUEUED, which is exactly the state a
+    // losing worker finds. It must say so rather than returning silently.
+    expect(await svc.runOne(run.id)).toBe(false);
+
+    // And the guard still holds — the no-op wrote nothing on top of the first run.
+    const results = await prisma.validationResult.findMany({ where: { runId: run.id } });
+    expect(results).toHaveLength(fakes.length);
+  });
+
   it('runOne executes validators, writes results, sets columns + COMPLETED', async () => {
     const claim = await makeClaim('C-V1');
     // A claim with zero documents short-circuits to DOCS_NOT_AVAILABLE before any
