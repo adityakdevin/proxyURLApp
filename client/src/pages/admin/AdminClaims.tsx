@@ -223,7 +223,9 @@ export default function AdminClaims() {
     if (st) parts.push(`Status ${st.label}`);
     for (const [k, v] of Object.entries(checks)) if (v) parts.push(`${k} ${v}`);
     if (search.trim()) parts.push(`search "${search.trim()}"`);
-    return parts.length ? parts.join(' · ') : 'no filters — every claim';
+    // Empty when nothing is filtered — the dialog has its own wording for that case, and a
+    // fallback phrase here read as "Every claim matching no filters — every claim."
+    return parts.join(' · ');
   }, [statusOptions, workflowStatusId, checks, search]);
 
   const columns: ColumnDef<ClaimRow>[] = [

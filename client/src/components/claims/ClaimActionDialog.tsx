@@ -239,8 +239,11 @@ export function ClaimActionDialog({
               which filters produced the number, and say that it can move. */}
           {byFilters && (
             <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
-              Every claim matching {targetSummary || 'the current filters'}. Counted now;
-              re-resolved when you confirm, so the exact set may differ if the list changed.
+              {targetSummary
+                ? `Every claim matching ${targetSummary}.`
+                : 'Every claim in this list — no filters are applied.'}{' '}
+              Counted now; re-resolved when you confirm, so the exact set may differ if the
+              list changed.
             </p>
           )}
         </DialogHeader>
