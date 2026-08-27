@@ -222,6 +222,116 @@ describe('E2E: bulk claim actions', () => {
     ]);
   });
 
+  it('admin restores a deleted selection, and a non-admin cannot', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const admin = await loginAs(app, g.admin.username);
+    const a = await createClaim(tl, 'RES-1', g.subCategoryId);
+    const b = await createClaim(tl, 'RES-2', g.subCategoryId);
+    await admin.post('/api/claims/bulk/delete').send({ ids: [a, b] });
+
+    expect((await tl.post('/api/claims/bulk/restore').send({ ids: [a] })).status).toBe(403);
+
+    const res = await admin.post('/api/claims/bulk/restore').send({ ids: [a, b] });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ requested: 2, succeeded: 2, failed: [] });
+    const rows = await prisma.claim.findMany({ where: { id: { in: [a, b] } } });
+    expect(rows.every((r) => r.status === 'ACTIVE')).toBe(true);
+    // Back in the team lead's list.
+    expect((await tl.get(`/api/claims/${a}`)).status).toBe(200);
+  });
+
+  it('pins a filters-aimed restore to the deleted set, not the list the client sent', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const admin = await loginAs(app, g.admin.username);
+    const kept = await createClaim(tl, 'PIN-KEEP', g.subCategoryId);
+    const gone = await createClaim(tl, 'PIN-GONE', g.subCategoryId);
+    await admin.post('/api/claims/bulk/delete').send({ ids: [gone] });
+
+    // The bulk bar forwards the list's own filters; a client that has not set the lifecycle
+    // would otherwise resolve the ACTIVE claim and report a success that changed nothing.
+    const res = await admin.post('/api/claims/bulk/restore').send({ filters: {} });
+    expect(res.status).toBe(200);
+    expect(res.body.data.requested).toBe(1);
+    expect((await prisma.claim.findUnique({ where: { id: gone } }))!.status).toBe('ACTIVE');
+    expect((await prisma.claim.findUnique({ where: { id: kept } }))!.status).toBe('ACTIVE');
+
+    const log = await prisma.claimAuditLog.findFirst({
+      where: { action: 'BULK_RESTORE' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(log!.filters).toEqual({ status: 'INACTIVE' });
+  });
+
+  it('restoring an already-active claim is a no-op success, not an error', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const admin = await loginAs(app, g.admin.username);
+    const a = await createClaim(tl, 'RES-IDEM', g.subCategoryId);
+
+    // Never deleted. restore() short-circuits on an ACTIVE claim, so this must report a
+    // success rather than a failure — the same retry-safety contract /bulk/delete has.
+    const res = await admin.post('/api/claims/bulk/restore').send({ ids: [a] });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ requested: 1, succeeded: 1, failed: [] });
+    expect((await prisma.claim.findUnique({ where: { id: a } }))!.status).toBe('ACTIVE');
+    // A no-op restore must not invent a remark on the claim's timeline.
+    const remarks = await prisma.claimRemark.count({
+      where: { claimId: a, remarkText: 'Claim restored from soft-delete' },
+    });
+    expect(remarks).toBe(0);
+  });
+
+  it('filters the audit log by action and by actor', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const admin = await loginAs(app, g.admin.username);
+    const a = await createClaim(tl, 'AUD-F1', g.subCategoryId);
+    await admin.post('/api/claims/bulk/delete').send({ ids: [a] });
+    await admin.post('/api/claims/bulk/restore').send({ ids: [a] });
+
+    const byAction = await admin.get('/api/admin/claim-audit-logs?action=BULK_RESTORE');
+    expect(byAction.status).toBe(200);
+    expect(byAction.body.data).toHaveLength(1);
+    expect(byAction.body.data[0].action).toBe('BULK_RESTORE');
+
+    const byUser = await admin.get(`/api/admin/claim-audit-logs?userId=${g.admin.id}`);
+    expect(byUser.body.data.length).toBeGreaterThanOrEqual(2);
+
+    // An actor who ran nothing has an empty trail, not everyone else's.
+    const byOther = await admin.get(`/api/admin/claim-audit-logs?userId=${g.teamLead.id}`);
+    expect(byOther.body.data).toHaveLength(0);
+
+    // An unknown action is refused by the validator rather than silently ignored,
+    // which would return every row and read as "these all match".
+    const bogus = await admin.get('/api/admin/claim-audit-logs?action=NOT_AN_ACTION');
+    expect(bogus.status).toBe(400);
+  });
+
+  it('records every bulk action against the admin who ran it', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const admin = await loginAs(app, g.admin.username);
+    const a = await createClaim(tl, 'AUD-1', g.subCategoryId);
+
+    await admin.post('/api/claims/bulk/delete').send({ ids: [a] });
+
+    const log = await prisma.claimAuditLog.findFirst({ where: { action: 'BULK_DELETE' } });
+    expect(log).toMatchObject({
+      userId: g.admin.id,
+      targeting: 'IDS',
+      requested: 1,
+      succeeded: 1,
+      failed: 0,
+    });
+    expect(log!.claimIds).toEqual([a]);
+    expect(log!.filters).toBeNull();
+
+    // Reachable without SQL — the whole point of the table.
+    const listed = await admin.get(`/api/admin/claim-audit-logs?claimId=${a}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.data).toHaveLength(1);
+    expect(listed.body.data[0].user.id).toBe(g.admin.id);
+    // Admin-only, like every other /admin route.
+    expect((await tl.get('/api/admin/claim-audit-logs')).status).toBe(403);
+  });
+
   it('queues a MANUAL run per claim on the success path of /bulk/validate', async () => {
     const tl = await loginAs(app, g.teamLead.username);
     const a = await createClaim(tl, 'BV-1', g.subCategoryId);
