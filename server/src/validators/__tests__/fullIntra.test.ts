@@ -52,10 +52,14 @@ describe('FULL + INTRA validators', () => {
   beforeEach(async () => {
     await truncateClaimsTables(prisma);
     const a = await prisma.documentTypeMaster.create({
-      data: { name: 'Aadhar Card', category: 'GOVT', govtCode: 'AADHAR', displayOrder: 1, createdBy: adminId, updatedBy: adminId },
+      // isRequired is explicit: it defaults to FALSE (a type is required only when someone
+      // ticks it), and this test is about what happens when a REQUIRED type is missing.
+      // Without it the validator finds zero required types and correctly passes, so the
+      // case the test names was never actually exercised.
+      data: { name: 'Aadhar Card', category: 'GOVT', govtCode: 'AADHAR', isRequired: true, displayOrder: 1, createdBy: adminId, updatedBy: adminId },
     });
     const b = await prisma.documentTypeMaster.create({
-      data: { name: 'PAN Card', category: 'GOVT', govtCode: 'PAN', displayOrder: 2, createdBy: adminId, updatedBy: adminId },
+      data: { name: 'PAN Card', category: 'GOVT', govtCode: 'PAN', isRequired: true, displayOrder: 2, createdBy: adminId, updatedBy: adminId },
     });
     typeAId = a.id;
     typeBId = b.id;
