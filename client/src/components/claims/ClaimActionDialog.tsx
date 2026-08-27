@@ -32,7 +32,10 @@ export type ClaimTarget =
   | { ids: string[] }
   | { filters: Record<string, string | boolean | undefined> };
 
-export type ClaimAction = 'status' | 'assign' | 'delete' | null;
+export type ClaimAction = 'status' | 'assign' | 'delete' | 'restore' | null;
+
+/** The two actions that carry no remark and no form — a confirm and nothing else. */
+const isLifecycle = (a: ClaimAction) => a === 'delete' || a === 'restore';
 
 /** Sentinel for "clear the assignee" — a Radix Select cannot carry an empty-string value. */
 const UNASSIGN = '__unassign__';
@@ -118,7 +121,7 @@ interface ClaimActionDialogProps {
 const TYPE_TO_CONFIRM_OVER = 25;
 
 /**
- * The confirm-and-collect step for status change, reassignment and delete. One component
+ * The confirm-and-collect step for status change, reassignment, delete and restore. One component
  * for both the bulk bar and a single row's menu: a row is just a target of one, and the
  * bulk endpoints already apply the per-claim rules either way.
  */
@@ -174,6 +177,7 @@ export function ClaimActionDialog({
 
   const submit = () => {
     if (action === 'delete') return run('/claims/bulk/delete', {}, 'Deleted');
+    if (action === 'restore') return run('/claims/bulk/restore', {}, 'Restored');
     if (!remarkText.trim()) {
       return toast({ title: 'A remark is required', variant: 'destructive' });
     }
@@ -225,14 +229,18 @@ export function ClaimActionDialog({
           <DialogTitle>
             {action === 'delete'
               ? `Delete ${subjectLabel}?`
-              : action === 'assign'
-                ? `Reassign ${subjectLabel}`
-                : `Change status on ${subjectLabel}`}
+              : action === 'restore'
+                ? `Restore ${subjectLabel}?`
+                : action === 'assign'
+                  ? `Reassign ${subjectLabel}`
+                  : `Change status on ${subjectLabel}`}
           </DialogTitle>
           <DialogDescription>
             {action === 'delete'
               ? 'Soft-deleted: hidden from everyone but an admin, and restorable.'
-              : 'The remark is written to every claim, so the timeline says why they changed.'}
+              : action === 'restore'
+                ? 'Puts the claim back in the working list, exactly as it was before it was deleted.'
+                : 'The remark is written to every claim, so the timeline says why they changed.'}
           </DialogDescription>
           {/* The filters path shows no rows, and the server re-resolves them when the call
               lands — so the set acted on is not guaranteed to be the set counted here. Say
@@ -242,13 +250,14 @@ export function ClaimActionDialog({
               {targetSummary
                 ? `Every claim matching ${targetSummary}.`
                 : 'Every claim in this list — no filters are applied.'}{' '}
+              {action === 'restore' && 'Deleted claims only. '}
               Counted now; re-resolved when you confirm, so the exact set may differ if the
               list changed.
             </p>
           )}
         </DialogHeader>
 
-        {action !== 'delete' && (
+        {!isLifecycle(action) && (
           <div className="space-y-4 py-2">
             {action === 'status' && (
               <div className="space-y-2">
@@ -327,7 +336,7 @@ export function ClaimActionDialog({
             onClick={submit}
           >
             {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {action === 'delete' ? 'Delete' : 'Apply'}
+            {action === 'delete' ? 'Delete' : action === 'restore' ? 'Restore' : 'Apply'}
           </Button>
         </DialogFooter>
       </DialogContent>

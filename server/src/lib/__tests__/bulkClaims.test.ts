@@ -1,5 +1,6 @@
+import { ClaimAuditAction, ClaimAuditTargeting, PrismaClient } from '@prisma/client';
 import { ClaimService, ClaimServiceError } from '../../services/claimService.js';
-import { BULK_MAX, resolveTargets, runBulk } from '../bulkClaims.js';
+import { BULK_MAX, BulkTarget, resolveTargets, runBulk } from '../bulkClaims.js';
 
 // No DB: resolveTargets only needs idsMatching, so a stub stands in for the service and the
 // cases that matter (cap, unknown filter value, no targets) stay fast and deterministic.
@@ -20,6 +21,23 @@ const capturingService = () => {
   return { svc, seen };
 };
 
+
+/** Captures the audit row runBulk writes, without a database. */
+const auditSpy = () => {
+  const rows: Record<string, unknown>[] = [];
+  const prisma = {
+    claimAuditLog: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        rows.push(data);
+        return data;
+      },
+    },
+  } as unknown as PrismaClient;
+  return { prisma, rows };
+};
+
+const audit = { action: ClaimAuditAction.BULK_DELETE, userId: 'admin-1', ipAddress: '10.0.0.1' };
+const targetOf = (ids: string[]): BulkTarget => ({ ids, targeting: ClaimAuditTargeting.IDS });
 
 afterEach(() => jest.restoreAllMocks());
 
@@ -171,7 +189,8 @@ describe('resolveTargets', () => {
 describe('runBulk', () => {
   it('keeps going past a failure and reports the reason per claim', async () => {
     const logged = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-    const report = await runBulk(['ok-1', 'bad', 'ok-2'], async (id) => {
+    const { prisma } = auditSpy();
+    const report = await runBulk(prisma, targetOf(['ok-1', 'bad', 'ok-2']), audit, async (id) => {
       if (id === 'bad') throw new ClaimServiceError('TERMINAL_STATUS', 'nope');
     });
     // A rule saying no is not a fault — it must NOT reach the log.
@@ -185,7 +204,8 @@ describe('runBulk', () => {
 
   it('labels a non-service error rather than leaking it, and logs it', async () => {
     const logged = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-    const report = await runBulk(['boom'], async () => {
+    const { prisma } = auditSpy();
+    const report = await runBulk(prisma, targetOf(['boom']), audit, async () => {
       throw new Error('kaboom');
     });
     expect(report.failed).toEqual([{ id: 'boom', code: 'FAILED' }]);
@@ -195,10 +215,53 @@ describe('runBulk', () => {
 
 
   it('reports a no-op for an empty target list', async () => {
-    expect(await runBulk([], async () => undefined)).toEqual({
+    const { prisma } = auditSpy();
+    expect(await runBulk(prisma, targetOf([]), audit, async () => undefined)).toEqual({
       requested: 0,
       succeeded: 0,
       failed: [],
     });
+  });
+
+  it('records who acted, how they aimed it, and which claims failed', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { prisma, rows } = auditSpy();
+    await runBulk(
+      prisma,
+      { ids: ['ok-1', 'bad'], targeting: ClaimAuditTargeting.FILTERS, filters: { search: 'MZB' } },
+      audit,
+      async (id) => {
+        if (id === 'bad') throw new ClaimServiceError('NOT_FOUND', 'gone');
+      }
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      userId: 'admin-1',
+      action: ClaimAuditAction.BULK_DELETE,
+      targeting: ClaimAuditTargeting.FILTERS,
+      filters: { search: 'MZB' },
+      claimIds: ['ok-1', 'bad'],
+      failures: [{ id: 'bad', code: 'NOT_FOUND' }],
+      requested: 2,
+      succeeded: 1,
+      failed: 1,
+      ipAddress: '10.0.0.1',
+    });
+  });
+
+  // The 31-claim delete this table was added for would have been unrecorded if a failed
+  // insert could take the response down with it — the claims are already changed by then.
+  it('still returns the report when the audit write itself fails', async () => {
+    const logged = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const prisma = {
+      claimAuditLog: {
+        create: async () => {
+          throw new Error('audit table missing');
+        },
+      },
+    } as unknown as PrismaClient;
+    const report = await runBulk(prisma, targetOf(['ok-1']), audit, async () => undefined);
+    expect(report).toEqual({ requested: 1, succeeded: 1, failed: [] });
+    expect(logged).toHaveBeenCalled();
   });
 });

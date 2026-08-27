@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { ClaimAuditAction, ClaimAuditTargeting } from '@prisma/client';
 import { body, param, query } from 'express-validator';
 import { adminMiddleware, authMiddleware, passwordChangedMiddleware } from '../middleware/auth.js';
 import {
@@ -12,7 +13,7 @@ import claimValidationRoutes from './claimValidation.js';
 import { ClaimRuleService } from '../services/claimRuleService.js';
 import { buildClaimsWorkbook } from '../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../lib/routeHelpers.js';
-import { resolveTargets, runBulk } from '../lib/bulkClaims.js';
+import { BulkTarget, recordClaimAudit, resolveTargets, runBulk } from '../lib/bulkClaims.js';
 import { enqueue } from '../services/validationQueue.js';
 import { registry } from '../validators/registry.js';
 
@@ -132,6 +133,9 @@ const bulkTargetValidators = [
   body('filters.workflowStatusId').optional().isUUID(),
   body('filters.assignedToUserId').optional().isUUID(),
   body('filters.search').optional().isString().isLength({ max: 200 }),
+  // Lifecycle, not workflow status: only /bulk/restore has any use for INACTIVE, but the
+  // shape check belongs with the others rather than in that one route.
+  body('filters.status').optional().isIn(['ACTIVE', 'INACTIVE']),
 ];
 
 // Bulk actions on a selection (or on everything matching the list filters). Registered
@@ -141,7 +145,7 @@ const bulkTargetValidators = [
 // explicitly, not for truthiness: an empty array is a legitimate result (the filters matched
 // nothing) that has to flow through to a 200 with requested:0. The natural-looking tidy-up
 // to `if (!ids?.length) return;` would return without ever sending a response, and hang.
-const bulkTargets = async (req: ScopedRequest, res: Response): Promise<string[] | null> => {
+const bulkTargets = async (req: ScopedRequest, res: Response): Promise<BulkTarget | null> => {
   const r = await resolveTargets(getService(req), req.body ?? {}, {
     scope: req.scope!,
     callerId: req.session!.userId,
@@ -151,8 +155,16 @@ const bulkTargets = async (req: ScopedRequest, res: Response): Promise<string[] 
     res.status(r.error.status).json({ error: r.error.message, code: r.error.code });
     return null;
   }
-  return r.ids;
+  return { ids: r.ids, targeting: r.targeting, filters: r.filters };
 };
+
+/** Who is running this action, for the audit row. req.ip is behind the app's trust-proxy
+ *  setting, so it is the client address rather than the load balancer's. */
+const auditor = (req: ScopedRequest, action: ClaimAuditAction) => ({
+  action,
+  userId: req.session!.userId,
+  ipAddress: req.ip,
+});
 
 router.post(
   '/bulk/validate',
@@ -160,14 +172,19 @@ router.post(
   validate,
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
-      const ids = await bulkTargets(req, res);
-      if (ids === null) return;
+      const target = await bulkTargets(req, res);
+      if (target === null) return;
       const service = getService(req);
-      const report = await runBulk(ids, async (id) => {
-        const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
-        if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
-        await enqueue(prismaOf(req), registry, id, 'MANUAL', req.session!.userId);
-      });
+      const report = await runBulk(
+        prismaOf(req),
+        target,
+        auditor(req, ClaimAuditAction.BULK_VALIDATE),
+        async (id) => {
+          const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
+          if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
+          await enqueue(prismaOf(req), registry, id, 'MANUAL', req.session!.userId);
+        }
+      );
       res.status(202).json({ data: report });
     } catch (err) {
       next(err);
@@ -195,8 +212,8 @@ router.post(
   validate,
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
-      const ids = await bulkTargets(req, res);
-      if (ids === null) return;
+      const target = await bulkTargets(req, res);
+      if (target === null) return;
       const service = getService(req);
       const { remarkText, newStatusId, newAssigneeId } = req.body;
       const input: AppendRemarkInput = { remarkText };
@@ -206,11 +223,16 @@ router.post(
       if (Object.prototype.hasOwnProperty.call(req.body, 'newAssigneeId')) {
         input.newAssigneeId = newAssigneeId;
       }
-      const report = await runBulk(ids, async (id) => {
-        const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
-        if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
-        await service.appendRemark(id, input, req.session!.userId, req.session!.role);
-      });
+      const report = await runBulk(
+        prismaOf(req),
+        target,
+        auditor(req, ClaimAuditAction.BULK_REMARK),
+        async (id) => {
+          const ok = await service.canEditClaim(id, req.session!.userId, req.session!.role);
+          if (!ok) throw new ClaimServiceError('CLAIM_NOT_EDITABLE', 'Cannot edit this claim');
+          await service.appendRemark(id, input, req.session!.userId, req.session!.role);
+        }
+      );
       res.json({ data: report });
     } catch (err) {
       next(err);
@@ -227,8 +249,8 @@ router.post(
   validate,
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
-      const ids = await bulkTargets(req, res);
-      if (ids === null) return;
+      const target = await bulkTargets(req, res);
+      if (target === null) return;
       const service = getService(req);
       // No canEditClaim gate here, deliberately, and NOT an oversight: softDelete is
       // idempotent by design (already-INACTIVE returns untouched), which is what makes a
@@ -238,7 +260,48 @@ router.post(
       // reports today into a vaguer CLAIM_NOT_EDITABLE. The cost is that re-deleting an
       // already-deleted claim counts as a success; retry-safety is worth more than that
       // count. Admin-only is enforced by adminMiddleware above.
-      const report = await runBulk(ids, (id) => service.softDelete(id, req.session!.userId));
+      const report = await runBulk(
+        prismaOf(req),
+        target,
+        auditor(req, ClaimAuditAction.BULK_DELETE),
+        (id) => service.softDelete(id, req.session!.userId)
+      );
+      res.json({ data: report });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// The way back from a bulk delete. Admin-only for the same reason delete is: an INACTIVE
+// claim is invisible to everyone else, so only the role that can hide one can bring it back.
+router.post(
+  '/bulk/restore',
+  adminMiddleware,
+  bulkTargetValidators,
+  validate,
+  async (req: ScopedRequest, res: Response, next: NextFunction) => {
+    try {
+      // A restore aimed by filters is pinned to the deleted claims, whatever the caller
+      // sent. Without this a client that forwards its list filters unchanged (which is what
+      // the bulk bar does everywhere else) resolves the ACTIVE set instead — and because
+      // restore is idempotent on an already-active claim, that answers "restored 133 of
+      // 133" having changed nothing at all. The pinned value is what the audit row records.
+      if (!Object.prototype.hasOwnProperty.call(req.body ?? {}, 'ids') && req.body?.filters) {
+        req.body.filters = { ...req.body.filters, status: 'INACTIVE' };
+      }
+      const target = await bulkTargets(req, res);
+      if (target === null) return;
+      const service = getService(req);
+      // No canEditClaim gate, matching /bulk/delete: canEditClaim is false for exactly the
+      // non-ACTIVE claims this route exists to act on, so gating on it would refuse every
+      // legitimate target. restore() is idempotent on an already-ACTIVE claim.
+      const report = await runBulk(
+        prismaOf(req),
+        target,
+        auditor(req, ClaimAuditAction.BULK_RESTORE),
+        (id) => service.restore(id, req.session!.userId)
+      );
       res.json({ data: report });
     } catch (err) {
       next(err);

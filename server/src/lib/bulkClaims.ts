@@ -1,4 +1,11 @@
-import { Role, ValidationStatus } from '@prisma/client';
+import {
+  ClaimAuditAction,
+  ClaimAuditTargeting,
+  Prisma,
+  PrismaClient,
+  Role,
+  ValidationStatus,
+} from '@prisma/client';
 import { ClaimService, ClaimServiceError, ListClaimsFilters } from '../services/claimService.js';
 
 /**
@@ -32,7 +39,20 @@ export interface BulkCaller extends Pick<ListClaimsFilters, 'scope' | 'callerId'
 }
 
 type Refusal = { status: number; code: string; message: string };
-type TargetResult = { ids: string[]; error?: undefined } | { ids?: undefined; error: Refusal };
+
+/** The claims a bulk call resolved to, plus HOW it named them. The targeting is carried
+ *  through rather than re-derived at the call site: resolveTargets branches on the PRESENCE
+ *  of `ids` (never its length), and a second copy of that rule in each route is a second
+ *  place for it to drift — an audit row saying "ticked selection" for a filters-aimed
+ *  delete is worse than none. */
+export interface BulkTarget {
+  ids: string[];
+  targeting: ClaimAuditTargeting;
+  /** The filters the call was aimed with, when it was aimed by filters. */
+  filters?: Record<string, unknown>;
+}
+
+type TargetResult = (BulkTarget & { error?: undefined }) | { ids?: undefined; error: Refusal };
 
 /** The list filters a bulk call may name, mirrored from the claim list query. Unknown keys
  *  are dropped rather than passed on, so a typo can never widen the set acted on. */
@@ -107,7 +127,7 @@ export async function resolveTargets(
         },
       };
     }
-    return { ids };
+    return { ids, targeting: ClaimAuditTargeting.IDS };
   }
   if (!body.filters || typeof body.filters !== 'object') {
     return {
@@ -132,7 +152,11 @@ export async function resolveTargets(
       },
     };
   }
-  return { ids: matched };
+  return {
+    ids: matched,
+    targeting: ClaimAuditTargeting.FILTERS,
+    filters: body.filters as Record<string, unknown>,
+  };
 }
 
 export interface BulkReport {
@@ -141,17 +165,67 @@ export interface BulkReport {
   failed: { id: string; code: string }[];
 }
 
+/** Who ran a claim action, and which one. The route supplies this; runBulk turns it into
+ *  the audit row so no bulk endpoint can be added without one. */
+export interface ClaimAudit {
+  action: ClaimAuditAction;
+  userId: string;
+  ipAddress?: string;
+}
+
 /**
- * Apply a per-claim operation to every target, one at a time. Serial on purpose: each
- * operation runs the SAME permission and status checks the single-claim route runs, and a
- * claim the caller may not touch must fail on its own rather than abort the batch.
+ * Write the audit row for a claim action. Never throws: the claims have ALREADY changed by
+ * the time this runs, so a failed insert must not turn a completed delete into a 500 the
+ * client will retry — that would delete twice and record neither. It is loud in the log
+ * instead, which is the one place a missing row can still be noticed.
+ */
+export async function recordClaimAudit(
+  prisma: PrismaClient,
+  audit: ClaimAudit,
+  target: BulkTarget,
+  report: BulkReport
+): Promise<void> {
+  try {
+    await prisma.claimAuditLog.create({
+      data: {
+        userId: audit.userId,
+        action: audit.action,
+        targeting: target.targeting,
+        filters: (target.filters as Prisma.InputJsonValue) ?? Prisma.DbNull,
+        claimIds: target.ids as Prisma.InputJsonValue,
+        failures: report.failed.length
+          ? (report.failed as unknown as Prisma.InputJsonValue)
+          : Prisma.DbNull,
+        requested: report.requested,
+        succeeded: report.succeeded,
+        failed: report.failed.length,
+        ipAddress: audit.ipAddress ?? null,
+      },
+    });
+  } catch (err) {
+    console.error(`[claim-audit] failed to record ${audit.action} by ${audit.userId}:`, err);
+  }
+}
+
+/**
+ * Apply a per-claim operation to every target, one at a time, and record what was done.
+ * Serial on purpose: each operation runs the SAME permission and status checks the
+ * single-claim route runs, and a claim the caller may not touch must fail on its own rather
+ * than abort the batch.
+ *
+ * The audit write lives HERE rather than in each route because the routes are where it
+ * would be forgotten: 31 claims were soft-deleted in one call with nothing but a shared
+ * updated_at to show for it, and the fix is worth nothing if the fifth bulk action ships
+ * without it. Requiring the audit argument makes that a compile error.
  */
 export async function runBulk(
-  ids: string[],
+  prisma: PrismaClient,
+  target: BulkTarget,
+  audit: ClaimAudit,
   op: (id: string) => Promise<unknown>
 ): Promise<BulkReport> {
-  const report: BulkReport = { requested: ids.length, succeeded: 0, failed: [] };
-  for (const id of ids) {
+  const report: BulkReport = { requested: target.ids.length, succeeded: 0, failed: [] };
+  for (const id of target.ids) {
     try {
       await op(id);
       report.succeeded++;
@@ -168,5 +242,9 @@ export async function runBulk(
       });
     }
   }
+  // Recorded even when everything failed and when the filters matched nothing: a refused or
+  // empty attempt is exactly the thing an investigation looks for, and a table that only
+  // holds successes cannot answer "did anyone try".
+  await recordClaimAudit(prisma, audit, target, report);
   return report;
 }

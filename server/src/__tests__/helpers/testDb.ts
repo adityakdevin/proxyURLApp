@@ -25,6 +25,10 @@ export async function truncateClaimsTables(client: PrismaClient): Promise<void> 
   // DELETE in dependency order (children first) — safer than TRUNCATE+FK toggle, which
   // doesn't persist across Prisma's pooled connections.
   await client.claimRemark.deleteMany({});
+  // Cleared here rather than left to cleanupScopeGraph: the row references a user with no
+  // cascade (an audit trail must outlive the actor), so a leftover row blocks the user
+  // delete at the end of the suite.
+  await client.claimAuditLog.deleteMany({});
   await client.claim.deleteMany({});
   await client.claimIdRule.deleteMany({});
   // Global masters — cleared so each test starts from a known-empty set.

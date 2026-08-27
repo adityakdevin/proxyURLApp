@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { ValidationStatus } from '@prisma/client';
+import { ClaimAuditAction, ClaimAuditTargeting, ValidationStatus } from '@prisma/client';
 import multer from 'multer';
 import { body, param, query } from 'express-validator';
 import { ClaimService, ClaimServiceError } from '../../services/claimService.js';
@@ -9,6 +9,7 @@ import {
 } from '../../services/observationImportService.js';
 import { buildObservationWorkbook } from '../../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
+import { recordClaimAudit } from '../../lib/bulkClaims.js';
 
 /** The validation-check result values a claim can be filtered by. From the Prisma enum, not
  *  a hand-copied list: a new member was silently rejected here while the bulk route, which
@@ -17,6 +18,18 @@ const CHECK_STATUSES = Object.values(ValidationStatus);
 
 const router = Router();
 const getService = (req: Request) => new ClaimService(prismaOf(req));
+/** Audit a single-claim lifecycle action, in the same table the bulk routes write to — a
+ *  single delete is a bulk of one, and "who removed this claim" should have one answer
+ *  regardless of which button was pressed. Called only after the action succeeded; the
+ *  routes throw before reaching it otherwise. */
+const recordSingle = (req: Request, action: ClaimAuditAction, id: string) =>
+  recordClaimAudit(
+    prismaOf(req),
+    { action, userId: req.session!.userId, ipAddress: req.ip },
+    { ids: [id], targeting: ClaimAuditTargeting.SINGLE },
+    { requested: 1, succeeded: 1, failed: [] }
+  );
+
 const handleErr = makeErrorHandler(ClaimServiceError, {
   NOT_FOUND: 404,
   SUBCATEGORY_NOT_FOUND: 404,
@@ -210,6 +223,7 @@ router.delete(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       await getService(req).softDelete(req.params.id, req.session!.userId);
+      await recordSingle(req, ClaimAuditAction.DELETE, req.params.id);
       res.json({ message: 'Soft-deleted' });
     } catch (err) {
       handleErr(err, res, next);
@@ -225,6 +239,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const restored = await getService(req).restore(req.params.id, req.session!.userId);
+      await recordSingle(req, ClaimAuditAction.RESTORE, req.params.id);
       res.json({ data: restored });
     } catch (err) {
       handleErr(err, res, next);
