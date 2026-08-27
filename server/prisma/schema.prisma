@@ -106,6 +106,7 @@ model User {
   proxyMetrics     ProxyMetric[]
   assignedClaims   Claim[]          @relation("ClaimAssignee")
   authoredRemarks  ClaimRemark[]    @relation("ClaimRemarkAuthor")
+  claimAuditLogs   ClaimAuditLog[]
 
   @@map("users")
 }
@@ -247,6 +248,63 @@ model AuditLog {
   @@index([accessedAt])
   @@index([projectId])
   @@map("audit_logs")
+}
+
+// What a claim audit row records. Bulk and single share one table: a single delete is a
+// bulk of one, and a reviewer asking "who removed this claim" should not have to know
+// which button was pressed to find the answer.
+enum ClaimAuditAction {
+  BULK_VALIDATE
+  BULK_REMARK
+  BULK_DELETE
+  BULK_RESTORE
+  DELETE
+  RESTORE
+}
+
+// How a bulk call named its targets. Worth recording on its own: "deleted 31 claims by
+// ticking them" and "deleted every claim matching an empty filter" look identical once
+// only the resulting ids are kept, and they are very different mistakes.
+enum ClaimAuditTargeting {
+  IDS
+  FILTERS
+  SINGLE
+}
+
+// One row per claim lifecycle action, written after the action runs. The per-claim
+// ClaimRemark trail says WHAT happened to a claim; this says who ran the call, how they
+// aimed it, and which claims went with it — the correlation that otherwise only exists as
+// "these 31 rows share an updated_at to the second".
+//
+// Deliberately NOT the AuditLog table above: that one is the proxy's, and every one of its
+// columns (urlConfigId, targetUrl, responseStatus) is required and meaningless here.
+model ClaimAuditLog {
+  id        String              @id @default(uuid()) @db.VarChar(36)
+  userId    String              @map("user_id") @db.VarChar(36)
+  action    ClaimAuditAction
+  targeting ClaimAuditTargeting
+  /// The filters the call was aimed with, when it was aimed by filters. Null for an
+  /// explicit selection — there the ids ARE the intent.
+  filters   Json?
+  /// The claims the call was aimed at. Capped at BULK_MAX (500) upstream, so bounded.
+  claimIds  Json                @map("claim_ids")
+  /// The per-claim refusals, as {id, code}. Null when nothing failed. Without it a row
+  /// saying "31 of 35" cannot say WHICH four did not change.
+  failures  Json?
+  requested Int
+  succeeded Int
+  failed    Int
+  ipAddress String?             @map("ip_address") @db.VarChar(45)
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  // No onDelete: Cascade, unlike AuditLog — deleting a user must not erase the record of
+  // what they did. Users are soft-deleted here anyway, so the restrict never fires.
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+  @@map("claim_audit_logs")
 }
 
 model Setting {
