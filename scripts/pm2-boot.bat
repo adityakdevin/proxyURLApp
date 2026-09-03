@@ -14,8 +14,11 @@ for /f "delims=" %%p in ('npm prefix -g') do set "PATH=%%p;%PATH%"
 
 REM Stop apps first: a running server holds a lock on Prisma's
 REM query_engine-windows.dll.node and prisma generate dies with EPERM.
-REM Harmless no-op on a clean boot.
-call pm2 stop all >> logs\boot.log 2>&1
+REM This ecosystem only, NOT "pm2 stop all" — the start below brings back just
+REM proxyurl-server and proxyurl-backup, so stopping everything in the daemon
+REM would leave any other PM2 service on the host down after every reboot.
+REM Harmless no-op on a clean boot, where nothing is running yet.
+call pm2 stop ecosystem.config.js >> logs\boot.log 2>&1
 
 REM prisma generate + db push + build (correct for this repo; NOT prisma migrate)
 call npm run deploy >> logs\boot.log 2>&1
