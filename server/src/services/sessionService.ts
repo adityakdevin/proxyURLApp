@@ -4,7 +4,23 @@ import crypto from 'crypto';
 // Get Session type from Prisma
 type Session = Prisma.SessionGetPayload<{}>;
 
-const SESSION_MAX_AGE_MS = parseInt(process.env.SESSION_MAX_AGE_MS || '1800000', 10); // 30 minutes
+/**
+ * Idle timeout: how long a session survives with NO requests on it. Refreshed on every
+ * validated request, and the cookie is re-issued to match, so an actively worked session
+ * never expires under someone mid-task. Eight hours covers a working day — the old 30
+ * minutes was chosen when the cookie's own lifetime was a hardcoded 30 minutes from LOGIN,
+ * which logged active users out regardless of what they were doing.
+ */
+export const SESSION_MAX_AGE_MS = parseInt(process.env.SESSION_MAX_AGE_MS || '28800000', 10);
+
+/**
+ * How many sessions one account may hold at once. Concurrent logins are allowed — a
+ * reviewer works from a desktop and a laptop, and staff share an account — but not without
+ * a ceiling: an unlimited count means a leaked password can be used from anywhere with
+ * nothing on the Sessions page to notice. Past the cap the LEAST recently active session is
+ * evicted, so the device someone actually stopped using is the one that goes.
+ */
+export const SESSION_MAX_PER_USER = parseInt(process.env.SESSION_MAX_PER_USER || '3', 10);
 
 export interface SessionData {
   userId: string;
@@ -24,17 +40,41 @@ export class SessionService {
     return crypto.randomBytes(32).toString('hex');
   }
 
-  // Create new session (invalidates any existing session for the user - single session rule)
+  /**
+   * Create a session, making room for it first.
+   *
+   * Concurrent sessions per account are allowed up to SESSION_MAX_PER_USER; the single
+   * session rule this replaces meant a second device silently signed the first one out,
+   * which two people sharing a login experienced as being logged out at random.
+   *
+   * Impersonation stays EXCLUSIVE in both directions. An impersonated session and an
+   * ordinary one running at the same time makes "who was acting" ambiguous, and that
+   * question is the entire reason impersonation is audited.
+   */
   async createSession(
     userId: string,
     ipAddress?: string,
     userAgent?: string,
     impersonatedBy?: string
   ): Promise<Session> {
-    // Delete any existing sessions for this user (single session enforcement)
-    await this.prisma.session.deleteMany({
-      where: { userId },
-    });
+    if (impersonatedBy) {
+      await this.prisma.session.deleteMany({ where: { userId } });
+    } else {
+      // Any impersonation in flight ends here for the same reason.
+      await this.prisma.session.deleteMany({ where: { userId, impersonatedBy: { not: null } } });
+      // Evict the least recently active sessions down to cap-1, leaving room for this one.
+      // Selected by id rather than a raw skip so a session started concurrently cannot shift
+      // the window and leave the account one over the cap.
+      const existing = await this.prisma.session.findMany({
+        where: { userId },
+        orderBy: { lastActivity: 'desc' },
+        select: { id: true },
+      });
+      const evict = existing.slice(Math.max(0, SESSION_MAX_PER_USER - 1)).map((s) => s.id);
+      if (evict.length) {
+        await this.prisma.session.deleteMany({ where: { id: { in: evict } } });
+      }
+    }
 
     // Create new session
     const session = await this.prisma.session.create({

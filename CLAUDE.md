@@ -119,7 +119,12 @@ Admin seed credentials configured via `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN
 - Progressive delay on failed login (1s, 2s, 4s, 8s...)
 - Password policy: min 8 chars, uppercase, lowercase, number
 - bcrypt with 12 rounds
-- Single session per user (new login invalidates previous)
+- Concurrent sessions per user, capped at `SESSION_MAX_PER_USER` (3); past the cap the
+  least recently active is evicted. Impersonation stays exclusive in both directions, so
+  "who was acting" is never ambiguous
+- Idle session timeout `SESSION_MAX_AGE_MS` (8h default), refreshed on every request; the
+  session cookie carries the same window and is re-issued per request so it slides with
+  activity rather than expiring at a fixed time after login
 - Admin impersonation with audit trail
 
 ## Database Notes
