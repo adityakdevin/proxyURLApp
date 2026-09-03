@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthService } from '../services/authService.js';
-import { SessionData } from '../services/sessionService.js';
+import { SessionData, SESSION_MAX_AGE_MS } from '../services/sessionService.js';
 import { createError } from './errorHandler.js';
 
 // Extend Express Request to include session data
@@ -46,6 +46,11 @@ export const authMiddleware = async (
         code: 'SESSION_EXPIRED',
       });
     }
+
+    // Slide the cookie forward. validateSession has just refreshed lastActivity server-side;
+    // without this the cookie keeps its original expiry and dies first, which is the bug
+    // described on setSessionCookie.
+    setSessionCookie(res, sessionToken);
 
     // Attach session data to request
     req.session = sessionData;
@@ -112,7 +117,13 @@ export const setSessionCookie = (res: Response, sessionToken: string) => {
     httpOnly: true,
     secure: isHttps,
     sameSite: 'lax',
-    maxAge: 30 * 60 * 1000, // 30 minutes
+    // The SAME window the server enforces, and re-issued on every authenticated request
+    // (see authMiddleware) so it slides with activity. It used to be a hardcoded 30 minutes
+    // set only at login, which is an ABSOLUTE lifetime: the browser dropped the cookie half
+    // an hour after signing in however hard someone was working, the next request arrived
+    // without it, and they were bounced to /login mid-task. The server's idle timeout never
+    // got to apply to an active user.
+    maxAge: SESSION_MAX_AGE_MS,
     path: '/',
   });
 };

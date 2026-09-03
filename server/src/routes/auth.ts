@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { body } from 'express-validator';
+import { SessionService } from '../services/sessionService.js';
 import { AuthService } from '../services/authService.js';
 import { validate } from '../lib/routeHelpers.js';
 import {
@@ -159,15 +160,14 @@ router.post('/exit-impersonation', authMiddleware, async (req: Request, res: Res
     const ipAddress = req.ip || req.socket.remoteAddress;
     const userAgent = req.get('User-Agent');
 
-    const session = await prisma.session.create({
-      data: {
-        userId: adminUser.id,
-        sessionToken: require('crypto').randomBytes(32).toString('hex'),
-        ipAddress,
-        userAgent,
-        lastActivity: new Date(),
-      },
-    });
+    // Through the service, not a raw create: it applies the per-account cap and clears any
+    // impersonation still in flight. Creating the row directly meant every impersonate/exit
+    // cycle left another admin session behind and could push the account past the cap.
+    const session = await new SessionService(prisma).createSession(
+      adminUser.id,
+      ipAddress,
+      userAgent
+    );
 
     setSessionCookie(res, session.sessionToken);
 

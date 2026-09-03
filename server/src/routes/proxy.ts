@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient, ProxyMode } from '@prisma/client';
+import { setSessionCookie } from '../middleware/auth.js';
 import { SessionService } from '../services/sessionService.js';
 import { ProxyService } from '../services/proxyService.js';
 import { AuditLogService } from '../services/auditLogService.js';
@@ -771,6 +772,11 @@ async function validateSession(req: Request, res: Response): Promise<string | nu
     res.status(401).json({ error: 'Session expired', code: 'SESSION_EXPIRED' });
     return null;
   }
+
+  // Slide the cookie, exactly as authMiddleware does. This path has its own validator, so a
+  // user working only inside the proxied iframe refreshed lastActivity server-side while the
+  // cookie kept its original expiry — and was signed out mid-session despite never pausing.
+  setSessionCookie(res, sessionToken);
 
   if (session.forcePasswordChange) {
     res.status(403).json({ error: 'Password change required', code: 'PASSWORD_CHANGE_REQUIRED' });

@@ -21,6 +21,30 @@ interface Session {
   isImpersonation: boolean;
 }
 
+/** A readable device label from a user-agent string: "Chrome on Windows".
+ *  Deliberately a handful of substring tests rather than a UA-parsing dependency — this
+ *  feeds one table cell, the full string is on hover, and an unrecognised agent degrades to
+ *  the raw value rather than to nothing. */
+function describeDevice(ua: string | null): string {
+  if (!ua) return '-';
+  const browser =
+    /Edg\//.test(ua) ? 'Edge'
+    : /OPR\/|Opera/.test(ua) ? 'Opera'
+    : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox'
+    : /Safari\//.test(ua) ? 'Safari'
+    : null;
+  const os =
+    /Windows/.test(ua) ? 'Windows'
+    : /Android/.test(ua) ? 'Android'
+    : /iPhone|iPad|iOS/.test(ua) ? 'iOS'
+    : /Mac OS X|Macintosh/.test(ua) ? 'macOS'
+    : /Linux/.test(ua) ? 'Linux'
+    : null;
+  if (!browser && !os) return ua.slice(0, 40);
+  return [browser, os].filter(Boolean).join(' on ');
+}
+
 export default function Sessions() {
   const { toast } = useToast();
   const [data, setData] = useState<Session[]>([]);
@@ -108,6 +132,16 @@ export default function Sessions() {
       accessorKey: 'ipAddress',
       header: 'IP Address',
       cell: ({ row }) => row.original.ipAddress || '-',
+    },
+    {
+      accessorKey: 'userAgent',
+      header: 'Device',
+      // Stored since the table was created and never shown. With one account now allowed
+      // several sessions at once, "which of these is me?" is the question this page has to
+      // answer — an IP alone does not, when a whole office shares one.
+      cell: ({ row }) => (
+        <span title={row.original.userAgent || undefined}>{describeDevice(row.original.userAgent)}</span>
+      ),
     },
     {
       accessorKey: 'loginTime',
