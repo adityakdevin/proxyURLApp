@@ -152,10 +152,21 @@ export async function resolveTargets(
       },
     };
   }
+  // The PARSED filters, not `body.filters`. parseFilters drops what it will not honour —
+  // `assignedToUserId` for a USER, and any key it does not know — so recording the raw body
+  // would have the audit row name a scope the server refused to apply. `scope`/`callerId`
+  // are caller context rather than filter criteria, so they stay out of the record.
+  const { scope: _scope, callerId: _callerId, ...applied } = filters;
   return {
     ids: matched,
     targeting: ClaimAuditTargeting.FILTERS,
-    filters: body.filters as Record<string, unknown>,
+    // `undefined` is a filter that was not sent; `false` is one parseFilters DEFAULTED
+    // (assignedToMe coerces an absent flag to false). Neither is a criterion the call was
+    // aimed with, and recording them would have the row describe a narrowing that never
+    // happened.
+    filters: Object.fromEntries(
+      Object.entries(applied).filter(([, v]) => v !== undefined && v !== false)
+    ),
   };
 }
 
@@ -192,7 +203,13 @@ export async function recordClaimAudit(
         action: audit.action,
         targeting: target.targeting,
         filters: (target.filters as Prisma.InputJsonValue) ?? Prisma.DbNull,
-        claimIds: target.ids as Prisma.InputJsonValue,
+        // Lowercased HERE rather than in each caller: resolveTargets already does it for the
+        // bulk paths, but the single-claim routes pass req.params.id straight through, and
+        // `param('id').isUUID()` accepts uppercase. MySQL's utf8mb4_unicode_ci then matches
+        // the claim, so the delete succeeds — while claimIds keeps the uppercase spelling
+        // and `array_contains`, an exact JSON string match, can never find the row again.
+        // One guard where every writer passes beats four that can each be forgotten.
+        claimIds: target.ids.map((id) => id.toLowerCase()) as Prisma.InputJsonValue,
         failures: report.failed.length
           ? (report.failed as unknown as Prisma.InputJsonValue)
           : Prisma.DbNull,

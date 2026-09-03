@@ -186,6 +186,31 @@ describe('resolveTargets', () => {
   });
 });
 
+describe('claim audit row', () => {
+  it('lowercases recorded ids so array_contains can find them', async () => {
+    // The single-claim routes hand over req.params.id verbatim and `param('id').isUUID()`
+    // accepts uppercase; MySQL's _ci collation matches the claim either way, so without
+    // this the delete succeeded and its audit row was unfindable by that claim's id.
+    const { prisma, rows } = auditSpy();
+    await runBulk(prisma, targetOf(['AB-1', 'cd-2']), audit, async () => undefined);
+    expect(rows[0].claimIds).toEqual(['ab-1', 'cd-2']);
+  });
+
+  it('records the filters the server applied, not the ones the caller sent', async () => {
+    // A USER may not aim at another user's claims: parseFilters drops assignedToUserId, so
+    // an audit row echoing the raw body would name a scope that was never used.
+    const r = await resolveTargets(
+      stubService({ ids: [], total: 0 }),
+      { filters: { assignedToUserId: 'someone-else', search: 'abc', nonsense: 'x' } },
+      { scope: 'ALL', callerId: 'caller', role: 'USER' }
+    );
+    if (r.error) throw new Error(`unexpected refusal: ${r.error.code}`);
+    // assignedToMe is absent, not false: parseFilters coerces the missing flag to false and
+    // recording that would describe a narrowing the caller never asked for.
+    expect(r.filters).toEqual({ search: 'abc' });
+  });
+});
+
 describe('runBulk', () => {
   it('keeps going past a failure and reports the reason per claim', async () => {
     const logged = jest.spyOn(console, 'error').mockImplementation(() => undefined);

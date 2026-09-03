@@ -43,7 +43,15 @@ router.get(
       if (startDate || endDate) {
         where.createdAt = {};
         if (startDate) where.createdAt.gte = new Date(startDate as string);
-        if (endDate) where.createdAt.lte = new Date(endDate as string);
+        // A date with no time means the WHOLE of that day. `new Date('2026-09-03')` is
+        // midnight UTC, so an `lte` on it excluded everything that happened on the 3rd —
+        // filtering "up to today" returned nothing from today and read as "nobody did
+        // anything". A caller who sends an explicit time is taken at their word.
+        if (endDate) {
+          const end = new Date(endDate as string);
+          if (!/[T\s]\d{2}:/.test(endDate as string)) end.setUTCHours(23, 59, 59, 999);
+          where.createdAt.lte = end;
+        }
       }
 
       const [logs, total] = await Promise.all([
