@@ -194,8 +194,9 @@ describe('Aadhaar / VID format', () => {
   });
 
   it('checks the VID digit count', () => {
-    expect(checkVid('VID: 1234 5678 9012 34')).toEqual([]); // 14 per client spec
-    expect(codes(checkVid('VID: 1234 5678 9012 3456'))).toEqual(['REDFLAG_VID_FORMAT']);
+    expect(checkVid('VID: 1234 5678 9012 3456')).toEqual([]); // 16, the UIDAI VID length
+    // The old 14 red-flagged genuine cards — five of them on the 2026-09-03 reviewer sheet.
+    expect(codes(checkVid('VID: 1234 5678 9012 34'))).toEqual(['REDFLAG_VID_FORMAT']);
     expect(checkVid('no virtual id here')).toEqual([]);
   });
 });
