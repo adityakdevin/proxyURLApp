@@ -222,9 +222,11 @@ export function checkAadhaarFormat(text: string, page: number | null = null): Re
   ];
 }
 
-// ponytail: 14 per the client spec of 2026-07-28. UIDAI publishes a 16-digit VID —
-// if genuine cards start red-flagging, this constant is the one thing to change.
-const VID_DIGITS = 14;
+// 16, per UIDAI's published VID format and the reviewer sheet of 2026-09-03, which reported
+// "the UID/VID number is a 16-digit number, but the software is incorrectly counting it as
+// 14 digits" against five genuine cards. The earlier 14 came from the client spec of
+// 2026-07-28 and red-flagged every real VID.
+const VID_DIGITS = 16;
 
 /** Virtual ID (VID) printed beside the Aadhaar number must be VID_DIGITS long. */
 export function checkVid(text: string, page: number | null = null): RedFlagFinding[] {
