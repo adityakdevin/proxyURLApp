@@ -367,6 +367,38 @@ describe('E2E: bulk claim actions', () => {
     expect(listed.body.data.length).toBeGreaterThan(0);
   });
 
+  it('refuses to delete a user who has recorded claim actions, and deletes one who has not', async () => {
+    // ClaimAuditLog is the one relation off User that does NOT cascade, so the hard delete
+    // at DELETE /api/admin/users/:id hit the foreign key and surfaced as a 500 with a
+    // constraint name. An admin should be told to deactivate instead.
+    const admin = await loginAs(app, g.admin.username);
+    const tl = await loginAs(app, g.teamLead.username);
+    const id = await createClaim(tl, 'AUD-USERDEL-1', g.subCategoryId);
+
+    // A single bulk remark is enough to make the team lead an actor.
+    await tl.post('/api/claims/bulk/remarks').send({ ids: [id], remarkText: 'looked at it' });
+    expect(await prisma.claimAuditLog.count({ where: { userId: g.teamLead.id } })).toBe(1);
+
+    const refused = await admin.delete(`/api/admin/users/${g.teamLead.id}`);
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe('USER_HAS_AUDIT_HISTORY');
+    // Refused means untouched — the account is still there to deactivate.
+    expect(await prisma.user.findUnique({ where: { id: g.teamLead.id } })).not.toBeNull();
+
+    // The guard is the audit history, not the role: a user who never acted still deletes.
+    const bystander = await prisma.user.create({
+      data: {
+        username: `bystander-${randomUUID().slice(0, 8)}`,
+        passwordHash: 'x',
+        fullName: 'Bystander',
+        role: 'USER',
+        status: 'ACTIVE',
+        forcePasswordChange: false,
+      },
+    });
+    expect((await admin.delete(`/api/admin/users/${bystander.id}`)).status).toBe(200);
+  });
+
   it('queues a MANUAL run per claim on the success path of /bulk/validate', async () => {
     const tl = await loginAs(app, g.teamLead.username);
     const a = await createClaim(tl, 'BV-1', g.subCategoryId);

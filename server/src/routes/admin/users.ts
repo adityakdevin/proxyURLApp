@@ -426,7 +426,22 @@ router.delete(
         });
       }
 
-      // Delete user (cascades to assignments, sessions, and audit logs)
+      // Claim audit rows do NOT cascade, unlike everything else hanging off a user: an
+      // audit trail that disappears with the account that did the damage cannot answer the
+      // question it exists for. Without this check the FK simply refused the delete and the
+      // admin got a 500 with a constraint name in it. Deactivating is the way to retire
+      // someone who has acted — the user still has an ACTIVE/INACTIVE status for exactly that.
+      const acted = await prisma.claimAuditLog.count({ where: { userId: id } });
+      if (acted > 0) {
+        return res.status(409).json({
+          error:
+            `This user has ${acted} recorded claim action(s) and cannot be deleted. ` +
+            'Set their status to INACTIVE instead — the audit trail has to outlive them.',
+          code: 'USER_HAS_AUDIT_HISTORY',
+        });
+      }
+
+      // Delete user (cascades to assignments, sessions, and proxy audit logs)
       await prisma.user.delete({ where: { id } });
 
       res.json({ message: 'User deleted successfully' });

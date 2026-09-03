@@ -298,7 +298,9 @@ model ClaimAuditLog {
   createdAt DateTime            @default(now()) @map("created_at")
 
   // No onDelete: Cascade, unlike AuditLog — deleting a user must not erase the record of
-  // what they did. Users are soft-deleted here anyway, so the restrict never fires.
+  // what they did. That makes this a RESTRICT, and DELETE /api/admin/users/:id is a hard
+  // delete, so the route checks for rows here first and answers 409 pointing at
+  // deactivation. Without that check the constraint surfaced as a 500.
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
