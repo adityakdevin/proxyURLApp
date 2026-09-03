@@ -219,8 +219,10 @@ export class ValidationService {
             summary: e instanceof Error ? e.message : 'Validator error',
           };
         } finally {
+          // The claim ID is operator-supplied and only length-checked, so a newline in it
+          // would forge log lines in the one place that reports how long a check took.
           console.log(
-            `[validation] claim ${claim.claimId} ${v.key} ${Date.now() - startedAt}ms`
+            `[validation] claim ${claim.claimId.replace(/[\p{C}]/gu, '?')} ${v.key} ${Date.now() - startedAt}ms`
           );
         }
       };
@@ -234,11 +236,19 @@ export class ValidationService {
       // string search and a doc-type query — sat behind the QR page rasterisation for the
       // whole of it. Only QR rasterises, so overlapping them costs no extra memory, which
       // matters on an 8 GB box.
+      // REDFLAG is deliberately NOT in the parallel group. It reads each PDF's metadata
+      // through readPdfInfo, which pulls the whole file into a Uint8Array and opens its own
+      // pdfjs document — so running it beside QR puts two PDF loaders in memory at once, on
+      // top of QR's scale-8 canvases. With two claim workers on an 8 GB box that is the
+      // margin this change was supposed to respect. It runs after, alone.
+      const PARALLEL_SAFE = (v: Validator) => v.key !== 'META' && v.key !== 'REDFLAG';
       const meta = this.validators.filter((v) => v.key === 'META');
-      const rest = this.validators.filter((v) => v.key !== 'META');
+      const parallel = this.validators.filter(PARALLEL_SAFE);
+      const tail = this.validators.filter((v) => v.key === 'REDFLAG');
       const results: Ran[] = [];
       for (const v of meta) results.push(await runOneValidator(v));
-      results.push(...(await Promise.all(rest.map(runOneValidator))));
+      results.push(...(await Promise.all(parallel.map(runOneValidator))));
+      for (const v of tail) results.push(await runOneValidator(v));
       // Back into registry order so the stored rows and the log read predictably.
       results.sort(
         (a, b) => this.validators.indexOf(a.v) - this.validators.indexOf(b.v)
