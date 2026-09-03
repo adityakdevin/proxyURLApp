@@ -195,31 +195,54 @@ export class ValidationService {
       };
 
       // Run all validators first (failures captured as FAILED, never thrown).
-      const results: {
+      type Ran = {
         v: Validator;
         status: CheckStatus;
         summary: string;
         details?: unknown;
         findings?: FindingInput[];
-      }[] = [];
-      for (const v of this.validators) {
+      };
+
+      // Timed so the log can say WHICH check is slow. Before this a claim reported only its
+      // total ("done in 47s") and the expensive one had to be guessed at.
+      const runOneValidator = async (v: Validator): Promise<Ran> => {
+        const startedAt = Date.now();
         try {
           const outcome = await v.run(ctx);
           // DOUBTFUL is decided here, not per validator: a check that passed but raised
           // warning-level findings must not show the reviewer a green badge.
-          results.push({
-            ...outcome,
-            v,
-            status: deriveCheckStatus(outcome.status, outcome.findings),
-          });
+          return { ...outcome, v, status: deriveCheckStatus(outcome.status, outcome.findings) };
         } catch (e) {
-          results.push({
+          return {
             v,
             status: 'FAILED',
             summary: e instanceof Error ? e.message : 'Validator error',
-          });
+          };
+        } finally {
+          console.log(
+            `[validation] claim ${claim.claimId} ${v.key} ${Date.now() - startedAt}ms`
+          );
         }
-      }
+      };
+
+      // META first, ALONE: it performs the OCR and PDF text extraction, and fills
+      // ctx.shared / ctx.wordBoxes / ctx.pageTexts that every other check reads. Nothing
+      // else can start before it finishes.
+      //
+      // The rest then run TOGETHER. They depend on META's output, not on one another, and
+      // running them end to end meant INTRA and FULL — which do no I/O of their own, just a
+      // string search and a doc-type query — sat behind the QR page rasterisation for the
+      // whole of it. Only QR rasterises, so overlapping them costs no extra memory, which
+      // matters on an 8 GB box.
+      const meta = this.validators.filter((v) => v.key === 'META');
+      const rest = this.validators.filter((v) => v.key !== 'META');
+      const results: Ran[] = [];
+      for (const v of meta) results.push(await runOneValidator(v));
+      results.push(...(await Promise.all(rest.map(runOneValidator))));
+      // Back into registry order so the stored rows and the log read predictably.
+      results.sort(
+        (a, b) => this.validators.indexOf(a.v) - this.validators.indexOf(b.v)
+      );
 
       // Commit results + columns + COMPLETED atomically, so a crash mid-run
       // leaves no partial state (sweepStaleRuns recovers it).
