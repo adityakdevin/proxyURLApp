@@ -45,9 +45,48 @@ const obsRow: ObservationExportRow = {
   schemeType: 'Corporate',
   status: 'Forged',
   remarks: 'Uploaded Salary slips are invalid',
+  checks: {
+    spellCheckStatus: 'FAILED',
+    qrStatus: 'PASSED',
+    metaExtractionStatus: 'PASSED',
+    intraClaimStatus: 'PASSED',
+    fullScanStatus: 'FAILED',
+  },
 };
 
 describe('buildObservationWorkbook', () => {
+  it('appends the failure summary and the five check outcomes after the upload columns', () => {
+    // The export exists to tell a reviewer WHICH check condemned a claim. Status alone only
+    // says "Forged". The extra columns come AFTER the 10 upload columns so an exported file
+    // can be re-uploaded unchanged — the importer reads S. No..Remarks by position.
+    const ws = buildObservationWorkbook([obsRow]).getWorksheet('Observations')!;
+    expect(ws.getRow(1).getCell(11).value).toBe('Failed Checks');
+    expect(ws.getRow(1).getCell(12).value).toBe('Spell Check');
+    expect(ws.getRow(1).getCell(16).value).toBe('Full Scan');
+    expect(ws.getRow(2).getCell(11).value).toBe('Spell Check, Full Scan');
+    expect(ws.getRow(2).getCell(12).value).toBe('FAILED');
+    expect(ws.getRow(2).getCell(13).value).toBe('PASSED');
+    expect(ws.getRow(2).getCell(16).value).toBe('FAILED');
+  });
+
+  it('leaves the failure summary empty when nothing failed', () => {
+    const clean: ObservationExportRow = {
+      ...obsRow,
+      status: 'OK',
+      checks: {
+        spellCheckStatus: 'PASSED',
+        qrStatus: 'PASSED',
+        metaExtractionStatus: 'PASSED',
+        intraClaimStatus: 'DOUBTFUL',
+        fullScanStatus: 'PASSED',
+      },
+    };
+    const ws = buildObservationWorkbook([clean]).getWorksheet('Observations')!;
+    // DOUBTFUL is not a failure — it is shown in its own column, not summarised as one.
+    expect(ws.getRow(2).getCell(11).value).toBe('');
+    expect(ws.getRow(2).getCell(15).value).toBe('DOUBTFUL');
+  });
+
   it('writes the 10-column observation layout with Status filled', () => {
     const ws = buildObservationWorkbook([obsRow]).getWorksheet('Observations')!;
     expect(ws.getRow(1).getCell(1).value).toBe('S. No');

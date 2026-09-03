@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { OBSERVATION_HEADERS } from '../../services/observationSheet.js';
+import { OBSERVATION_EXPORT_HEADERS, OBSERVATION_HEADERS } from '../../services/observationSheet.js';
 import { makeTestApp } from './helpers/app.js';
 import {
   getTestPrisma,
@@ -116,7 +116,11 @@ describe('E2E: Forged-Docs observation import/export', () => {
     expect(res.headers['content-type']).toContain('spreadsheetml');
 
     const grid = await readWorkbook(res.body as Buffer);
-    expect(grid[0]).toEqual([...OBSERVATION_HEADERS]);
+    // The 10 upload columns keep their positions — an exported file has to be re-uploadable,
+    // and the importer reads S. No..Remarks by position — with the failure summary and the
+    // five check outcomes appended after them.
+    expect(grid[0].slice(0, OBSERVATION_HEADERS.length)).toEqual([...OBSERVATION_HEADERS]);
+    expect(grid[0]).toEqual([...OBSERVATION_EXPORT_HEADERS]);
     const flat = grid.flat();
     expect(flat).toContain('OBS-EXP');
   });

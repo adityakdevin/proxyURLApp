@@ -758,6 +758,15 @@ export class ClaimService {
       schemeType: c.schemeType ?? '',
       status: deriveForgeryStatus(c),
       remarks: c.observationRemarks ?? '',
+      // The five outcomes travel with the row: `status` collapses them to Forged/OK, and
+      // the export needs to say which check produced that verdict.
+      checks: {
+        spellCheckStatus: c.spellCheckStatus,
+        qrStatus: c.qrStatus,
+        metaExtractionStatus: c.metaExtractionStatus,
+        intraClaimStatus: c.intraClaimStatus,
+        fullScanStatus: c.fullScanStatus,
+      },
     }));
   }
 
