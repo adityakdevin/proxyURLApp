@@ -90,6 +90,22 @@ describe('E2E: auth + session', () => {
     expect((await agents[agents.length - 1].get('/api/auth/me')).status).toBe(200);
   });
 
+  it('holds the cap when several logins land at once', async () => {
+    // Checking for room and then creating is two statements with a gap: concurrent logins
+    // both saw room and both created, leaving the account over the cap. Trimming after the
+    // create closes that gap whichever way the racers interleave.
+    // allSettled, not all: the login route applies a progressive delay, so some of a rapid
+    // burst may be throttled. Whether every request got through is not the invariant under
+    // test — the invariant is that however many DID, the account never ends up over the cap.
+    await Promise.allSettled(
+      Array.from({ length: SESSION_MAX_PER_USER + 3 }, () => loginAs(app, g.otherTeamLead.username))
+    );
+    expect(await prisma.session.count({ where: { userId: g.otherTeamLead.id } })).toBeGreaterThan(0);
+    expect(await prisma.session.count({ where: { userId: g.otherTeamLead.id } })).toBeLessThanOrEqual(
+      SESSION_MAX_PER_USER
+    );
+  });
+
   it('logout invalidates the session', async () => {
     const agent = await loginAs(app, g.teamLead.username);
     expect((await agent.get('/api/auth/me')).status).toBe(200);

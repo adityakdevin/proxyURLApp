@@ -29,6 +29,7 @@ import ClaimIdRules from '@/pages/admin/ClaimIdRules';
 import ClaimRules from '@/pages/admin/ClaimRules';
 import SpellTerms from '@/pages/admin/SpellTerms';
 import AdminClaims from '@/pages/admin/AdminClaims';
+import Sessions from '@/pages/admin/Sessions';
 import ClaimDashboard from '@/pages/claims/ClaimDashboard';
 import ClaimUpdate from '@/pages/claims/ClaimUpdate';
 import DocumentView from '@/pages/claims/DocumentView';
@@ -89,6 +90,7 @@ function App() {
           <Route path="claim-id-rules" element={<ClaimIdRules />} />
           <Route path="claim-rules" element={<ClaimRules />} />
           <Route path="spell-terms" element={<SpellTerms />} />
+          <Route path="sessions" element={<Sessions />} />
           <Route path="claims" element={<AdminClaims />} />
           <Route path="claims/:id" element={<ClaimUpdate />} />
         </Route>

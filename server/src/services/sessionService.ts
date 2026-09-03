@@ -57,26 +57,12 @@ export class SessionService {
     userAgent?: string,
     impersonatedBy?: string
   ): Promise<Session> {
-    if (impersonatedBy) {
-      await this.prisma.session.deleteMany({ where: { userId } });
-    } else {
-      // Any impersonation in flight ends here for the same reason.
-      await this.prisma.session.deleteMany({ where: { userId, impersonatedBy: { not: null } } });
-      // Evict the least recently active sessions down to cap-1, leaving room for this one.
-      // Selected by id rather than a raw skip so a session started concurrently cannot shift
-      // the window and leave the account one over the cap.
-      const existing = await this.prisma.session.findMany({
-        where: { userId },
-        orderBy: { lastActivity: 'desc' },
-        select: { id: true },
-      });
-      const evict = existing.slice(Math.max(0, SESSION_MAX_PER_USER - 1)).map((s) => s.id);
-      if (evict.length) {
-        await this.prisma.session.deleteMany({ where: { id: { in: evict } } });
-      }
-    }
-
-    // Create new session
+    // Create FIRST, then trim. Checking for room and then creating is two statements with a
+    // gap in between: two logins racing each other both saw room and both created, leaving
+    // the account over the cap. Trimming after the fact has no such gap — whichever order
+    // the racers interleave, each one ends by cutting the account back to the cap, so the
+    // final state is correct however many arrived at once. The new row is the most recently
+    // active by construction, so it is never the one trimmed.
     const session = await this.prisma.session.create({
       data: {
         userId,
@@ -87,6 +73,24 @@ export class SessionService {
         lastActivity: new Date(),
       },
     });
+
+    if (impersonatedBy) {
+      await this.prisma.session.deleteMany({ where: { userId, id: { not: session.id } } });
+    } else {
+      // Any impersonation in flight ends here for the same reason.
+      await this.prisma.session.deleteMany({
+        where: { userId, impersonatedBy: { not: null }, id: { not: session.id } },
+      });
+      const keep = await this.prisma.session.findMany({
+        where: { userId },
+        orderBy: { lastActivity: 'desc' },
+        take: SESSION_MAX_PER_USER,
+        select: { id: true },
+      });
+      await this.prisma.session.deleteMany({
+        where: { userId, id: { notIn: keep.map((k) => k.id) } },
+      });
+    }
 
     return session;
   }
