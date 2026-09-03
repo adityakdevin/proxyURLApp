@@ -1,6 +1,11 @@
 import ExcelJS from 'exceljs';
 import { ExportRow } from './claimService.js';
-import { OBSERVATION_HEADERS, ObservationExportRow } from './observationSheet.js';
+import {
+  OBSERVATION_CHECK_COLUMNS,
+  OBSERVATION_EXPORT_HEADERS,
+  ObservationExportRow,
+  failedCheckNames,
+} from './observationSheet.js';
 
 const HEADERS = [
   'Claim ID',
@@ -61,7 +66,10 @@ export function buildClaimsWorkbook(rows: ExportRow[]): ExcelJS.Workbook {
 export function buildObservationWorkbook(rows: ObservationExportRow[]): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Observations');
-  ws.addRow([...OBSERVATION_HEADERS]);
+  // The export layout: the 10 upload columns, then the failure summary and the 5 check
+  // outcomes. Appended rather than inserted, so an exported file can be re-uploaded
+  // unchanged — the importer reads S. No through Remarks by position.
+  ws.addRow([...OBSERVATION_EXPORT_HEADERS]);
   ws.getRow(1).font = { bold: true };
   for (const r of rows) {
     ws.addRow([
@@ -75,6 +83,8 @@ export function buildObservationWorkbook(rows: ObservationExportRow[]): ExcelJS.
       sanitizeCell(r.schemeType),
       r.status,
       sanitizeCell(r.remarks),
+      failedCheckNames(r.checks),
+      ...OBSERVATION_CHECK_COLUMNS.map((c) => r.checks[c.field]),
     ]);
   }
   // Remarks can be multi-line forgery notes — keep them readable.

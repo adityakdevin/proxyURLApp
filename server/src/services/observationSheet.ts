@@ -43,6 +43,46 @@ export interface ParsedObservationRow {
   remarks: string | null;
 }
 
+/** The five per-claim validation columns this derivation reads. */
+export interface ValidationStatuses {
+  spellCheckStatus: string;
+  qrStatus: string;
+  metaExtractionStatus: string;
+  intraClaimStatus: string;
+  fullScanStatus: string;
+}
+
+/** The five per-claim checks, in export-column order: the sheet header and the
+ *  field it reads. Status alone only says *that* a claim is forged; these say
+ *  which check caught it, so failures can be grouped by category. */
+export const OBSERVATION_CHECK_COLUMNS: { header: string; field: keyof ValidationStatuses }[] = [
+  { header: 'Spell Check', field: 'spellCheckStatus' },
+  { header: 'QR Code', field: 'qrStatus' },
+  { header: 'Meta', field: 'metaExtractionStatus' },
+  { header: 'Intra Claim', field: 'intraClaimStatus' },
+  { header: 'Full Scan', field: 'fullScanStatus' },
+];
+
+/** Header for the summary column: the failing checks, comma-joined. */
+export const FAILED_CHECKS_HEADER = 'Failed Checks';
+
+/** Export header row: the 10 upload columns, the failure summary, then the 5 check outcomes.
+ *  Appended rather than inserted so S. No -> Remarks keep the column positions the
+ *  uploaded sheet uses, and an exported file can be re-uploaded unchanged. */
+export const OBSERVATION_EXPORT_HEADERS: readonly string[] = [
+  ...OBSERVATION_HEADERS,
+  FAILED_CHECKS_HEADER,
+  ...OBSERVATION_CHECK_COLUMNS.map((c) => c.header),
+];
+
+/** Which checks actually failed, comma-joined, for the summary column. Empty when none
+ *  did — a reviewer scanning the column wants the failures to be the only thing in it. */
+export function failedCheckNames(checks: ValidationStatuses): string {
+  return OBSERVATION_CHECK_COLUMNS.filter((c) => checks[c.field] === 'FAILED')
+    .map((c) => c.header)
+    .join(', ');
+}
+
 /** A per-row problem surfaced during import (parse-stage or persist-stage).
  *  rowNumber 0 denotes a file/sheet-level note rather than a specific row. */
 export interface ObservationRowError {
@@ -62,15 +102,8 @@ export interface ObservationExportRow {
   schemeType: string;
   status: ForgeryStatus;
   remarks: string;
-}
-
-/** The five per-claim validation columns this derivation reads. */
-export interface ValidationStatuses {
-  spellCheckStatus: string;
-  qrStatus: string;
-  metaExtractionStatus: string;
-  intraClaimStatus: string;
-  fullScanStatus: string;
+  /** The five check outcomes behind `status`, so the export can say WHICH one failed. */
+  checks: ValidationStatuses;
 }
 
 /**
