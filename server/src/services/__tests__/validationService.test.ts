@@ -167,6 +167,50 @@ describe('ValidationService + drainer', () => {
     expect(rows.map((r) => r.validatorKey).sort()).toEqual(traced.map((v) => v.key).sort());
   });
 
+  it('writes each result as its check finishes, before the run is COMPLETED', async () => {
+    // The reviewer's page reads the latest run whatever its status, so a result written
+    // early is on screen early. Previously all five were held to one commit at the end and
+    // the page showed nothing for the length of the slowest check.
+    const claim = await makeClaim('C-PROG');
+    await prisma.document.create({
+      data: {
+        claimId: claim.id,
+        source: 'UPLOADED',
+        fileName: 'doc.pdf',
+        storagePath: `/tmp/${SUF}-C-PROG.pdf`,
+        createdBy: adminId,
+      },
+    });
+    const run = await prisma.validationRun.create({
+      data: { claimId: claim.id, trigger: 'MANUAL', status: 'QUEUED' },
+    });
+
+    // Seen from inside the SECOND check: the first one's result is already committed, and
+    // the run is still RUNNING.
+    let seenMidRun: { results: number; runStatus: string | undefined } | null = null;
+    const observed: Validator[] = [
+      { key: 'META', column: 'metaExtractionStatus', run: async () => ({ status: 'PASSED', summary: 'ok' }) },
+      {
+        key: 'SPELL',
+        column: 'spellCheckStatus',
+        run: async () => {
+          seenMidRun = {
+            results: await prisma.validationResult.count({ where: { runId: run.id } }),
+            runStatus: (await prisma.validationRun.findUnique({ where: { id: run.id } }))?.status,
+          };
+          return { status: 'PASSED', summary: 'ok' };
+        },
+      },
+    ];
+
+    await new ValidationService(prisma, observed).runOne(run.id);
+
+    expect(seenMidRun).toEqual({ results: 1, runStatus: 'RUNNING' });
+    const done = await prisma.validationRun.findUnique({ where: { id: run.id } });
+    expect(done?.status).toBe('COMPLETED');
+    expect(await prisma.validationResult.count({ where: { runId: run.id } })).toBe(2);
+  });
+
   it('runOne executes validators, writes results, sets columns + COMPLETED', async () => {
     const claim = await makeClaim('C-V1');
     // A claim with zero documents short-circuits to DOCS_NOT_AVAILABLE before any
