@@ -29,6 +29,20 @@ describe('spellValidator', () => {
     // Reviewers flag a form on one genuine typo; the old threshold of 3 let these pass.
     expect((await spellValidator.run(ctx('Employee salary slip with profesion listed'))).status).toBe('FAILED');
   });
+  // 2026-09-03 reviewer sheet: "Name or Surname spelling not to be highlighted unless
+  // different in intra document". A surname is in no dictionary, so it lands one edit from
+  // an expected term by coincidence — "Dass" was reported as a misspelling of "days".
+  it('never reports a person name as a misspelling', async () => {
+    const doc = 'Insured Name: Rajesh Dass\nEmployee salary slip for the month';
+    const res = await spellValidator.run(ctx(doc));
+    expect(res.status).toBe('PASSED');
+    expect(res.findings.map((f) => f.data?.word)).not.toContain('dass');
+  });
+  it('still flags a misspelled form word on a document that carries a name', async () => {
+    // Suppression is by exact token, so the name shields itself and nothing else.
+    const doc = 'Insured Name: Rajesh Dass\nEmployee profesion listed on the salary slip';
+    expect((await spellValidator.run(ctx(doc))).status).toBe('FAILED');
+  });
   it('PASSES (N/A) when there is no text', async () => {
     expect((await spellValidator.run(ctx(''))).status).toBe('PASSED');
   });

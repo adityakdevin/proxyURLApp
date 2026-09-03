@@ -110,6 +110,15 @@ const CARD_BOILERPLATE = new Set([
   'ADDRESS', 'HELP', 'DESK', 'TOLL', 'FREE', 'WWW', 'GOV', 'IN',
 ]);
 const isBoilerplate = (v: string) => v.split(/\s+/).every((w) => CARD_BOILERPLATE.has(w));
+
+// Salutations arrive fused to the name by OCR ("MR_RAVI SHANKAR"), and where the dot
+// survives it ends the caps run instead, so "MR. LALIT MOHAN" was read as the name "MR".
+// A salutation is no part of a name — reviewers compare "Lalit Mohan" against the salary
+// slip, not "Mr. Lalit Mohan" — so drop it from EVERY reading, not just the policy
+// schedule's. The trailing separator is optional so a bare "MR" reduces to nothing and
+// falls through to the next candidate rather than standing in as the holder's name.
+const SALUTATION_RE = /^(?:MR|MRS|MS|M\/S|SHRI|SMT|SRI|THIRU|DR|KUM|MASTER)\b[_.\s]*/i;
+const dropSalutation = (v: string) => v.replace(SALUTATION_RE, '').trim();
 // The holder label "Name" is a substring of "Father's name" / "Mother's name"; a match whose
 // run-up carries one of those words belongs to the parent, not the holder.
 const PARENT_RUNUP = /(?:father|mother|पिता|माता)(?:'?s)?[^A-Za-z]{0,6}(?:का\s*)?(?:नाम|name)?\s*$/i;
@@ -129,8 +138,8 @@ function cardName(text: string, kind: 'HOLDER' | 'FATHER' | 'MOTHER'): string | 
     const window = text.slice(at, at + 60);
     const v = CAPS_NAME_RE.exec(window);
     if (!v) continue;
-    const value = v[1].trim().replace(/\s+/g, ' ');
-    if (isBoilerplate(value)) continue; // masthead, not a person — keep looking
+    const value = dropSalutation(v[1].trim().replace(/\s+/g, ' '));
+    if (!value || isBoilerplate(value)) continue; // masthead or bare salutation — keep looking
     return value;
   }
   return null;
@@ -151,9 +160,11 @@ const NAME_RUN_RE = /([A-Z][A-Za-z]{1,}(?:[ \t]+[A-Z][A-Za-z]{1,})+)/g;
  * ("° ~~) Ravi Shankar") is skipped rather than read as part of the name.
  */
 function nameOnLine(line: string): string | null {
-  const runs = [...line.matchAll(NAME_RUN_RE)].map((m) => m[1].trim().replace(/\s+/g, ' '));
+  const runs = [...line.matchAll(NAME_RUN_RE)].map((m) =>
+    dropSalutation(m[1].trim().replace(/\s+/g, ' '))
+  );
   for (const run of runs.reverse()) {
-    if (isBoilerplate(run)) continue;
+    if (!run || isBoilerplate(run)) continue;
     const words = run.split(' ');
     // The Devanagari label on the row below often bleeds a fragment onto the name's line
     // ("RAVI SHANKAR ATA" — "ATA" is what "नाम" OCR'd to). Drop a short trailing fragment,
@@ -218,8 +229,6 @@ const INSURED_LABEL_RE = /insured'?s?\s*name\s*[:\-+©~*]?\s*/i;
 // ponytail: costs a single-letter initial ("R SHANKAR" → "SHANKAR"). Widen if a schedule
 // that abbreviates the first name shows up.
 const CAPS_VALUE_RE = /^([A-Z][A-Z_.]+(?:[ \t]+[A-Z][A-Z_.]+)*)/;
-// Salutations arrive fused to the name by OCR ("MR_RAVI SHANKAR").
-const SALUTATION_RE = /^(?:MR|MRS|MS|M\/S|SHRI|SMT|DR)[_.\s]+/i;
 
 function insuredName(text: string): string | null {
   const m = INSURED_LABEL_RE.exec(text);
@@ -227,7 +236,7 @@ function insuredName(text: string): string | null {
   const at = m.index + m[0].length;
   const v0 = CAPS_VALUE_RE.exec(text.slice(at, at + 60));
   if (!v0) return null;
-  const v = v0[1].replace(SALUTATION_RE, '').trim().replace(/[_\s]+/g, ' ');
+  const v = dropSalutation(v0[1]).replace(/[_\s]+/g, ' ');
   return !v || isBoilerplate(v) ? null : v;
 }
 
@@ -281,8 +290,8 @@ function billToName(text: string): string | null {
   const at = m.index + m[0].length;
   const v = CAPS_NAME_RE.exec(text.slice(at, at + 60));
   if (!v) return null;
-  const value = v[1].trim().replace(/\s+/g, ' ');
-  return isBoilerplate(value) ? null : value;
+  const value = dropSalutation(v[1].trim().replace(/\s+/g, ' '));
+  return !value || isBoilerplate(value) ? null : value;
 }
 
 /** A relation name, from the shared label-anchored extractor first (it handles "S/o X" and

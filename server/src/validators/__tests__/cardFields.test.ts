@@ -67,4 +67,16 @@ describe('ID card field extraction', () => {
     const wife = AADHAAR.replace('C/O: Jay Singh', 'W/O: Jay Singh');
     expect(valueOf(wife, 'AADHAR', "Father's Name")).toBeNull();
   });
+
+  // 2026-09-03 reviewer sheet, claim MZBEP813LSN725251: "The name on the Aadhaar card is
+  // mentioned as 'Mr. Lalit Mohan' ... the software is incorrectly considering 'Mr.' as
+  // part of the name." With the dot intact the caps run ENDS at it, so the name read as
+  // the bare salutation; without it the salutation rode along inside the name.
+  it('drops a salutation from a card name, with or without its dot', () => {
+    const dotted = PAN.replace('RAVI SHANKAR ATA', 'MR. RAVI SHANKAR');
+    expect(valueOf(dotted, 'PAN', 'Holder Name')).toBe('RAVI SHANKAR');
+
+    const bare = PAN.replace('RAVI SHANKAR ATA', 'MR RAVI SHANKAR');
+    expect(valueOf(bare, 'PAN', 'Holder Name')).toBe('RAVI SHANKAR');
+  });
 });
