@@ -151,5 +151,23 @@ describe('E2E: claim lifecycle + RBAC', () => {
     const restore = await admin.post(`/api/admin/claims/${id}/restore`);
     expect(restore.status).toBe(200);
     expect((await tl.get(`/api/claims/${id}`)).status).toBe(200);
+
+    // Both single-claim actions land in the SAME audit table the bulk routes write to.
+    // "Who removed this claim" must have one answer regardless of which button was used.
+    const logs = await prisma.claimAuditLog.findMany({
+      where: { action: { in: ['DELETE', 'RESTORE'] } },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(logs.map((l) => l.action)).toEqual(['DELETE', 'RESTORE']);
+    for (const l of logs) {
+      expect(l.userId).toBe(g.admin.id);
+      expect(l.targeting).toBe('SINGLE');
+      expect(l.claimIds).toEqual([id]);
+      expect(l.requested).toBe(1);
+      expect(l.succeeded).toBe(1);
+      // Nothing failed, so the failures column stays NULL rather than an empty array —
+      // "no failures" and "failures we did not record" must not look the same.
+      expect(l.failures).toBeNull();
+    }
   });
 });

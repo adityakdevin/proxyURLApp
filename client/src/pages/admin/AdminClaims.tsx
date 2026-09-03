@@ -80,6 +80,10 @@ export default function AdminClaims() {
   const [sort, setSort] = useState<ServerSort>({ field: 'createdAt', order: 'desc' });
   const [checks, setChecks] = useState<Record<string, string>>({});
   const [workflowStatusId, setWorkflowStatusId] = useState('');
+  // Lifecycle, not workflow status. '' is the ACTIVE list the server defaults to; 'INACTIVE'
+  // is the soft-deleted set, which is otherwise unreachable from the UI — the reason a
+  // COUNT(*) of 168 and a list of 133 had no explanation on screen.
+  const [lifecycle, setLifecycle] = useState('');
   const [statusOptions, setStatusOptions] = useState<{ value: string; label: string }[]>([]);
 
   // Workflow statuses are global — fetch the active set once to populate the Status filter.
@@ -136,6 +140,7 @@ export default function AdminClaims() {
       });
       if (search.trim()) params.set('search', search.trim());
       if (workflowStatusId) params.set('workflowStatusId', workflowStatusId);
+      if (lifecycle) params.set('status', lifecycle);
       for (const cf of CHECK_FILTERS) {
         if (checks[cf.key]) params.set(cf.key, checks[cf.key]);
       }
@@ -158,14 +163,16 @@ export default function AdminClaims() {
     setSelectedIds([]);
     fetchData(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, sort, checks, workflowStatusId]);
+  }, [search, sort, checks, workflowStatusId, lifecycle]);
 
   // What "all matching" acts on: the same filters the list was fetched with.
   const bulkFilters = {
     search: search.trim() || undefined,
     workflowStatusId: workflowStatusId || undefined,
+    status: lifecycle || undefined,
     ...checks,
   };
+  const showingDeleted = lifecycle === 'INACTIVE';
 
   // Clear the picker / file / report when the dialog closes so a stale selection
   // can't carry into the next open (and a wrong-sub-category upload).
@@ -231,6 +238,8 @@ export default function AdminClaims() {
   /** The applied filters in words, for the bulk confirm — that path lists no rows. */
   const filtersSummary = useMemo(() => {
     const parts: string[] = [];
+    // First, because it decides WHICH list is being acted on rather than narrowing one.
+    if (lifecycle === 'INACTIVE') parts.push('deleted claims');
     const st = statusOptions.find((s) => s.value === workflowStatusId);
     if (st) parts.push(`Status ${st.label}`);
     for (const [k, v] of Object.entries(checks)) if (v) parts.push(`${k} ${v}`);
@@ -238,7 +247,7 @@ export default function AdminClaims() {
     // Empty when nothing is filtered — the dialog has its own wording for that case, and a
     // fallback phrase here read as "Every claim matching no filters — every claim."
     return parts.join(' · ');
-  }, [statusOptions, workflowStatusId, checks, search]);
+  }, [statusOptions, workflowStatusId, checks, search, lifecycle]);
 
   // The list used to refetch once, the instant work was QUEUED, and then never again — so
   // every badge still showed its old value and re-validating looked like it did nothing.
@@ -323,6 +332,7 @@ export default function AdminClaims() {
           claimLabel={row.original.claimId}
           canAct
           validationState={row.original.validationState}
+          deleted={showingDeleted}
           role={role}
           statusOptions={statusOptions}
           assigneeOptions={assigneeOptions}
@@ -364,6 +374,14 @@ export default function AdminClaims() {
       <div className="mb-4">
         <TableToolbar search={search} onSearchChange={setSearch} placeholder="Search claim id…">
           <FilterSelect
+            value={lifecycle}
+            onChange={setLifecycle}
+            allLabel="Active"
+            prefix="Show"
+            options={[{ value: 'INACTIVE', label: 'Deleted' }]}
+            className="w-[130px]"
+          />
+          <FilterSelect
             value={workflowStatusId}
             onChange={setWorkflowStatusId}
             allLabel="All"
@@ -403,6 +421,7 @@ export default function AdminClaims() {
         filters={bulkFilters}
         filtersSummary={filtersSummary}
         role={role}
+        deleted={showingDeleted}
         statusOptions={statusOptions}
         assigneeOptions={assigneeOptions}
         onDone={() => {

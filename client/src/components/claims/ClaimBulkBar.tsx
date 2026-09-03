@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RotateCw, Tag, UserCheck, Trash2 } from 'lucide-react';
+import { RotateCw, Tag, UserCheck, Trash2, Undo2 } from 'lucide-react';
 import { api, DataResponse } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -24,6 +24,11 @@ interface ClaimBulkBarProps {
   /** Those same filters in words, for the confirm dialog — that path shows no rows. */
   filtersSummary?: string;
   role: Role;
+  /** True when the list is showing soft-deleted claims. Those cannot be re-validated,
+   *  re-statused or reassigned — canEditClaim is false for every non-ACTIVE claim, so
+   *  offering those buttons only buys a batch of CLAIM_NOT_EDITABLE — so the bar swaps to
+   *  the one action that applies. */
+  deleted?: boolean;
   statusOptions: Option[];
   assigneeOptions: Option[];
   /** Refetch the list — every action changes what the rows say. */
@@ -37,6 +42,7 @@ export function ClaimBulkBar({
   filters,
   filtersSummary,
   role,
+  deleted = false,
   statusOptions,
   assigneeOptions,
   onDone,
@@ -143,40 +149,56 @@ export function ClaimBulkBar({
       </button>
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" disabled={busy || overCap} onClick={revalidate}>
-          <RotateCw className="mr-1.5 h-3.5 w-3.5" />
-          Re-validate
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={busy || overCap}
-          onClick={() => setAction('status')}
-        >
-          <Tag className="mr-1.5 h-3.5 w-3.5" />
-          Change status
-        </Button>
-        {(role === 'TEAM_LEAD' || role === 'ADMIN') && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy || overCap}
-            onClick={() => setAction('assign')}
-          >
-            <UserCheck className="mr-1.5 h-3.5 w-3.5" />
-            Reassign
-          </Button>
-        )}
-        {role === 'ADMIN' && (
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={busy || overCap}
-            onClick={() => setAction('delete')}
-          >
-            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-            Delete
-          </Button>
+        {deleted ? (
+          role === 'ADMIN' && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy || overCap}
+              onClick={() => setAction('restore')}
+            >
+              <Undo2 className="mr-1.5 h-3.5 w-3.5" />
+              Restore
+            </Button>
+          )
+        ) : (
+          <>
+            <Button variant="outline" size="sm" disabled={busy || overCap} onClick={revalidate}>
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+              Re-validate
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy || overCap}
+              onClick={() => setAction('status')}
+            >
+              <Tag className="mr-1.5 h-3.5 w-3.5" />
+              Change status
+            </Button>
+            {(role === 'TEAM_LEAD' || role === 'ADMIN') && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || overCap}
+                onClick={() => setAction('assign')}
+              >
+                <UserCheck className="mr-1.5 h-3.5 w-3.5" />
+                Reassign
+              </Button>
+            )}
+            {role === 'ADMIN' && (
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={busy || overCap}
+                onClick={() => setAction('delete')}
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Delete
+              </Button>
+            )}
+          </>
         )}
       </div>
 

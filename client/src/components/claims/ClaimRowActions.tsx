@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye, Loader2, MoreVertical, RotateCw, Tag, Trash2, UserCheck } from 'lucide-react';
+import { Eye, Loader2, MoreVertical, RotateCw, Tag, Trash2, Undo2, UserCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import {
   DropdownMenu,
@@ -30,6 +30,9 @@ interface ClaimRowActionsProps {
    * difference between "re-validate did nothing" and "your claim is 40th in line".
    */
   validationState?: 'QUEUED' | 'RUNNING' | null;
+  /** True for a soft-deleted row. Everything but "restore" fails on one — canEditClaim is
+   *  false for any non-ACTIVE claim — so the menu offers only the way back. */
+  deleted?: boolean;
   role: Role;
   statusOptions: Option[];
   assigneeOptions: Option[];
@@ -46,6 +49,7 @@ export function ClaimRowActions({
   claimLabel,
   canAct,
   validationState = null,
+  deleted = false,
   role,
   statusOptions,
   assigneeOptions,
@@ -137,7 +141,7 @@ export function ClaimRowActions({
         type="button"
         className={iconButton}
         onClick={revalidate}
-        disabled={busy}
+        disabled={busy || deleted}
         title={
           busy
             ? 'Queueing re-validation…'
@@ -187,24 +191,35 @@ export function ClaimRowActions({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => setAction('status')}>
-            <Tag className="mr-2 h-4 w-4" />
-            Change status
-          </DropdownMenuItem>
-          {(role === 'TEAM_LEAD' || role === 'ADMIN') && (
-            <DropdownMenuItem onClick={() => setAction('assign')}>
-              <UserCheck className="mr-2 h-4 w-4" />
-              Reassign
-            </DropdownMenuItem>
-          )}
-          {role === 'ADMIN' && (
-            <DropdownMenuItem
-              className="text-red-600 focus:text-red-600"
-              onClick={() => setAction('delete')}
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Delete claim
-            </DropdownMenuItem>
+          {deleted ? (
+            role === 'ADMIN' && (
+              <DropdownMenuItem onClick={() => setAction('restore')}>
+                <Undo2 className="mr-2 h-4 w-4" />
+                Restore claim
+              </DropdownMenuItem>
+            )
+          ) : (
+            <>
+              <DropdownMenuItem onClick={() => setAction('status')}>
+                <Tag className="mr-2 h-4 w-4" />
+                Change status
+              </DropdownMenuItem>
+              {(role === 'TEAM_LEAD' || role === 'ADMIN') && (
+                <DropdownMenuItem onClick={() => setAction('assign')}>
+                  <UserCheck className="mr-2 h-4 w-4" />
+                  Reassign
+                </DropdownMenuItem>
+              )}
+              {role === 'ADMIN' && (
+                <DropdownMenuItem
+                  className="text-red-600 focus:text-red-600"
+                  onClick={() => setAction('delete')}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete claim
+                </DropdownMenuItem>
+              )}
+            </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
