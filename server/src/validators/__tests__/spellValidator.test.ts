@@ -36,11 +36,18 @@ describe('spellValidator', () => {
     const doc = 'Insured Name: Rajesh Dass\nEmployee salary slip for the month';
     const res = await spellValidator.run(ctx(doc));
     expect(res.status).toBe('PASSED');
-    expect(res.findings.map((f) => f.data?.word)).not.toContain('dass');
+    expect((res.findings ?? []).map((f) => f.data?.word)).not.toContain('dass');
   });
   it('still flags a misspelled form word on a document that carries a name', async () => {
     // Suppression is by exact token, so the name shields itself and nothing else.
     const doc = 'Insured Name: Rajesh Dass\nEmployee profesion listed on the salary slip';
+    expect((await spellValidator.run(ctx(doc))).status).toBe('FAILED');
+  });
+  it('does not let a name capture that ran into the next field silence a misspelling', async () => {
+    // OCR puts two fields on one line, so the name capture runs to the next colon and
+    // returns "Rajesh Dass profesion". Unbounded, "profesion" joined the suppression set
+    // and the real misspelling went unreported.
+    const doc = 'Employee Name: Rajesh Dass profesion: Engineer on the salary slip';
     expect((await spellValidator.run(ctx(doc))).status).toBe('FAILED');
   });
   it('PASSES (N/A) when there is no text', async () => {

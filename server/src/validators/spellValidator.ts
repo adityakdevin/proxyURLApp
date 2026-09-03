@@ -52,6 +52,10 @@ function indexBoxes(boxes: WordBox[]): Map<string, WordBox[]> {
  *  than as a misspelling. Digital PDF text has no confidence and is never softened. */
 const LOW_OCR_CONFIDENCE = 70;
 
+/** Words of a name beyond this are spillover from the next field, not part of the name.
+ *  Three covers every name on the reviewer sheet ("Umakant Gulabrao Shendge"). */
+const NAME_WORD_CAP = 3;
+
 /** Every word used in a person's name anywhere in the claim, lowercased.
  *
  *  A surname is in no dictionary and carries no language model, so it lands a single edit
@@ -69,7 +73,13 @@ function claimNameWords(shared: Map<string, string>): Set<string> {
   const out = new Set<string>();
   for (const text of shared.values()) {
     for (const name of [...extractNames(text), ...extractRelationNames(text)]) {
-      for (const w of name.toLowerCase().match(/[a-z]+/g) ?? []) out.add(w);
+      // First NAME_WORD_CAP words only. The label-anchored capture runs to the next colon,
+      // so when OCR puts two fields on one line ("Employee Name: Rajesh Dass profesion:
+      // Engineer") it returns "Rajesh Dass profesion" and the next field's label rides in
+      // as a name word — suppressing a genuine misspelling claim-wide. Bounding the run
+      // keeps the spillover to names longer than any real one.
+      const words = (name.toLowerCase().match(/[a-z]+/g) ?? []).slice(0, NAME_WORD_CAP);
+      for (const w of words) out.add(w);
     }
   }
   return out;

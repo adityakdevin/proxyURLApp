@@ -79,4 +79,13 @@ describe('ID card field extraction', () => {
     const bare = PAN.replace('RAVI SHANKAR ATA', 'MR RAVI SHANKAR');
     expect(valueOf(bare, 'PAN', 'Holder Name')).toBe('RAVI SHANKAR');
   });
+
+  // The label-anchored reader, isolated from the line-position fallback that masked it:
+  // CAPS_NAME_RE stops at the dot and captures a bare "MR", so the salutation has to come
+  // off the window BEFORE the matcher runs or the name is never seen at all.
+  it('reads a dotted salutation off a labelled name, not just via line position', () => {
+    const card = `Permanent Account Number Card\nHOQPS6933P\nName : MR. RAVI SHANKAR\n` +
+      `57 %7 ATH | Father's Name\nJAY SINGH\n20/07/1994`;
+    expect(valueOf(card, 'PAN', 'Holder Name')).toBe('RAVI SHANKAR');
+  });
 });
