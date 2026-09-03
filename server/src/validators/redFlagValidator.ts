@@ -11,7 +11,8 @@
  * I/O (readPdfInfo for the Producer/Creator watermark check) lives HERE; redFlagLogic
  * and segment stay pure so their unit tests run under jest (spec decision 2).
  */
-import { Validator, ValidatorContext, FindingInput } from './types.js';
+import { Validator, ValidatorContext, FindingInput, WordBox } from './types.js';
+import { BBox, unionBBox } from '../lib/bbox.js';
 import { segment, DocInstance } from './segment.js';
 import { crossDocFieldFindings } from './crossDocLogic.js';
 import { readPdfInfo } from '../lib/pdfExtractor.js';
@@ -44,19 +45,95 @@ const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlag
   AADHAR: [checkAadhaarFormat, checkVid],
 };
 
-const toFinding = (documentId: string, f: RedFlagFinding): FindingInput => ({
-  documentId,
-  code: f.code,
-  severity: f.severity,
-  message: f.message,
-  page: f.page ?? null,
-  data: f.data,
-});
+// ── Anchoring a finding to the page ───────────────────────────────────────────────────
+// A red flag named a page and stopped there, so a reviewer told "VID is 14 digits, not 16"
+// had to hunt page 3 by eye for the number in question. Every rule already quotes the exact
+// offending value in its message and carries it in `data`, and META fills ctx.wordBoxes with
+// coordinates for scanned AND digital PDFs alike — so the box can simply be looked up.
+
+/** Compare on alphanumerics only: a VID prints as "9150 6457 2260 8544" and is recorded as
+ *  "9150645722608544", and a PAN may carry stray punctuation from OCR. */
+const norm = (s: string) => s.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+
+/** Below this a value is too short to identify one place on a page — a 4-character match
+ *  would land on the first coincidence rather than the thing the finding is about. */
+const MIN_LOCATABLE = 6;
+
+/** How many consecutive word boxes a single value may span. Four covers a grouped Aadhaar
+ *  number; the cap keeps the scan linear and stops a run swallowing half a line. */
+const MAX_SPAN = 8;
+
+/** The value this finding is about, if it names one distinctive enough to search for.
+ *  Reads `data` generically rather than per-code: every rule stores its candidate there
+ *  under its own key ({vid}, {aadhaar}, {pan}, {values: [...]}), and a switch over those
+ *  keys is one more place to forget a new rule. */
+function locatableValue(data?: Record<string, unknown>): string | null {
+  for (const v of Object.values(data ?? {})) {
+    const s = typeof v === 'string' ? v : Array.isArray(v) && typeof v[0] === 'string' ? v[0] : null;
+    if (s && norm(s).length >= MIN_LOCATABLE) return s;
+  }
+  return null;
+}
+
+/** Where `value` sits on `page`, as one box around it — the FIRST occurrence, matching how
+ *  spellValidator consumes word boxes in reading order. Null when the page has no
+ *  coordinates (a text-only extraction) or the value cannot be found, in which case the
+ *  finding keeps today's page-number-only behaviour rather than pointing somewhere wrong. */
+function locate(boxes: WordBox[], page: number, value: string): BBox | null {
+  const target = norm(value);
+  const onPage = boxes.filter((b) => b.page === page);
+  for (let i = 0; i < onPage.length; i++) {
+    let acc = '';
+    const run: WordBox[] = [];
+    for (let j = i; j < Math.min(i + MAX_SPAN, onPage.length); j++) {
+      acc += norm(onPage[j].text);
+      run.push(onPage[j]);
+      if (acc.includes(target)) return unionBBox(trimToValue(run, target).map((b) => b.bbox));
+      // Overshot without matching — this start position cannot produce the value.
+      if (acc.length > target.length * 2) break;
+    }
+  }
+  return null;
+}
+
+/** Drop leading boxes the value does not need. The run is grown from a start position, so
+ *  a match found at "VID : 1234 5678" includes the label box — and a highlight around the
+ *  label as well as the number is a highlight around the wrong thing. */
+function trimToValue(run: WordBox[], target: string): WordBox[] {
+  let start = 0;
+  while (
+    start < run.length - 1 &&
+    run
+      .slice(start + 1)
+      .map((b) => norm(b.text))
+      .join('')
+      .includes(target)
+  ) {
+    start++;
+  }
+  return run.slice(start);
+}
+
+const makeToFinding =
+  (ctx: ValidatorContext) =>
+  (documentId: string, f: RedFlagFinding): FindingInput => {
+    const value = f.page != null ? locatableValue(f.data) : null;
+    return {
+      documentId,
+      code: f.code,
+      severity: f.severity,
+      message: f.message,
+      page: f.page ?? null,
+      bbox: value ? locate(ctx.wordBoxes.get(documentId) ?? [], f.page!, value) : null,
+      data: f.data,
+    };
+  };
 
 export const redFlagValidator: Validator = {
   key: 'REDFLAG',
   column: 'redFlagStatus',
   async run(ctx) {
+    const toFinding = makeToFinding(ctx);
     const instances = segment(ctx);
     if (instances.length === 0) {
       return { status: 'PASSED', summary: 'No document pages to check.' };
