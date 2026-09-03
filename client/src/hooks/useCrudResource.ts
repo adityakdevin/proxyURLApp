@@ -155,7 +155,13 @@ export function useCrudResource<T extends Statusful>(opts: UseCrudResourceOption
     if (!selectedItem) return;
     const newStatus = selectedItem.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
     const ok = await runMutation(
-      () => api.patch(`${endpoint}/${selectedItem.id}/status`, { status: newStatus }),
+      // PUT /:id, not PATCH /:id/status. Only the claim-rules router ever implemented the
+      // /status endpoint, so Deactivate answered 404 on URL Configs, Projects,
+      // Sub-Categories and Categories — every page that uses this hook. Every one of those
+      // routers already accepts `status` on its update route, and Projects does its
+      // deactivation side-effect there (signing out the users who lose access), so this is
+      // also the path that already behaves correctly.
+      () => api.put(`${endpoint}/${selectedItem.id}`, { status: newStatus }),
       `${entityName} ${newStatus === 'ACTIVE' ? 'activated' : 'deactivated'} successfully`,
       'Status change failed'
     );
