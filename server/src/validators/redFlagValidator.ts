@@ -88,7 +88,16 @@ function locate(boxes: WordBox[], page: number, value: string): BBox | null {
     for (let j = i; j < Math.min(i + MAX_SPAN, onPage.length); j++) {
       acc += norm(onPage[j].text);
       run.push(onPage[j]);
-      if (acc.includes(target)) return unionBBox(trimToValue(run, target).map((b) => b.bbox));
+      if (acc.includes(target)) {
+        const trimmed = trimToValue(run, target);
+        // The value must START this run, not sit inside a longer token. A GSTIN contains
+        // its own PAN ("27ABCPD1234E1Z5" contains "ABCPD1234E"), so on a page carrying
+        // both, a bare substring match boxes the GSTIN when the finding is about the PAN —
+        // pointing confidently at the wrong thing, which is worse than not pointing.
+        const runText = trimmed.map((b) => norm(b.text)).join('');
+        if (runText.startsWith(target)) return unionBBox(trimmed.map((b) => b.bbox));
+        break; // this start position only matches mid-token; try the next one
+      }
       // Overshot without matching — this start position cannot produce the value.
       if (acc.length > target.length * 2) break;
     }

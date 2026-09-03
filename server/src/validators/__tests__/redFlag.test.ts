@@ -157,6 +157,29 @@ describe('red flag highlights', () => {
     expect(vid!.bbox).toBeNull();
   });
 
+  it('does not box a longer token that merely contains the value', async () => {
+    // A GSTIN contains its own PAN: "27ABCPD1234E1Z5" contains "ABCPD1234E". On a page
+    // carrying both, a bare substring match boxes the GSTIN when the finding is about the
+    // PAN — pointing confidently at the wrong thing, which is worse than not pointing.
+    const PAN_PAGE = 'INCOME TAX DEPARTMENT permanent account number\nGSTIN 27ABCPD1234E1Z5\nPAN ABCPD1234X';
+    const boxes = [
+      { text: 'GSTIN', page: 1, bbox: { x: 0.1, y: 0.2, w: 0.05, h: 0.02 } },
+      { text: '27ABCPD1234E1Z5', page: 1, bbox: { x: 0.2, y: 0.2, w: 0.2, h: 0.02 } },
+      { text: 'PAN', page: 1, bbox: { x: 0.1, y: 0.4, w: 0.04, h: 0.02 } },
+      { text: 'ABCPD1234X', page: 1, bbox: { x: 0.2, y: 0.4, w: 0.15, h: 0.02 } },
+    ];
+    const out = await redFlagValidator.run(
+      ctx({
+        pageTexts: new Map([['d1', [PAN_PAGE]]]),
+        shared: new Map([['d1', PAN_PAGE]]),
+        wordBoxes: new Map([['d1', boxes as never]]),
+      })
+    );
+    const pan = out.findings!.find((f) => f.code.startsWith('REDFLAG_PAN') && f.bbox);
+    // Whatever the PAN rule says about ABCPD1234X, it must not be boxed on the GSTIN row.
+    if (pan) expect(pan.bbox).toMatchObject({ y: 0.4 });
+  });
+
   it('does not box a value that is not on the page it claims', async () => {
     const out = await run(vidBoxes(2));
     const vid = out.findings!.find((f) => f.code === 'REDFLAG_VID_FORMAT');
