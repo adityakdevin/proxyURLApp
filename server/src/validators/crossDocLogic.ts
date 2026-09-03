@@ -73,6 +73,15 @@ function pageType(p: CrossPage): DocTypeCode | 'UNKNOWN' {
 // ── Name handling ────────────────────────────────────────────────────────────────
 const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'shri', 'smt', 'sri', 'thiru', 'dr', 'master', 'kum', 'm/s', 'ms/']);
 
+/** The same list as a leading-run stripper, for the places that need the name with its
+ *  original casing rather than nameTokens' lowercased split. `(?![A-Za-z])` rather than
+ *  `\b`: JavaScript counts `_` as a word character, so `\b` never fires between "MR" and
+ *  the underscore of "MR_RAVI SHANKAR", the form OCR produces when it fuses the two. The
+ *  lookahead stops at the underscore, the dot and the end of the string alike, and still
+ *  refuses to bite into a name like "MSINGH". */
+const HONORIFIC_RE = /^(?:M\/S|MS\/|MRS|MR|MS|SHRI|SMT|SRI|THIRU|DR|MASTER|KUM)(?![A-Za-z])[_.\s]*/i;
+export const dropHonorific = (v: string) => v.replace(HONORIFIC_RE, '').trim();
+
 /** Lowercase alnum tokens, honorifics dropped. "Mr. Rajesh Kumar" → ["rajesh","kumar"]. */
 export function nameTokens(raw: string): string[] {
   return raw
@@ -266,7 +275,17 @@ export function extractNames(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(NAME_RE)) {
     if ((m[1] ?? '').toLowerCase() && NON_PERSON_NAME_LABEL.has((m[1] ?? '').toLowerCase())) continue;
-    const v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
+    let v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
+    // The value runs until a character the name class rejects, and ':' is one — so when OCR
+    // puts two fields on one line ("Employee Name: Rajesh Dass profesion: Engineer") the
+    // NEXT field's label is the last word of this "name". A colon right after the match is
+    // what identifies it; drop that word rather than carry a label into a person's name.
+    if (/^\s*:/.test(text.slice((m.index ?? 0) + m[0].length))) {
+      v = v.split(' ').slice(0, -1).join(' ');
+    }
+    // A salutation is no part of a name: reviewers compare "Lalit Mohan" against the salary
+    // slip, not "Mr. Lalit Mohan", and nameMatches already drops honorifics on both sides.
+    v = dropHonorific(v);
     if (v && !isLabelValue(v)) out.push(v);
   }
   return [...new Set(out)].filter((n) => !relations.some((r) => nameMatches(n, r)));
