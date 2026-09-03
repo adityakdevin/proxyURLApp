@@ -787,6 +787,77 @@ async function validateSession(req: Request, res: Response): Promise<string | nu
 }
 
 // Main proxy route - handles both initial request and sub-resources
+// These two are declared BEFORE the catch-all below, and must stay there. `/:opaqueId/*`
+// happily matches /proxy/redirect/<id> with opaqueId="redirect" and /proxy/health/headless
+// with opaqueId="health", so declared after it they were dead: the health check answered
+// SESSION_EXPIRED instead of a health status, and the NEW_WINDOW redirect resolved as a
+// proxy request for a URL config that does not exist. Same trap the claims router
+// documents for its bulk/* routes.
+
+// Redirect endpoint for NEW_WINDOW mode (logs access then redirects)
+router.get('/redirect/:opaqueId', async (req: Request, res: Response) => {
+  try {
+    const userId = await validateSession(req, res);
+    if (!userId) return;
+
+    const prisma = req.app.get('prisma') as PrismaClient;
+    const proxyService = new ProxyService(prisma);
+    const auditLogService = new AuditLogService(prisma);
+    const { opaqueId } = req.params;
+
+    // Validate access
+    const accessResult = await proxyService.validateAccess(userId, opaqueId);
+
+    if (!accessResult.authorized || !accessResult.urlConfig) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Log the redirect access
+    auditLogService.logAccess({
+      userId,
+      projectId: accessResult.projectId!,
+      urlConfigId: accessResult.urlConfig.id,
+      targetUrl: accessResult.urlConfig.targetUrl,
+      requestMethod: 'GET',
+      responseStatus: 302,
+      durationMs: 0,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+    });
+
+    // Redirect to actual target URL
+    res.redirect(302, accessResult.urlConfig.targetUrl);
+  } catch (error) {
+    console.error('Redirect error:', error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+});
+
+
+// Health check endpoint for headless manager
+router.get('/health/headless', async (_req: Request, res: Response) => {
+  try {
+    const headlessManager = getHeadlessManager();
+    const metrics = headlessManager.getMetrics();
+
+    const status = metrics.queueLength >= metrics.queueMaxSize
+      ? 'degraded'
+      : metrics.activeSessions >= metrics.maxSessions
+        ? 'busy'
+        : 'healthy';
+
+    res.json({
+      status,
+      ...metrics
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'unhealthy',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 router.all('/:opaqueId/*', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = await validateSession(req, res);
@@ -1066,67 +1137,5 @@ function wrapHeadlessContent(html: string, _opaqueId: string, _sessionId: string
   return html;
 }
 
-// Redirect endpoint for NEW_WINDOW mode (logs access then redirects)
-router.get('/redirect/:opaqueId', async (req: Request, res: Response) => {
-  try {
-    const userId = await validateSession(req, res);
-    if (!userId) return;
-
-    const prisma = req.app.get('prisma') as PrismaClient;
-    const proxyService = new ProxyService(prisma);
-    const auditLogService = new AuditLogService(prisma);
-    const { opaqueId } = req.params;
-
-    // Validate access
-    const accessResult = await proxyService.validateAccess(userId, opaqueId);
-
-    if (!accessResult.authorized || !accessResult.urlConfig) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    // Log the redirect access
-    auditLogService.logAccess({
-      userId,
-      projectId: accessResult.projectId!,
-      urlConfigId: accessResult.urlConfig.id,
-      targetUrl: accessResult.urlConfig.targetUrl,
-      requestMethod: 'GET',
-      responseStatus: 302,
-      durationMs: 0,
-      ipAddress: req.ip || req.socket.remoteAddress,
-      userAgent: req.headers['user-agent'],
-    });
-
-    // Redirect to actual target URL
-    res.redirect(302, accessResult.urlConfig.targetUrl);
-  } catch (error) {
-    console.error('Redirect error:', error);
-    res.status(500).json({ error: 'An error occurred' });
-  }
-});
-
-// Health check endpoint for headless manager
-router.get('/health/headless', async (_req: Request, res: Response) => {
-  try {
-    const headlessManager = getHeadlessManager();
-    const metrics = headlessManager.getMetrics();
-
-    const status = metrics.queueLength >= metrics.queueMaxSize
-      ? 'degraded'
-      : metrics.activeSessions >= metrics.maxSessions
-        ? 'busy'
-        : 'healthy';
-
-    res.json({
-      status,
-      ...metrics
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'unhealthy',
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
 
 export default router;
