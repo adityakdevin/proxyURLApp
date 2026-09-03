@@ -11,6 +11,22 @@ import { deriveCheckStatus } from '../validators/logic.js';
 
 /** Bound the rows written per check so a noisy OCR page can't flood the table. */
 const MAX_FINDINGS_PER_RESULT = 200;
+
+/**
+ * Interactive-transaction budget for the writes a validation run makes.
+ *
+ * Prisma's default is 5 seconds, measured from BEGIN. That is not enough on the box this
+ * runs on — an i5-6400T with MySQL on the same 8 GB — when a check lands up to
+ * MAX_FINDINGS_PER_RESULT rows in one createMany while a second claim is validating
+ * alongside it. Observed in production: "Transaction already closed ... the timeout for
+ * this transaction was 5000 ms, however 7009 ms passed", which failed the whole run and
+ * reset every column to PENDING, so a claim lost its results for no reason a reviewer
+ * could see.
+ *
+ * maxWait covers acquiring a pooled connection under that same contention; without raising
+ * it the wait itself can exhaust the budget before any work starts.
+ */
+const TX = { timeout: 30_000, maxWait: 15_000 };
 import { resolveScanRoot } from '../lib/directoryReader.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
 
@@ -160,7 +176,7 @@ export class ValidationService {
           where: { id: runId },
           data: { status: 'COMPLETED', finishedAt: new Date() },
         });
-      });
+      }, TX);
       return true;
     }
 
@@ -294,7 +310,7 @@ export class ValidationService {
             where: { id: claim.id },
             data: { [r.v.column]: r.status },
           });
-        });
+        }, TX);
       };
 
       // META first, ALONE: it performs the OCR and PDF text extraction, and fills
@@ -334,7 +350,7 @@ export class ValidationService {
           where: { id: runId },
           data: { status: 'COMPLETED', finishedAt: new Date() },
         });
-      });
+      }, TX);
     } catch (e) {
       try {
         // The COMPLETED commit never ran, so columns are still IN_PROGRESS:
@@ -352,7 +368,7 @@ export class ValidationService {
             where: { id: run.claimId },
             data: Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])),
           });
-        });
+        }, TX);
       } catch {
         // The run (or its claim) was deleted mid-flight — nothing left to record.
       }
@@ -396,6 +412,6 @@ export class ValidationService {
         });
       }
       return { count: res.count, claimIds };
-    });
+    }, TX);
   }
 }
