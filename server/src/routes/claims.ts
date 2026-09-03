@@ -158,8 +158,12 @@ const bulkTargets = async (req: ScopedRequest, res: Response): Promise<BulkTarge
   return { ids: r.ids, targeting: r.targeting, filters: r.filters };
 };
 
-/** Who is running this action, for the audit row. req.ip is behind the app's trust-proxy
- *  setting, so it is the client address rather than the load balancer's. */
+/** Who is running this action, for the audit row.
+ *  ponytail: `trust proxy` is NOT set on the app, so behind the IIS/ARR front end that
+ *  docs/DEPLOYMENT.md describes this records the proxy's address, not the operator's. The
+ *  userId is the field an investigation actually turns on; the IP is corroboration. Setting
+ *  it app-wide is deliberately not done here — req.ip also feeds the login lockout and its
+ *  progressive delay, so flipping it belongs in a change that can reason about those. */
 const auditor = (req: ScopedRequest, action: ClaimAuditAction) => ({
   action,
   userId: req.session!.userId,

@@ -59,7 +59,11 @@ router.get(
           where,
           skip,
           take,
-          orderBy: { createdAt: sortOrder as 'asc' | 'desc' },
+          // `id` breaks a createdAt tie. Offset pagination over an unstable order can show
+          // one row twice and skip another between pages, and ties are the NORM here: a
+          // bulk action and its neighbours land in the same second, which is exactly when
+          // an investigation is reading.
+          orderBy: [{ createdAt: sortOrder as 'asc' | 'desc' }, { id: sortOrder as 'asc' | 'desc' }],
           include: { user: { select: { id: true, username: true, fullName: true } } },
         }),
         prisma.claimAuditLog.count({ where }),

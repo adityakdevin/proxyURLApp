@@ -157,6 +157,12 @@ export async function resolveTargets(
   // would have the audit row name a scope the server refused to apply. `scope`/`callerId`
   // are caller context rather than filter criteria, so they stay out of the record.
   const { scope: _scope, callerId: _callerId, ...applied } = filters;
+  // Lifecycle is DERIVED, never echoed: ClaimService.buildWhere honours `status` only for a
+  // scope of ALL and forces ACTIVE otherwise, so a scoped caller asking for INACTIVE acts on
+  // the active set. Recording the request rather than that rule left the row describing a
+  // target set the server never touched — in both directions, since an absent status still
+  // means ACTIVE was applied.
+  applied.status = caller.scope === 'ALL' ? applied.status ?? 'ACTIVE' : 'ACTIVE';
   return {
     ids: matched,
     targeting: ClaimAuditTargeting.FILTERS,

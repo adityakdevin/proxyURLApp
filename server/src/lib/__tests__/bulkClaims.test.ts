@@ -206,8 +206,22 @@ describe('claim audit row', () => {
     );
     if (r.error) throw new Error(`unexpected refusal: ${r.error.code}`);
     // assignedToMe is absent, not false: parseFilters coerces the missing flag to false and
-    // recording that would describe a narrowing the caller never asked for.
-    expect(r.filters).toEqual({ search: 'abc' });
+    // recording that would describe a narrowing the caller never asked for. status IS
+    // present: buildWhere applies ACTIVE when none is named, so the row says so.
+    expect(r.filters).toEqual({ search: 'abc', status: 'ACTIVE' });
+  });
+
+  it('records the lifecycle buildWhere will apply, not the one a scoped caller asked for', async () => {
+    // buildWhere honours `status` only for scope ALL. A scoped caller asking for the deleted
+    // set acts on the ACTIVE one, and the row has to say ACTIVE or it names a set that was
+    // never touched.
+    const r = await resolveTargets(
+      stubService({ ids: [], total: 0 }),
+      { filters: { status: 'INACTIVE' } },
+      { scope: { subCategoryIds: ['s'] }, callerId: 'caller', role: 'TEAM_LEAD' }
+    );
+    if (r.error) throw new Error(`unexpected refusal: ${r.error.code}`);
+    expect(r.filters).toEqual({ status: 'ACTIVE' });
   });
 });
 
