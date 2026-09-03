@@ -50,6 +50,14 @@ describe('spellValidator', () => {
     const doc = 'Employee Name: Rajesh Dass profesion: Engineer on the salary slip';
     expect((await spellValidator.run(ctx(doc))).status).toBe('FAILED');
   });
+  it('suppresses a surname however many words the name has', async () => {
+    // A word cap here made name LENGTH decide whether a surname is spell-flagged: at three,
+    // "Mohammed Abdul Rahman Dass" left "Dass" exposed as the "days" near-miss.
+    const doc = 'Insured Name: Mohammed Abdul Rahman Dass\nEmployee salary slip';
+    const res = await spellValidator.run(ctx(doc));
+    expect(res.status).toBe('PASSED');
+    expect((res.findings ?? []).map((f) => f.data?.word)).not.toContain('dass');
+  });
   it('PASSES (N/A) when there is no text', async () => {
     expect((await spellValidator.run(ctx(''))).status).toBe('PASSED');
   });
