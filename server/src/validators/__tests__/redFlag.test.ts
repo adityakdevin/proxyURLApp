@@ -186,3 +186,27 @@ describe('red flag highlights', () => {
     expect(vid!.bbox).toBeNull();
   });
 });
+
+describe('red flags no longer carry the cross-document comparison', () => {
+  it('reports format problems but not a value that merely disagrees between documents', async () => {
+    // A chassis that differs between the invoice and the policy is a COMPARISON, and it is
+    // reported by FULL now. Red Flags is the format rules. Without this the same finding
+    // appeared under two tabs and a reviewer counted one problem twice.
+    const invoice = 'TAX INVOICE Invoice No 1\nChassis No: MAT1234567890';
+    const policy = 'Policy No 9 Insured X Premium 1 Sum Insured 2\nChassis Number: MAT9999999999';
+    const out = await redFlagValidator.run(
+      ctx({
+        documents: [doc({ id: 'd1' }), doc({ id: 'd2' })],
+        pageTexts: new Map([
+          ['d1', [invoice]],
+          ['d2', [policy]],
+        ]),
+        shared: new Map([
+          ['d1', invoice],
+          ['d2', policy],
+        ]),
+      })
+    );
+    expect(out.findings!.some((f) => f.code.startsWith('CROSS_'))).toBe(false);
+  });
+});

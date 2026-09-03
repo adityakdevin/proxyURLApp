@@ -14,7 +14,6 @@
 import { Validator, ValidatorContext, FindingInput, WordBox } from './types.js';
 import { BBox, unionBBox } from '../lib/bbox.js';
 import { segment, DocInstance } from './segment.js';
-import { crossDocFieldFindings } from './crossDocLogic.js';
 import { readPdfInfo } from '../lib/pdfExtractor.js';
 import {
   checkPan,
@@ -188,13 +187,9 @@ export const redFlagValidator: Validator = {
       }
     }
 
-    // Cross-document field consistency (Phase 1 High) — claim-wide, across every
-    // classified page. Findings already carry their own documentId (the outlier's).
-    findings.push(
-      ...crossDocFieldFindings(
-        instances.map((i) => ({ documentId: i.documentId, page: i.page, text: i.text, govtCode: i.govtCode }))
-      )
-    );
+    // Cross-document field consistency moved to FULL. Red Flags is the format rules — a
+    // malformed PAN, a 14-digit VID, an editor watermark. A value that disagrees BETWEEN
+    // documents is a comparison, and Full Scan is the tab named after doing that.
 
     const errors = findings.filter((f) => f.severity === 'ERROR').length;
     const warnings = findings.filter((f) => f.severity === 'WARNING').length;
