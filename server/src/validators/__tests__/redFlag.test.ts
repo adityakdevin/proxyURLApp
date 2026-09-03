@@ -105,3 +105,84 @@ describe('redFlagValidator', () => {
     expect(out.findings!.some((f) => f.code === 'REDFLAG_NO_SIGNATURE')).toBe(true);
   });
 });
+
+describe('red flag highlights', () => {
+  // An Aadhaar page whose VID is 14 digits, which checkVid flags. The number prints in
+  // groups, so OCR hands back four word boxes and the highlight has to cover all four.
+  const AADHAAR_PAGE = 'UIDAI GOVERNMENT OF INDIA\nAadhaar 4665 5221 0629\nVID : 1234 5678 9012 34';
+  const vidBoxes = (page = 1) => [
+    { text: 'VID', page, bbox: { x: 0.10, y: 0.50, w: 0.05, h: 0.02 } },
+    { text: '1234', page, bbox: { x: 0.20, y: 0.50, w: 0.06, h: 0.02 } },
+    { text: '5678', page, bbox: { x: 0.28, y: 0.50, w: 0.06, h: 0.02 } },
+    { text: '9012', page, bbox: { x: 0.36, y: 0.50, w: 0.06, h: 0.02 } },
+    { text: '34', page, bbox: { x: 0.44, y: 0.51, w: 0.04, h: 0.03 } },
+  ];
+  const run = (boxes: { text: string; page: number; bbox: unknown }[]) =>
+    redFlagValidator.run(
+      ctx({
+        pageTexts: new Map([['d1', [AADHAAR_PAGE]]]),
+        shared: new Map([['d1', AADHAAR_PAGE]]),
+        wordBoxes: new Map([['d1', boxes as never]]),
+      })
+    );
+
+  it('boxes the offending value, spanning every word box it was split across', async () => {
+    const out = await run(vidBoxes());
+    const vid = out.findings!.find((f) => f.code === 'REDFLAG_VID_FORMAT');
+    expect(vid).toBeDefined();
+    expect(vid!.page).toBe(1);
+    // Union of the four digit groups: from the first group's left edge to the last one's
+    // right, and tall enough to cover the group that sits slightly lower.
+    const b = vid!.bbox!;
+    expect(b.x).toBeCloseTo(0.2);   // the first digit group, NOT the "VID" label before it
+    expect(b.y).toBeCloseTo(0.5);
+    expect(b.w).toBeCloseTo(0.28);  // through to the right edge of the last group
+    expect(b.h).toBeCloseTo(0.04);  // tall enough for the group sitting slightly lower
+  });
+
+  it('takes the FIRST occurrence when the value appears more than once', async () => {
+    const later = vidBoxes().map((b) => ({ ...b, bbox: { ...b.bbox, y: 0.8 } }));
+    const out = await run([...vidBoxes(), ...later]);
+    const vid = out.findings!.find((f) => f.code === 'REDFLAG_VID_FORMAT');
+    expect(vid!.bbox).toMatchObject({ y: 0.5 });
+  });
+
+  it('keeps page-only behaviour when the page has no coordinates', async () => {
+    // A text-only extraction yields no word boxes. The finding must still be reported —
+    // pointing nowhere is right, pointing somewhere wrong is not.
+    const out = await run([]);
+    const vid = out.findings!.find((f) => f.code === 'REDFLAG_VID_FORMAT');
+    expect(vid).toBeDefined();
+    expect(vid!.page).toBe(1);
+    expect(vid!.bbox).toBeNull();
+  });
+
+  it('does not box a longer token that merely contains the value', async () => {
+    // A GSTIN contains its own PAN: "27ABCPD1234E1Z5" contains "ABCPD1234E". On a page
+    // carrying both, a bare substring match boxes the GSTIN when the finding is about the
+    // PAN — pointing confidently at the wrong thing, which is worse than not pointing.
+    const PAN_PAGE = 'INCOME TAX DEPARTMENT permanent account number\nGSTIN 27ABCPD1234E1Z5\nPAN ABCPD1234X';
+    const boxes = [
+      { text: 'GSTIN', page: 1, bbox: { x: 0.1, y: 0.2, w: 0.05, h: 0.02 } },
+      { text: '27ABCPD1234E1Z5', page: 1, bbox: { x: 0.2, y: 0.2, w: 0.2, h: 0.02 } },
+      { text: 'PAN', page: 1, bbox: { x: 0.1, y: 0.4, w: 0.04, h: 0.02 } },
+      { text: 'ABCPD1234X', page: 1, bbox: { x: 0.2, y: 0.4, w: 0.15, h: 0.02 } },
+    ];
+    const out = await redFlagValidator.run(
+      ctx({
+        pageTexts: new Map([['d1', [PAN_PAGE]]]),
+        shared: new Map([['d1', PAN_PAGE]]),
+        wordBoxes: new Map([['d1', boxes as never]]),
+      })
+    );
+    const pan = out.findings!.find((f) => f.code.startsWith('REDFLAG_PAN') && f.bbox);
+    // Whatever the PAN rule says about ABCPD1234X, it must not be boxed on the GSTIN row.
+    if (pan) expect(pan.bbox).toMatchObject({ y: 0.4 });
+  });
+
+  it('does not box a value that is not on the page it claims', async () => {
+    const out = await run(vidBoxes(2));
+    const vid = out.findings!.find((f) => f.code === 'REDFLAG_VID_FORMAT');
+    expect(vid!.bbox).toBeNull();
+  });
+});
