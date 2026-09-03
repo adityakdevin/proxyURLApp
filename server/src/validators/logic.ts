@@ -370,6 +370,29 @@ export const MIN_TERM_LEN = 4;
  * `terms` defaults to the built-in EXPECTED_TERMS; the validator passes the
  * admin-managed list. Terms shorter than 4 chars are ignored (too noisy).
  */
+/** Terms shipped in EXPECTED_TERMS are known-good vocabulary by definition. Several are not
+ *  in the US dictionary on purpose — every month name, 'pincode', and the British
+ *  'authorised' (which is listed BECAUSE dictionary-en rejects it) — so the proper-noun
+ *  test below has to exempt them or it demotes 8% of the vocabulary it ships with. Mirrors
+ *  the BUILT_IN exemption in spellTermService.properNounWarning. */
+const BUILT_IN_TERMS = new Set(EXPECTED_TERMS);
+
+/**
+ * Is this term a proper noun — a place, brand or surname rather than form vocabulary?
+ *
+ * The heuristic is the one spellTermService already warns on at entry: a term that is not
+ * an English dictionary word in its lowercase form is almost certainly a name (dictionary-en
+ * holds proper nouns capitalised only, so 'Bhopal' is known and 'bhopal' is not).
+ *
+ * It matters because a proper noun carries no language model. OCR mangles place names far
+ * more than form words, and a reader cannot tell a forged "Lucnow" from a correctly printed
+ * "Lucknow" our scanner misread — so a hit against one is reported for the reviewer's eye
+ * and never allowed to fail a claim on its own.
+ */
+export function isProperNounTerm(term: string, isRealWord: (w: string) => boolean): boolean {
+  return !BUILT_IN_TERMS.has(term) && !isRealWord(term);
+}
+
 export function findTermMisspellings(
   candidates: string[],
   isRealWord: (w: string) => boolean,
@@ -404,7 +427,13 @@ export function findTermMisspellings(
       if (!best || d < best.d || (d === best.d && best.edge && !edge)) best = { term, d, edge };
       if (d === 1 && !edge) break; // can't do better
     }
-    if (best) hits.set(token, { term: best.term, doubtful: isDoubtfulHit(token, best.term, best.d) });
+    if (best) {
+      hits.set(token, {
+        term: best.term,
+        doubtful:
+          isDoubtfulHit(token, best.term, best.d) || isProperNounTerm(best.term, isRealWord),
+      });
+    }
   }
   return [...hits].map(([token, { term, doubtful }]) => ({ token, term, doubtful }));
 }

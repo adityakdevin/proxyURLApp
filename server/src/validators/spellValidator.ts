@@ -54,17 +54,20 @@ const LOW_OCR_CONFIDENCE = 70;
 
 /** Every word used in a person's name anywhere in the claim, lowercased.
  *
- *  A surname is in no dictionary and carries no language model, so it lands a single edit
- *  from an expected term by pure coincidence and hard-fails the check: reviewers saw "Dass"
- *  reported as a misspelling of "days" and "Sahoo" of "school". Their rule, verbatim from
- *  the 2026-09-03 sheet: "Name or Surname spelling not to be highlighted unless different in
- *  intra document" — a name that genuinely disagrees between documents is INTRA/REDFLAG's
- *  job (nameMatches), never SPELL's.
+ *  A hit on one of these is reported as DOUBTFUL rather than suppressed. The 2026-09-03
+ *  sheet asked for names not to be highlighted at all ("Name or Surname spelling not to be
+ *  highlighted unless different in intra document") and they were dropped outright, but the
+ *  follow-up asked for a misspelt name to be visible: ignoring a name "regardless of
+ *  spelling mistakes" hid real errors.
  *
- *  Collected across the WHOLE claim so a name labelled on one document also protects the
- *  documents that print it without a label. Suppression is by exact token, so it only bites
- *  on the name as it was actually read: a misspelling of a form word is spelled differently
- *  from the name token and still gets flagged. */
+ *  Doubtful is the honest tier for it. A surname is in no dictionary, so the matcher can
+ *  only say it RESEMBLES a form word — "Dass" reported against "days", "Sahoo" against
+ *  "school" — which is worth a reviewer's glance and is not grounds to fail a claim. What
+ *  actually catches a wrong name is the cross-document comparison in INTRA/REDFLAG
+ *  (nameMatches), which is what the sheet's "unless different in intra document" meant.
+ *
+ *  Collected across the WHOLE claim so a name labelled on one document is recognised on the
+ *  documents that print it without a label. */
 function claimNameWords(shared: Map<string, string>): Set<string> {
   const out = new Set<string>();
   for (const text of shared.values()) {
@@ -102,7 +105,7 @@ export const spellValidator: Validator = {
     const distinct = new Set<string>();
     const doubtful = new Set<string>();
     for (const [documentId, text] of ctx.shared) {
-      const words = spellCandidates(text).filter((w) => !nameWords.has(w.toLowerCase()));
+      const words = spellCandidates(text);
       if (words.length === 0) continue;
       const s = spell ?? (spell = await getSpell());
       // A token counts as a real word if the dictionary accepts it in its own case
@@ -113,8 +116,12 @@ export const spellValidator: Validator = {
       for (const hit of findTermMisspellings(words, isRealWord, terms)) {
         const { token, term } = hit;
         const box = boxIndex.get(token)?.shift();
-        // A low-confidence OCR read is itself grounds for doubt, whatever the glyphs say.
-        const soft = hit.doubtful || (box?.conf !== undefined && box.conf < LOW_OCR_CONFIDENCE);
+        // A low-confidence OCR read is itself grounds for doubt, whatever the glyphs say, and
+        // so is a word the claim uses as somebody's name.
+        const soft =
+          hit.doubtful ||
+          nameWords.has(token) ||
+          (box?.conf !== undefined && box.conf < LOW_OCR_CONFIDENCE);
         (soft ? doubtful : distinct).add(token);
         const into = soft ? doubtfulSample : sample;
         if (into.length < 50) into.push(`${token}→${term}`);
