@@ -332,6 +332,41 @@ describe('E2E: bulk claim actions', () => {
     expect((await tl.get('/api/admin/claim-audit-logs')).status).toBe(403);
   });
 
+  it('finds a SINGLE-claim audit row by claim id, whatever case the caller spelled it in', async () => {
+    // The gap the casing bug lived in. `param('id').isUUID()` accepts uppercase and MySQL's
+    // utf8mb4_unicode_ci matches the claim either way, so the delete succeeds — but the
+    // JSON claim_ids column is searched with array_contains, an EXACT string match. Writing
+    // the uppercase spelling made the row unfindable by the claim it described, and every
+    // existing assertion passed because Prisma's uuid() is lowercase on both sides.
+    const tl = await loginAs(app, g.teamLead.username);
+    const admin = await loginAs(app, g.admin.username);
+    const id = await createClaim(tl, 'AUD-CASE-1', g.subCategoryId);
+
+    const del = await admin.delete(`/api/admin/claims/${id.toUpperCase()}`);
+    expect(del.status).toBe(200);
+
+    const listed = await admin.get(`/api/admin/claim-audit-logs?claimId=${id}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.data).toHaveLength(1);
+    expect(listed.body.data[0].action).toBe('DELETE');
+    expect(listed.body.data[0].targeting).toBe('SINGLE');
+  });
+
+  it('includes rows from the end date itself, not everything before midnight', async () => {
+    // `new Date('2026-09-03')` is midnight UTC, so an lte against a date-only endDate used
+    // to exclude the whole of that day — "up to today" answered as if nobody had done
+    // anything.
+    const tl = await loginAs(app, g.teamLead.username);
+    const admin = await loginAs(app, g.admin.username);
+    const id = await createClaim(tl, 'AUD-DATE-1', g.subCategoryId);
+    await admin.post('/api/claims/bulk/delete').send({ ids: [id] });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const listed = await admin.get(`/api/admin/claim-audit-logs?endDate=${today}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.data.length).toBeGreaterThan(0);
+  });
+
   it('queues a MANUAL run per claim on the success path of /bulk/validate', async () => {
     const tl = await loginAs(app, g.teamLead.username);
     const a = await createClaim(tl, 'BV-1', g.subCategoryId);
