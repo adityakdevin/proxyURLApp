@@ -207,47 +207,52 @@ export class ValidationService {
       // total ("done in 47s") and the expensive one had to be guessed at.
       const runOneValidator = async (v: Validator): Promise<Ran> => {
         const startedAt = Date.now();
+        let ran: Ran;
         try {
           const outcome = await v.run(ctx);
           // DOUBTFUL is decided here, not per validator: a check that passed but raised
           // warning-level findings must not show the reviewer a green badge.
-          return { ...outcome, v, status: deriveCheckStatus(outcome.status, outcome.findings) };
+          ran = { ...outcome, v, status: deriveCheckStatus(outcome.status, outcome.findings) };
         } catch (e) {
-          return {
+          ran = {
             v,
             status: 'FAILED',
             summary: e instanceof Error ? e.message : 'Validator error',
           };
-        } finally {
-          console.log(
-            `[validation] claim ${claim.claimId} ${v.key} ${Date.now() - startedAt}ms`
-          );
         }
+        console.log(`[validation] claim ${claim.claimId} ${v.key} ${Date.now() - startedAt}ms`);
+        await persist(ran);
+        return ran;
       };
 
-      // META first, ALONE: it performs the OCR and PDF text extraction, and fills
-      // ctx.shared / ctx.wordBoxes / ctx.pageTexts that every other check reads. Nothing
-      // else can start before it finishes.
-      //
-      // The rest then run TOGETHER. They depend on META's output, not on one another, and
-      // running them end to end meant INTRA and FULL — which do no I/O of their own, just a
-      // string search and a doc-type query — sat behind the QR page rasterisation for the
-      // whole of it. Only QR rasterises, so overlapping them costs no extra memory, which
-      // matters on an 8 GB box.
-      const meta = this.validators.filter((v) => v.key === 'META');
-      const rest = this.validators.filter((v) => v.key !== 'META');
-      const results: Ran[] = [];
-      for (const v of meta) results.push(await runOneValidator(v));
-      results.push(...(await Promise.all(rest.map(runOneValidator))));
-      // Back into registry order so the stored rows and the log read predictably.
-      results.sort(
-        (a, b) => this.validators.indexOf(a.v) - this.validators.indexOf(b.v)
-      );
-
-      // Commit results + columns + COMPLETED atomically, so a crash mid-run
-      // leaves no partial state (sweepStaleRuns recovers it).
-      await this.prisma.$transaction(async (tx) => {
-        for (const r of results) {
+      /**
+       * Write ONE check's result the moment it finishes, rather than holding all five to the
+       * end. GET /claims/:id/validation serves the latest run whatever its status, so the
+       * reviewer's page fills in as each check lands instead of showing nothing at all for
+       * the length of the slowest one — which on a scanned bundle is the QR rasterisation,
+       * and is why the screen looked frozen.
+       *
+       * The result row, its findings and that check's column move together, so a column can
+       * never read PASSED with no result behind it. What is deliberately GIVEN UP is
+       * all-five atomicity: an interrupted run now leaves some results written. That is
+       * recoverable and visible — the catch below and sweepStaleRuns both reset every column
+       * to PENDING and mark the run FAILED, so the partial rows sit under a run the page
+       * shows as failed, and re-queueing writes a fresh runId.
+       */
+      // Writes are SERIALISED even though the checks are not. Every persist inserts a
+      // validation_results row — which takes a shared lock on the claim row through its
+      // foreign key — and then updates that same claim row, which needs an exclusive one.
+      // Four of those in flight together each hold a shared lock and wait for the others to
+      // release theirs: MySQL returns "Transaction failed due to a write conflict or a
+      // deadlock" and the whole run fails. Chaining them costs nothing worth measuring (the
+      // expensive part is the checks, which still overlap) and removes the lock upgrade.
+      let writeChain: Promise<void> = Promise.resolve();
+      const persist = (r: Ran): Promise<void> => {
+        writeChain = writeChain.then(() => writeResult(r));
+        return writeChain;
+      };
+      const writeResult = async (r: Ran): Promise<void> => {
+        await this.prisma.$transaction(async (tx) => {
           const created = await tx.validationResult.create({
             data: {
               runId,
@@ -281,13 +286,32 @@ export class ValidationService {
               })),
             });
           }
-        }
-        await tx.claim.update({
-          where: { id: claim.id },
-          data: Object.fromEntries(results.map((r) => [r.v.column, r.status])),
+          await tx.claim.update({
+            where: { id: claim.id },
+            data: { [r.v.column]: r.status },
+          });
         });
-        // Same transaction as the results: a crash must not leave a claim advanced with no
-        // checks written, or checks written with the claim still reading as untouched.
+      };
+
+      // META first, ALONE: it performs the OCR and PDF text extraction, and fills
+      // ctx.shared / ctx.wordBoxes / ctx.pageTexts that every other check reads. Nothing
+      // else can start before it finishes.
+      //
+      // The rest then run TOGETHER. They depend on META's output, not on one another, and
+      // running them end to end meant INTRA and FULL — which do no I/O of their own, just a
+      // string search and a doc-type query — sat behind the QR page rasterisation for the
+      // whole of it. Only QR rasterises, so overlapping them costs no extra memory, which
+      // matters on an 8 GB box.
+      const meta = this.validators.filter((v) => v.key === 'META');
+      const rest = this.validators.filter((v) => v.key !== 'META');
+      const results: Ran[] = [];
+      for (const v of meta) results.push(await runOneValidator(v));
+      results.push(...(await Promise.all(rest.map(runOneValidator))));
+
+      // Results and columns are already written, each as its check finished. What is left is
+      // the once-per-run part, and it stays atomic: the claim must not be advanced off its
+      // default status by a run that is not recorded as COMPLETED, or vice versa.
+      await this.prisma.$transaction(async (tx) => {
         await this.advanceOffDefaultStatus(
           tx,
           claim.id,
