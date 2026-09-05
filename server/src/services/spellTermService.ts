@@ -6,11 +6,14 @@ const BUILT_IN = new Set(EXPECTED_TERMS.map((t) => t.toLowerCase().trim()));
 
 export interface CreateSpellTermInput {
   term: string;
+  /** Set to make this a glossary entry ("pvt" → "Private"). */
+  expansion?: string | null;
   status?: Status;
 }
 
 export interface UpdateSpellTermInput {
   term?: string;
+  expansion?: string | null;
   status?: Status;
 }
 
@@ -43,19 +46,28 @@ function normalize(term: string): string {
  *   (`spellCandidates`), so nothing containing a space is ever within edit distance.
  * - A term under MIN_TERM_LEN is skipped by `findTermMisspellings` as coincidence-prone.
  */
-function assertMatchable(term: string): void {
+function assertMatchable(term: string, isGlossary: boolean): void {
   if (/\s/.test(term)) {
     throw new SpellTermServiceError(
       'INVALID_TERM',
       'A term must be a single word — the spell check compares one word at a time, so a term containing a space can never match. Add each word as its own term.'
     );
   }
-  if (term.length < MIN_TERM_LEN) {
+  // Length only constrains NEAR-MISS terms. A glossary entry is matched exactly, never
+  // fuzzily, so the coincidence argument does not apply — and the abbreviations this exists
+  // for ("pvt", "ltd") are all shorter than the floor.
+  if (!isGlossary && term.length < MIN_TERM_LEN) {
     throw new SpellTermServiceError(
       'INVALID_TERM',
       `A term must be at least ${MIN_TERM_LEN} characters — shorter terms match too many unrelated words to be evidence of anything.`
     );
   }
+}
+
+/** Blank/absent expansion means "ordinary term"; anything else is a glossary entry. */
+function normalizeExpansion(v?: string | null): string | null {
+  const t = (v ?? '').trim();
+  return t.length > 0 ? t : null;
 }
 
 /**
@@ -104,11 +116,13 @@ export class SpellTermService {
 
   async create(input: CreateSpellTermInput, actorId: string): Promise<SpellTerm> {
     const term = normalize(input.term);
-    assertMatchable(term);
+    const expansion = normalizeExpansion(input.expansion);
+    assertMatchable(term, expansion !== null);
     try {
       return await this.prisma.spellTerm.create({
         data: {
           term,
+          expansion,
           status: input.status ?? Status.ACTIVE,
           createdBy: actorId,
           updatedBy: actorId,
@@ -126,12 +140,21 @@ export class SpellTermService {
     const existing = await this.prisma.spellTerm.findUnique({ where: { id } });
     if (!existing) throw new SpellTermServiceError('NOT_FOUND', 'SpellTerm not found');
     const term = input.term !== undefined ? normalize(input.term) : undefined;
-    if (term !== undefined) assertMatchable(term);
+    const expansion =
+      input.expansion !== undefined ? normalizeExpansion(input.expansion) : undefined;
+    // Validate against the expansion this row will HAVE after the update, not the one it
+    // had before — clearing an expansion turns a 3-letter glossary entry back into an
+    // unmatchable term, and that has to be refused rather than silently stored.
+    if (term !== undefined) {
+      const after = expansion !== undefined ? expansion : existing.expansion;
+      assertMatchable(term, after !== null);
+    }
     try {
       return await this.prisma.spellTerm.update({
         where: { id },
         data: {
           ...(term !== undefined ? { term } : {}),
+          ...(expansion !== undefined ? { expansion } : {}),
           ...(input.status !== undefined ? { status: input.status } : {}),
           updatedBy: actorId,
         },
@@ -142,6 +165,57 @@ export class SpellTermService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Bulk glossary import (reviewer request: "feature to be given to upload Glossary").
+   *
+   * Accepts pasted lines in the shape the reviewers already write them — "Pvt - Private",
+   * "Ltd = Limited", "Corpn, Corporation". Upserts rather than inserts: re-importing a
+   * corrected list is the normal way this gets used, and failing the whole run on a term
+   * that already exists would make that impossible.
+   *
+   * Every line is reported on. A partial import that silently drops the three lines it
+   * could not read is worse than one that says which three.
+   */
+  async importGlossary(
+    text: string,
+    actorId: string
+  ): Promise<{ saved: number; failed: { line: string; reason: string }[] }> {
+    const failed: { line: string; reason: string }[] = [];
+    let saved = 0;
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      // First separator wins, so an expansion may itself contain a dash ("Pvt - Private
+      // Limited - Non Banking"). The short form never can: it is one word.
+      const m = /^([^\s,=:-]+)\s*[-,=:]\s*(.+)$/.exec(line);
+      if (!m) {
+        failed.push({ line, reason: 'Expected "short form - expansion"' });
+        continue;
+      }
+      const term = normalize(m[1]);
+      const expansion = normalizeExpansion(m[2]);
+      if (!expansion) {
+        failed.push({ line, reason: 'Expansion is empty' });
+        continue;
+      }
+      try {
+        assertMatchable(term, true);
+        await this.prisma.spellTerm.upsert({
+          where: { term },
+          create: { term, expansion, status: Status.ACTIVE, createdBy: actorId, updatedBy: actorId },
+          update: { expansion, updatedBy: actorId },
+        });
+        saved++;
+      } catch (err) {
+        failed.push({
+          line,
+          reason: err instanceof SpellTermServiceError ? err.message : 'Could not be saved',
+        });
+      }
+    }
+    return { saved, failed };
   }
 
   async setStatus(id: string, status: Status, actorId: string): Promise<SpellTerm> {

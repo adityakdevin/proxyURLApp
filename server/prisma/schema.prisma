@@ -410,6 +410,10 @@ model DocumentTypeMaster {
 model SpellTerm {
   id        String   @id @default(uuid()) @db.VarChar(36)
   term      String   @unique @db.VarChar(100)
+  // Glossary (reviewer request: "Pvt - Private", "Ltd - Limited"). A row WITH an expansion
+  // is a known abbreviation: never flagged as a misspelling, and never used as a
+  // near-miss target either. A row WITHOUT one is an ordinary expected term.
+  expansion String?  @db.VarChar(120)
   status    Status   @default(ACTIVE)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
