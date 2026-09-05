@@ -351,11 +351,6 @@ export default function ClaimDashboard() {
       cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} outcome={row.original.qrOutcome} />,
     },
     {
-      id: 'meta',
-      header: 'Meta',
-      cell: ({ row }) => <ValidationBadge status={row.original.metaExtractionStatus} />,
-    },
-    {
       id: 'intra',
       header: 'Intra-Claim',
       cell: ({ row }) => <ValidationBadge status={row.original.intraClaimStatus} />,

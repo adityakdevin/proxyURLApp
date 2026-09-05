@@ -295,12 +295,6 @@ export default function AdminClaims() {
       cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} outcome={row.original.qrOutcome} />,
     },
     {
-      id: 'meta',
-      header: 'Meta',
-      meta: { sortField: 'metaExtractionStatus' },
-      cell: ({ row }) => <ValidationBadge status={row.original.metaExtractionStatus} />,
-    },
-    {
       id: 'intra',
       header: 'Intra-Claim',
       meta: { sortField: 'intraClaimStatus' },

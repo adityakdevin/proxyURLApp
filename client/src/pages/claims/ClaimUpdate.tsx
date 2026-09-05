@@ -120,30 +120,6 @@ interface RuleEval {
 }
 const OP_SYMBOL: Record<string, string> = { EQ: '=', NEQ: '≠', GTE: '≥', LTE: '≤', GT: '>', LT: '<' };
 
-/** Parse "Label: value" fields out of a document's extracted body text (invoice/form
- *  fields like "Customer Id: C2025…", "Bill To: …"). Skips time-style colons. Returns
- *  [] when the text isn't field-shaped so the caller falls back to raw text. */
-function parseKeyValues(text: string): [string, string][] {
-  const clean = text.replace(/\s+/g, ' ').trim();
-  const re = /([A-Z][A-Za-z0-9 .*%/&()'-]{2,45}?)\s*:(?!\d)\s*/g;
-  const labels: { label: string; start: number; end: number }[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(clean)) !== null) {
-    const keep = m[1].trim().split(' ').slice(-4);
-    while (keep.length > 1 && (/\d/.test(keep[0]) || /\.$/.test(keep[0]) || !/^[A-Z(]/.test(keep[0]))) {
-      keep.shift();
-    }
-    const label = keep.join(' ');
-    if (!/^[A-Z]/.test(label) || label.length < 2) continue;
-    labels.push({ label, start: m.index + m[1].lastIndexOf(label), end: re.lastIndex });
-  }
-  const pairs: [string, string][] = [];
-  for (let i = 0; i < labels.length; i++) {
-    const value = clean.slice(labels[i].end, labels[i + 1]?.start ?? clean.length).trim();
-    if (value) pairs.push([labels[i].label, value]);
-  }
-  return pairs;
-}
 /** Policy QR payloads are "Label:Value" fields joined by "|" (or ","). Split each
  *  field at its label colon — skipping time colons like "11:43AM" — or, for fields
  *  whose colon was omitted ("OD period02 Jul 2025…"), at the first digit. Returns
@@ -198,7 +174,6 @@ const rawPreview = (v: string) =>
 const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof ClaimDetail }[] = [
   { key: 'SPELL', label: 'Spell', column: 'spellCheckStatus' },
   { key: 'QR', label: 'QR', column: 'qrStatus' },
-  { key: 'META', label: 'Meta', column: 'metaExtractionStatus' },
   { key: 'INTRA', label: 'Intra-Claim', column: 'intraClaimStatus' },
   { key: 'REDFLAG', label: 'Red Flags', column: 'redFlagStatus' },
   { key: 'FULL', label: 'Full Scan', column: 'fullScanStatus' },
@@ -387,15 +362,6 @@ export default function ClaimUpdate() {
 
   const [valRun, setValRun] = useState<ValRun | null>(null);
   const [valResults, setValResults] = useState<ValResult[]>([]);
-  // META popup: 'properties' = PDF document metadata (created/modified/producer/…);
-  // 'extracted' = key/value fields parsed from the body text (invoice/form fields).
-  const [metaView, setMetaView] = useState<{
-    fileName: string;
-    text: string;
-    truncated?: boolean;
-    properties?: Record<string, string>;
-    mode: 'properties' | 'extracted';
-  } | null>(null);
   // Popup listing decoded QR values.
   const [qrView, setQrView] = useState<{ fileName: string; value: string; page?: number }[] | null>(
     null
@@ -655,41 +621,6 @@ export default function ClaimUpdate() {
             const findings = res.findings ?? [];
             const groups = findingsByValidator.get(v.key) ?? new Map<string | null, Finding[]>();
             const cardClass = validationStatusCardClass(String(claim[v.column]));
-            // META shows the extracted text itself instead of a plain file list.
-            const extracted = v.key === 'META' ? res.details?.extracted ?? [] : [];
-            const extractedBlock = extracted.length > 0 && (
-              <div className="mt-2 space-y-3">
-                {extracted.map((e) => (
-                  <div key={e.documentId}>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        className="text-sm font-medium text-blue-600 hover:underline"
-                        onClick={() => openDoc(e.documentId, v.key)}
-                      >
-                        {e.fileName}
-                      </button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-xs shrink-0"
-                        onClick={() => setMetaView({ ...e, mode: 'properties' })}
-                      >
-                        View Meta Data
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-xs shrink-0"
-                        onClick={() => setMetaView({ ...e, mode: 'extracted' })}
-                      >
-                        View Extracted Properties
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
             // QR shows a popup with the decoded QR values (old runs only stored bare values).
             const qrButton = v.key === 'QR' && (
               <Button
@@ -730,7 +661,7 @@ export default function ClaimUpdate() {
                   <div>{header}</div>
                   <ChevronDown className="h-4 w-4 mt-1.5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" />
                 </summary>
-                {(findings.length === 0 || v.key === 'FULL') && v.key !== 'META' && docs.length > 0 && (
+                {(findings.length === 0 || v.key === 'FULL') && docs.length > 0 && (
                   <ul className="-mt-3 px-6 pb-6 space-y-1 text-sm text-gray-500">
                     {docs.map((d) => (
                       <li key={d.id}>
@@ -775,11 +706,8 @@ export default function ClaimUpdate() {
                   })}
                 </ul>
                 )}
-                {(extractedBlock || (findings.length > 0 && qrButton)) && (
-                  <div className="-mt-3 px-6 pb-6">
-                    {extractedBlock}
-                    {findings.length > 0 && qrButton}
-                  </div>
+                {findings.length > 0 && qrButton && (
+                  <div className="-mt-3 px-6 pb-6">{qrButton}</div>
                 )}
               </details>
             );
@@ -1055,50 +983,6 @@ export default function ClaimUpdate() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!metaView} onOpenChange={(o) => !o && setMetaView(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>
-              {metaView?.mode === 'extracted' ? 'Extracted Properties' : 'Document Properties'} —{' '}
-              {metaView?.fileName}
-            </DialogTitle>
-          </DialogHeader>
-          {metaView && (
-            <div className="max-h-[70vh] overflow-y-auto text-sm">
-              {(() => {
-                const rows =
-                  metaView.mode === 'extracted'
-                    ? parseKeyValues(metaView.text)
-                    : Object.entries(metaView.properties ?? {});
-                const empty =
-                  metaView.mode === 'extracted'
-                    ? 'No labelled fields found in the extracted text.'
-                    : 'No document properties found for this file.';
-                return (
-                  <>
-                    {rows.length > 0 ? (
-                      <table className="w-full">
-                        <tbody className="divide-y">
-                          {rows.map(([label, value], i) => (
-                            <tr key={i}>
-                              <td className="py-1.5 pr-4 align-top font-medium text-gray-700 whitespace-nowrap max-w-[16rem] overflow-hidden text-ellipsis">
-                                {label}
-                              </td>
-                              <td className="py-1.5 text-gray-600 break-all">{value}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <div className="text-gray-500">{empty}</div>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

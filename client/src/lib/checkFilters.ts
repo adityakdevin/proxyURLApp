@@ -4,11 +4,14 @@
  * One definition rather than two: these lived only in AdminClaims, which is why reviewers
  * without admin rights had no way to filter by checkpoint at all — the request that this
  * addresses. A check added here appears in both screens.
+ *
+ * META is deliberately absent. It still runs — it is the text/OCR extraction every other
+ * check reads — but it is an internal step, not a verdict a reviewer acts on, so it is
+ * hidden from every screen.
  */
 export const CHECK_FILTERS = [
   { key: 'spellCheckStatus', label: 'Spell' },
   { key: 'qrStatus', label: 'QR' },
-  { key: 'metaExtractionStatus', label: 'Meta' },
   { key: 'intraClaimStatus', label: 'Intra' },
   { key: 'fullScanStatus', label: 'Full' },
   { key: 'redFlagStatus', label: 'Red Flag' },
