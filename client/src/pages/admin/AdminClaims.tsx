@@ -36,6 +36,7 @@ interface ClaimRow {
   assignedTo: { id: string; fullName: string } | null;
   spellCheckStatus: string;
   qrStatus: string;
+  qrOutcome?: string | null;
   metaExtractionStatus: string;
   intraClaimStatus: string;
   fullScanStatus: string;
@@ -303,7 +304,7 @@ export default function AdminClaims() {
       id: 'qr',
       header: 'QR',
       meta: { sortField: 'qrStatus' },
-      cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} />,
+      cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} outcome={row.original.qrOutcome} />,
     },
     {
       id: 'meta',

@@ -463,6 +463,12 @@ model Claim {
   fullScanStatus       ValidationStatus @default(PENDING) @map("full_scan_status")
   redFlagStatus        ValidationStatus @default(PENDING) @map("red_flag_status")
 
+  // WHY the QR check landed where it did, not just pass/fail (reviewer request: "QR Code
+  // verification - to be bifurcated as per outcome"). NO_QR | UNREADABLE | MISMATCH | OK.
+  // A plain column rather than a widened ValidationStatus: that enum is shared by all six
+  // checks and none of these words mean anything to the other five.
+  qrOutcome            String?          @map("qr_outcome") @db.VarChar(20)
+
   status    Status   @default(ACTIVE)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

@@ -170,7 +170,7 @@ export class ValidationService {
         });
         await tx.claim.update({
           where: { id: claim.id },
-          data: Object.fromEntries(COLUMNS.map((c) => [c, 'DOCS_NOT_AVAILABLE'])),
+          data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'DOCS_NOT_AVAILABLE'])), qrOutcome: null },
         });
         await tx.validationRun.update({
           where: { id: runId },
@@ -186,7 +186,7 @@ export class ValidationService {
       // Reset all five columns to IN_PROGRESS for this run.
       await this.prisma.claim.update({
         where: { id: claim.id },
-        data: Object.fromEntries(COLUMNS.map((c) => [c, 'IN_PROGRESS'])),
+        data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'IN_PROGRESS'])), qrOutcome: null },
       });
 
       const documents: ValidatorDoc[] = claim.documents.map((d) => ({
@@ -217,6 +217,7 @@ export class ValidationService {
         summary: string;
         details?: unknown;
         findings?: FindingInput[];
+        claimFields?: Record<string, string | null>;
       };
 
       // Timed so the log can say WHICH check is slow. Before this a claim reported only its
@@ -308,7 +309,7 @@ export class ValidationService {
           }
           await tx.claim.update({
             where: { id: claim.id },
-            data: { [r.v.column]: r.status },
+            data: { [r.v.column]: r.status, ...(r.claimFields ?? {}) },
           });
         }, TX);
       };
@@ -366,7 +367,7 @@ export class ValidationService {
           });
           await tx.claim.updateMany({
             where: { id: run.claimId },
-            data: Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])),
+            data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])), qrOutcome: null },
           });
         }, TX);
       } catch {
@@ -408,7 +409,7 @@ export class ValidationService {
       if (claimIds.length > 0) {
         await tx.claim.updateMany({
           where: { id: { in: claimIds } },
-          data: Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])),
+          data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])), qrOutcome: null },
         });
       }
       return { count: res.count, claimIds };

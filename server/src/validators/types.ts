@@ -93,6 +93,10 @@ export interface ValidatorOutcome {
   summary: string;
   details?: unknown;
   findings?: FindingInput[];
+  /** Extra Claim columns this validator owns, written in the same transaction as its
+   *  status. Keeps check-specific knowledge (e.g. QR's bifurcated outcome) inside the
+   *  validator instead of teaching the service what each key means. */
+  claimFields?: Record<string, string | null>;
 }
 
 export interface Validator {

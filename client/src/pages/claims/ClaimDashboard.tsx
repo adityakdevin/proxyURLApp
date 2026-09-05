@@ -40,6 +40,7 @@ interface ClaimRow {
   spellCheckStatus: string;
   spellSummary: string | null;
   qrStatus: string;
+  qrOutcome?: string | null;
   metaExtractionStatus: string;
   intraClaimStatus: string;
   fullScanStatus: string;
@@ -332,7 +333,7 @@ export default function ClaimDashboard() {
     {
       id: 'qr',
       header: 'QR',
-      cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} />,
+      cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} outcome={row.original.qrOutcome} />,
     },
     {
       id: 'meta',

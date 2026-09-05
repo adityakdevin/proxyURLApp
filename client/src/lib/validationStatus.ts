@@ -66,3 +66,41 @@ export function validationStatusVariant(s: string): BadgeVariant {
       return 'outline';
   }
 }
+
+// ── QR outcome (row 19) ──────────────────────────────────────────────────────────
+// The QR check reports WHICH way it went, not just pass/fail, because "failed" covered
+// three situations a reviewer handles differently: no code on the paperwork at all, a code
+// that will not decode, and a code whose data contradicts the page it is printed on.
+// Null on claims validated before this shipped — callers fall back to the status badge.
+export type QrOutcome = 'OK' | 'NO_QR' | 'UNREADABLE' | 'MISMATCH';
+
+export function qrOutcomeLabel(o: string): string {
+  switch (o) {
+    case 'NO_QR':
+      return 'NO QR';
+    case 'UNREADABLE':
+      return 'UNREADABLE';
+    case 'MISMATCH':
+      return 'MISMATCH';
+    case 'OK':
+      return 'OK';
+    default:
+      return o;
+  }
+}
+
+export function qrOutcomeVariant(o: string): BadgeVariant {
+  switch (o) {
+    case 'OK':
+      return 'success';
+    // Present but undecodable is a SCAN problem, not a document problem — amber, the same
+    // tier as DOUBTFUL, because the reviewer has to look rather than reject.
+    case 'UNREADABLE':
+      return 'warning';
+    case 'NO_QR':
+    case 'MISMATCH':
+      return 'destructive';
+    default:
+      return 'outline';
+  }
+}

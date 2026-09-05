@@ -537,6 +537,22 @@ export const qrValidator: Validator = {
       outcome.status = 'FAILED';
       outcome.summary = `${mismatches.length} field(s) do not match the QR code.`;
     }
+    // Row 19 — bifurcate the column by WHAT happened, not just pass/fail. Ordered by what a
+    // reviewer must act on first: a QR contradicting its own page is a DOCUMENT problem, a
+    // missing one is a PAPERWORK problem, an undecodable one is a SCAN problem. "OK" also
+    // covers a claim with nothing scannable in it — there is no QR to be wrong about.
+    outcome.claimFields = {
+      qrOutcome:
+        mismatches.length > 0
+          ? 'MISMATCH'
+          : values.length === 0
+            ? scannable.length === 0
+              ? 'OK'
+              : 'NO_QR'
+            : guidance.length > 0
+              ? 'UNREADABLE'
+              : 'OK',
+    };
     // Documents that decoded nothing are always listed. Hiding them whenever ANY other
     // document had a QR is what made a claim read "1 QR code(s) found across 6" with no
     // hint as to which five were empty.

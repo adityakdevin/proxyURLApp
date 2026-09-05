@@ -8,6 +8,8 @@ import {
   ValidationStatus,
   validationStatusCardClass,
   validationStatusLabel,
+  qrOutcomeLabel,
+  qrOutcomeVariant,
   validationStatusVariant,
 } from '@/lib/validationStatus';
 import { Label } from '@/components/ui/label';
@@ -56,6 +58,7 @@ interface ClaimDetail {
   folderPath: string | null;
   spellCheckStatus: string;
   qrStatus: string;
+  qrOutcome?: string | null;
   metaExtractionStatus: string;
   intraClaimStatus: string;
   fullScanStatus: string;
@@ -610,15 +613,21 @@ export default function ClaimUpdate() {
             {VALIDATORS.map((v) => {
               const colVal = String(claim[v.column]);
               const res = resultFor(v.key);
+              // QR shows its bifurcated outcome instead of the bare status (row 19); the
+              // other five have no such distinction to draw.
+              const qrOut =
+                v.key === 'QR' && claim.qrOutcome && colVal !== 'PENDING' && colVal !== 'IN_PROGRESS'
+                  ? claim.qrOutcome
+                  : null;
               return (
                 <Badge
                   key={v.key}
-                  variant={validationStatusVariant(colVal)}
+                  variant={qrOut ? qrOutcomeVariant(qrOut) : validationStatusVariant(colVal)}
                   title={res?.summary ?? ''}
                   className="cursor-pointer"
                   onClick={() => openCard(v.key)}
                 >
-                  {v.label}: {validationStatusLabel(colVal)}
+                  {v.label}: {qrOut ? qrOutcomeLabel(qrOut) : validationStatusLabel(colVal)}
                 </Badge>
               );
             })}
