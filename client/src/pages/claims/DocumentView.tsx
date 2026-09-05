@@ -35,16 +35,17 @@ type Neighbour = { id: string; claimId: string; documentId: string | null } | nu
 const RUNNING_STATES = new Set(['QUEUED', 'RUNNING']);
 
 const CHECK_LABEL: Record<string, string> = {
-  META: 'Meta',
   SPELL: 'Spell',
   QR: 'QR',
   INTRA: 'Intra-Claim',
   FULL: 'Full Scan',
   REDFLAG: 'Red Flags',
+  DUP: 'Duplicate',
 };
 
 // Switcher order, matching the cards on the claim page. 'ALL' drops the ?v= filter.
-const CHECK_TABS = ['ALL', 'SPELL', 'QR', 'META', 'INTRA', 'FULL', 'REDFLAG'] as const;
+// META is not here: it is the extraction step, not a verdict. It still runs.
+const CHECK_TABS = ['ALL', 'SPELL', 'QR', 'INTRA', 'FULL', 'REDFLAG', 'DUP'] as const;
 
 /**
  * Standalone document tab, opened by the claim page with window.open so a reviewer can keep

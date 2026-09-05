@@ -26,6 +26,11 @@ export const CHECK_KEYS = [
   'metaExtractionStatus',
   'intraClaimStatus',
   'fullScanStatus',
+  // A check missing here is not a cosmetic gap: a filters-aimed bulk action resolves its
+  // targets from these keys, so an omitted one means "select all matching" acts on a WIDER
+  // set than the reviewer was shown. Every claim status column belongs in this list.
+  'redFlagStatus',
+  'duplicateStatus',
 ] as const;
 
 export interface BulkBody {

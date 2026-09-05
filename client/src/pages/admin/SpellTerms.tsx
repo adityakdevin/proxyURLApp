@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
+import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, BookUp } from 'lucide-react';
 import { useCrudResource } from '@/hooks/useCrudResource';
 import { DataTable } from '@/components/shared/DataTable';
 import { TableToolbar } from '@/components/shared/TableToolbar';
@@ -9,6 +9,8 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { api } from '@/lib/api';
 import { Label } from '@/components/ui/label';
 import {
   Dialog,
@@ -28,6 +30,8 @@ import { useToast } from '@/components/ui/use-toast';
 interface SpellTerm {
   id: string;
   term: string;
+  /** Set = this row is a glossary abbreviation ("pvt" → "Private"), never flagged. */
+  expansion: string | null;
   status: 'ACTIVE' | 'INACTIVE';
 }
 
@@ -78,21 +82,61 @@ export default function SpellTerms() {
   } = crud;
 
   const [term, setTerm] = useState('');
+  const [expansion, setExpansion] = useState('');
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
 
   const handleCreate = () => {
     setSelectedItem(null);
     setTerm('');
+    setExpansion('');
     setIsFormOpen(true);
   };
 
   const handleEdit = (item: SpellTerm) => {
     setSelectedItem(item);
     setTerm(item.term);
+    setExpansion(item.expansion ?? '');
     setIsFormOpen(true);
+  };
+
+  const handleImport = async () => {
+    setIsImporting(true);
+    try {
+      const r = await api.post<{ data: { saved: number; failed: { line: string; reason: string }[] } }>(
+        '/admin/spell-terms/glossary-import',
+        { text: importText }
+      );
+      const { saved, failed } = r.data;
+      toast({
+        title: `Imported ${saved} entr${saved === 1 ? 'y' : 'ies'}`,
+        description:
+          failed.length > 0
+            // Name the lines that failed. A count alone leaves the admin re-reading the
+            // whole paste to find which three did not take.
+            ? `${failed.length} line(s) skipped: ${failed.slice(0, 3).map((f) => `"${f.line}" (${f.reason})`).join('; ')}${failed.length > 3 ? '…' : ''}`
+            : undefined,
+        variant: failed.length > 0 ? 'destructive' : undefined,
+        duration: failed.length > 0 ? 15000 : undefined,
+      });
+      setIsImportOpen(false);
+      setImportText('');
+      fetchData(1, pagination.limit);
+    } catch (e) {
+      toast({
+        title: 'Import failed',
+        description: e instanceof Error ? e.message : 'Could not import the glossary',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const handleSubmit = () => {
     const cleaned = term.trim();
+    const exp = expansion.trim();
     if (!cleaned) {
       toast({ title: 'Validation Error', description: 'Term is required', variant: 'destructive' });
       return;
@@ -108,7 +152,9 @@ export default function SpellTerms() {
       });
       return;
     }
-    if (cleaned.length < MIN_TERM_LEN) {
+    // Length only constrains near-miss terms; a glossary abbreviation is matched exactly,
+    // and "Pvt"/"Ltd" are shorter than the floor by nature.
+    if (!exp && cleaned.length < MIN_TERM_LEN) {
       toast({
         title: 'Validation Error',
         description: `A term must be at least ${MIN_TERM_LEN} characters — shorter terms match too many unrelated words.`,
@@ -116,11 +162,21 @@ export default function SpellTerms() {
       });
       return;
     }
-    submit({ term: cleaned });
+    submit({ term: cleaned, expansion: exp || null });
   };
 
   const columns: ColumnDef<SpellTerm>[] = [
     { accessorKey: 'term', header: 'Term' },
+    {
+      accessorKey: 'expansion',
+      header: 'Expands to',
+      cell: ({ row }) =>
+        row.original.expansion ? (
+          <span className="text-sm">{row.original.expansion}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
+    },
     {
       accessorKey: 'status',
       header: 'Status',
@@ -170,7 +226,12 @@ export default function SpellTerms() {
             false alarms on correctly printed documents.
           </p>
         </div>
-        <Button onClick={handleCreate}><Plus className="mr-2 h-4 w-4" />Add Term</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+            <BookUp className="mr-2 h-4 w-4" />Import Glossary
+          </Button>
+          <Button onClick={handleCreate}><Plus className="mr-2 h-4 w-4" />Add Term</Button>
+        </div>
       </div>
 
       <div className="mb-4">
@@ -219,10 +280,59 @@ export default function SpellTerms() {
                 &ldquo;guard&rdquo; separately.
               </p>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="expansion">Expands to</Label>
+              <Input
+                id="expansion"
+                value={expansion}
+                onChange={(e) => setExpansion(e.target.value)}
+                placeholder="e.g. Private"
+                onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+              />
+              <p className="text-xs text-muted-foreground">
+                Fill this in to make the term a <strong>glossary abbreviation</strong>: the
+                spell-check treats it as a correctly spelled word and never flags it. Leave it
+                empty for an ordinary expected term. Glossary entries may be shorter than{' '}
+                {MIN_TERM_LEN} characters — that is what &ldquo;Pvt&rdquo; and &ldquo;Ltd&rdquo;
+                are.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsFormOpen(false)} disabled={isSubmitting}>Cancel</Button>
             <Button onClick={handleSubmit} disabled={isSubmitting}>{isSubmitting ? 'Saving...' : 'Save'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Glossary</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-4">
+            <Label htmlFor="glossary">One abbreviation per line</Label>
+            <Textarea
+              id="glossary"
+              rows={10}
+              className="font-mono text-sm"
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder={'Pvt - Private\nLtd - Limited\nCorpn - Corporation'}
+            />
+            <p className="text-xs text-muted-foreground">
+              Separate the short form and its expansion with <code>-</code>, <code>=</code>,{' '}
+              <code>:</code> or a comma. An entry that already exists is updated rather than
+              rejected, so a corrected list can simply be pasted again.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsImportOpen(false)} disabled={isImporting}>
+              Cancel
+            </Button>
+            <Button onClick={handleImport} disabled={isImporting || !importText.trim()}>
+              {isImporting ? 'Importing…' : 'Import'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

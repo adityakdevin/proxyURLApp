@@ -30,6 +30,7 @@ import {
   checkSignature,
   checkSignatoryWord,
   checkEditorWatermark,
+  checkTimestamps,
   checkDates,
   RedFlagFinding,
 } from './redFlagLogic.js';
@@ -184,6 +185,8 @@ export const redFlagValidator: Validator = {
       if ((doc.mimeType ?? '') === 'application/pdf') {
         const info = await readPdfInfo(doc.readablePath);
         for (const f of checkEditorWatermark(info.Producer, info.Creator)) findings.push(toFinding(doc.id, f));
+        // Created vs Modified: the same Info dictionary, so no extra read.
+        for (const f of checkTimestamps(info.Created, info.Modified)) findings.push(toFinding(doc.id, f));
       }
     }
 

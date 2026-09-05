@@ -50,9 +50,11 @@ export interface ValidationStatuses {
   metaExtractionStatus: string;
   intraClaimStatus: string;
   fullScanStatus: string;
+  redFlagStatus: string;
+  duplicateStatus: string;
 }
 
-/** The five per-claim checks, in export-column order: the sheet header and the
+/** The per-claim checks, in export-column order: the sheet header and the
  *  field it reads. Status alone only says *that* a claim is forged; these say
  *  which check caught it, so failures can be grouped by category. */
 export const OBSERVATION_CHECK_COLUMNS: { header: string; field: keyof ValidationStatuses }[] = [
@@ -61,6 +63,10 @@ export const OBSERVATION_CHECK_COLUMNS: { header: string; field: keyof Validatio
   { header: 'Meta', field: 'metaExtractionStatus' },
   { header: 'Intra Claim', field: 'intraClaimStatus' },
   { header: 'Full Scan', field: 'fullScanStatus' },
+  // Red Flags was missing from the report even though it is the check reviewers act on
+  // most; Duplicate is new. Appended, so the existing column positions do not move.
+  { header: 'Red Flags', field: 'redFlagStatus' },
+  { header: 'Duplicate', field: 'duplicateStatus' },
 ];
 
 /** Header for the summary column: the failing checks, comma-joined. */
@@ -118,6 +124,8 @@ export function deriveForgeryStatus(v: ValidationStatuses): ForgeryStatus {
     v.metaExtractionStatus,
     v.intraClaimStatus,
     v.fullScanStatus,
+    v.redFlagStatus,
+    v.duplicateStatus,
   ];
   return checks.some((s) => s === 'FAILED') ? 'Forged' : 'OK';
 }

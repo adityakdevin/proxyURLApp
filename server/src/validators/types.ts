@@ -1,12 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import { BBox } from '../lib/bbox.js';
 
-export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG';
+export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG' | 'DUP';
 export type ClaimColumn =
   | 'metaExtractionStatus'
   | 'spellCheckStatus'
   | 'qrStatus'
   | 'intraClaimStatus'
+  | 'duplicateStatus'
   | 'fullScanStatus'
   | 'redFlagStatus';
 
@@ -93,6 +94,10 @@ export interface ValidatorOutcome {
   summary: string;
   details?: unknown;
   findings?: FindingInput[];
+  /** Extra Claim columns this validator owns, written in the same transaction as its
+   *  status. Keeps check-specific knowledge (e.g. QR's bifurcated outcome) inside the
+   *  validator instead of teaching the service what each key means. */
+  claimFields?: Record<string, string | null>;
 }
 
 export interface Validator {

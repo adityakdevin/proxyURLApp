@@ -6,6 +6,8 @@ const base: ValidationStatuses = {
   metaExtractionStatus: 'PASSED',
   intraClaimStatus: 'PASSED',
   fullScanStatus: 'PASSED',
+  redFlagStatus: 'PASSED',
+  duplicateStatus: 'PASSED',
 };
 
 describe('deriveForgeryStatus', () => {

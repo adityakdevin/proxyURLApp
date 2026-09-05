@@ -345,6 +345,44 @@ function fieldsForQrPage(doc: ValidatorDoc, ctx: ValidatorContext, page?: number
   return group?.fields ?? [];
 }
 
+/**
+ * Row 19 — which of the four QR outcomes this claim landed on.
+ *
+ * The distinction that matters to a reviewer is "no code is printed here" (chase the
+ * paperwork) versus "a code is there and we could not read it" (rescan the document).
+ * Those are opposite remediations, so anything indicating a code was PRESENT but
+ * undecodable counts as UNREADABLE even though no value came back:
+ *   - the card image is below the resolution any reader needs (tooCoarse)
+ *   - the high-accuracy decoder was unavailable for this run (decoderDegraded)
+ *   - pages or high-resolution retries were skipped, so a code may never have been
+ *     looked at (QR_PAGES_TRUNCATED / QR_RETRY_BUDGET_EXHAUSTED)
+ *   - a code decoded but its payload is opaque and needs the issuer's own app
+ *
+ * NO_QR then means what it says: everything scannable was examined and carried no code.
+ *
+ * Pure and exported so the mapping is tested directly rather than through a fixture that
+ * would have to reproduce a blurred scan.
+ */
+export function classifyQrOutcome(input: {
+  mismatches: number;
+  decodedValues: number;
+  scannableDocs: number;
+  opaquePayloads: number;
+  truncatedScans: number;
+  missing: { data?: Record<string, unknown> }[];
+}): 'MISMATCH' | 'UNREADABLE' | 'NO_QR' | 'OK' {
+  // A QR that contradicts its own page outranks everything else: that is a document
+  // problem, not a scanning one.
+  if (input.mismatches > 0) return 'MISMATCH';
+  const unreadable =
+    input.opaquePayloads > 0 ||
+    input.truncatedScans > 0 ||
+    input.missing.some((m) => m.data?.tooCoarse === true || m.data?.decoderDegraded === true);
+  if (unreadable) return 'UNREADABLE';
+  // Nothing scannable in the claim is not a QR problem — there is no code to be wrong about.
+  return input.decodedValues === 0 && input.scannableDocs > 0 ? 'NO_QR' : 'OK';
+}
+
 export const qrValidator: Validator = {
   key: 'QR',
   column: 'qrStatus',
@@ -537,6 +575,28 @@ export const qrValidator: Validator = {
       outcome.status = 'FAILED';
       outcome.summary = `${mismatches.length} field(s) do not match the QR code.`;
     }
+    // Row 19 — bifurcate the column by WHAT happened, not just pass/fail.
+    //
+    // The distinction that matters to a reviewer is "no code is printed here" (chase the
+    // paperwork) versus "a code is there and we could not read it" (rescan). Those are
+    // opposite remediations, so anything that says a code was PRESENT but undecodable
+    // counts as UNREADABLE even though no value came back:
+    //   - the card image is below the resolution a reader needs (tooCoarse)
+    //   - the high-accuracy decoder was unavailable for this run (decoderDegraded)
+    //   - pages or high-resolution retries were skipped, so a code may never have been
+    //     looked at (QR_PAGES_TRUNCATED / QR_RETRY_BUDGET_EXHAUSTED)
+    //   - a code decoded but its payload is opaque and needs the issuer's own app
+    // NO_QR is then what it says: everything scannable was examined and carried no code.
+    outcome.claimFields = {
+      qrOutcome: classifyQrOutcome({
+        mismatches: mismatches.length,
+        decodedValues: values.length,
+        scannableDocs: scannable.length,
+        opaquePayloads: guidance.length,
+        truncatedScans: truncated.length,
+        missing,
+      }),
+    };
     // Documents that decoded nothing are always listed. Hiding them whenever ANY other
     // document had a QR is what made a claim read "1 QR code(s) found across 6" with no
     // hint as to which five were empty.

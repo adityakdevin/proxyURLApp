@@ -20,6 +20,12 @@ const HEADERS = [
   'Full Scan',
   'Documents',
   'Created',
+  // Appended at the END, never inserted: columns 1-12 keep their positions, so anything
+  // downstream reading this sheet by index keeps working. 'QR Outcome' carries the
+  // bifurcation that the pass/fail QR column collapses away.
+  'Red Flags',
+  'Duplicate',
+  'QR Outcome',
 ];
 
 /**
@@ -51,6 +57,9 @@ export function buildClaimsWorkbook(rows: ExportRow[]): ExcelJS.Workbook {
       r.full,
       r.documents,
       r.created,
+      r.redFlag,
+      r.duplicate,
+      r.qrOutcome,
     ]);
   }
   ws.columns.forEach((col) => {

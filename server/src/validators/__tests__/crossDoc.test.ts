@@ -5,6 +5,7 @@ import {
   idNorm,
   idMatches,
   modelMatches,
+  addressMatches,
   extractNames,
   extractRelationNames,
   extractRelationNamesByKind,
@@ -304,5 +305,33 @@ describe('idMatches unequal-length (dropped/extra char)', () => {
   it('matches a single dropped char but not two', () => {
     expect(idMatches('ABCD1234', 'ABC1234')).toBe(true); // one char dropped
     expect(idMatches('ABCD1234', 'ABCD99')).toBe(false); // length differs by 2
+  });
+});
+
+describe('addressMatches', () => {
+  it('accepts the same address written with different abbreviations and line order', () => {
+    expect(
+      addressMatches(
+        'H NO 12, ANIL PLAZA, G S ROAD, GUWAHATI, ASSAM - 781005',
+        'Anil Plaza, GS Road, Guwahati, Assam 781005'
+      )
+    ).toBe(true);
+  });
+
+  it('rejects two addresses whose PIN codes differ', () => {
+    // Same street words, different city — the PIN is the part nobody reformats.
+    expect(
+      addressMatches('G S ROAD, GUWAHATI, ASSAM - 781005', 'G S ROAD, GUWAHATI, ASSAM - 462001')
+    ).toBe(false);
+  });
+
+  it('rejects genuinely different addresses', () => {
+    expect(
+      addressMatches('12 ANIL PLAZA, G S ROAD, GUWAHATI', 'PLOT 44, MG ROAD, BENGALURU')
+    ).toBe(false);
+  });
+
+  it('does not flag when one side carries nothing distinctive', () => {
+    expect(addressMatches('Near the road', 'PLOT 44, MG ROAD, BENGALURU')).toBe(true);
   });
 });

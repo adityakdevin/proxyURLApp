@@ -9,6 +9,7 @@ import {
   matchesClaimId,
   editDistanceCapped,
   findTermMisspellings,
+  pluralStems,
   ocrFold,
   ocrIndistinguishable,
   deriveCheckStatus,
@@ -149,5 +150,32 @@ describe('validator logic', () => {
     it('returns false for an empty claim id', () => {
       expect(matchesClaimId('anything', '')).toBe(false);
     });
+  });
+});
+
+describe('pluralStems', () => {
+  it('strips a regular plural', () => {
+    expect(pluralStems('dealers')).toContain('dealer');
+  });
+  it('handles -ies and -es', () => {
+    expect(pluralStems('policies')).toContain('policy');
+    expect(pluralStems('boxes')).toContain('box');
+  });
+  it('leaves a word that merely ends in double-s alone', () => {
+    expect(pluralStems('class')).toEqual([]);
+  });
+});
+
+describe('findTermMisspellings — plurals are not misspellings', () => {
+  // "maruti" is a Spell Term; the dictionary knows neither it nor its plural.
+  const dictionaryless = () => false;
+
+  it('does not report the plural of a term as a misspelling of it', () => {
+    expect(findTermMisspellings(['marutis'], dictionaryless, ['maruti'])).toEqual([]);
+  });
+
+  it('still reports a genuine misspelling of the same term', () => {
+    const [hit] = findTermMisspellings(['maruthi'], dictionaryless, ['maruti']);
+    expect(hit.term).toBe('maruti');
   });
 });

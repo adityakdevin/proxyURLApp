@@ -13,6 +13,23 @@ import claimValidationRoutes from './claimValidation.js';
 import { ClaimRuleService } from '../services/claimRuleService.js';
 import { buildClaimsWorkbook } from '../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../lib/routeHelpers.js';
+import { CHECK_KEYS } from '../lib/bulkClaims.js';
+import { ValidationStatus } from '@prisma/client';
+
+const CHECK_STATUSES = Object.values(ValidationStatus);
+
+/** Pick the validated checkpoint filters out of a query string.
+ *
+ *  Shared by the list and the export so the two can never disagree about which rows are in
+ *  scope — an export that ignores a filter the list applied is a silently wrong report. */
+function checkFilters(q: Request['query']): Partial<Record<(typeof CHECK_KEYS)[number], ValidationStatus>> {
+  const out: Partial<Record<(typeof CHECK_KEYS)[number], ValidationStatus>> = {};
+  for (const key of CHECK_KEYS) {
+    const v = q[key];
+    if (typeof v === 'string' && v) out[key] = v as ValidationStatus;
+  }
+  return out;
+}
 import { BulkTarget, recordClaimAudit, resolveTargets, runBulk } from '../lib/bulkClaims.js';
 import { enqueue } from '../services/validationQueue.js';
 import { registry } from '../validators/registry.js';
@@ -41,6 +58,10 @@ router.get(
     query('assignedToUserId').optional().isUUID(),
     query('assignedToMe').optional().isBoolean().toBoolean(),
     query('search').optional().isString(),
+    // Checkpoint filters. The reviewer-facing dashboard offers these too, and without them
+    // here the parameters were accepted and silently dropped: the list came back unfiltered
+    // while the UI showed a filter as applied.
+    query([...CHECK_KEYS]).optional().isIn(CHECK_STATUSES),
     query('page').optional().isInt({ min: 1 }).toInt(),
     query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
   ],
@@ -48,6 +69,7 @@ router.get(
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
       const r = await getService(req).list({
+        ...checkFilters(req.query),
         subCategoryId: req.query.subCategoryId as string | undefined,
         workflowStatusId: req.query.workflowStatusId as string | undefined,
         // A regular USER may not filter by an arbitrary assignee; they use the
@@ -86,11 +108,17 @@ router.get(
     query('assignedToUserId').optional().isUUID(),
     query('assignedToMe').optional().isBoolean().toBoolean(),
     query('search').optional().isString(),
+    // Checkpoint filters. The reviewer-facing dashboard offers these too, and without them
+    // here the parameters were accepted and silently dropped: the list came back unfiltered
+    // while the UI showed a filter as applied.
+    query([...CHECK_KEYS]).optional().isIn(CHECK_STATUSES),
   ],
   validate,
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
       const rows = await getService(req).exportRows({
+        // The export must describe the rows the reviewer is looking at, filters included.
+        ...checkFilters(req.query),
         subCategoryId: req.query.subCategoryId as string | undefined,
         workflowStatusId: req.query.workflowStatusId as string | undefined,
         assignedToUserId:

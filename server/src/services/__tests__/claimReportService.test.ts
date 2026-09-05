@@ -13,6 +13,9 @@ const row: ExportRow = {
   meta: 'PASSED',
   intra: 'PENDING',
   full: 'PASSED',
+  redFlag: 'OK',
+  duplicate: 'OK',
+  qrOutcome: 'OK',
   documents: 2,
   created: '2026-05-31',
 };
@@ -23,6 +26,10 @@ describe('buildClaimsWorkbook', () => {
     const ws = wb.getWorksheet('Claims')!;
     expect(ws.getRow(1).getCell(1).value).toBe('Claim ID');
     expect(ws.getRow(1).getCell(11).value).toBe('Documents');
+    // The three checks added later sit at the END so columns 1-12 never move.
+    expect(ws.getRow(1).getCell(13).value).toBe('Red Flags');
+    expect(ws.getRow(1).getCell(14).value).toBe('Duplicate');
+    expect(ws.getRow(1).getCell(15).value).toBe('QR Outcome');
     expect(ws.getRow(2).getCell(1).value).toBe('EX-1');
     expect(ws.getRow(2).getCell(4).value).toBe('Pending');
     expect(ws.getRow(2).getCell(11).value).toBe(2);
@@ -51,6 +58,8 @@ const obsRow: ObservationExportRow = {
     metaExtractionStatus: 'PASSED',
     intraClaimStatus: 'PASSED',
     fullScanStatus: 'FAILED',
+    redFlagStatus: 'PASSED',
+    duplicateStatus: 'PASSED',
   },
 };
 
@@ -79,6 +88,8 @@ describe('buildObservationWorkbook', () => {
         metaExtractionStatus: 'PASSED',
         intraClaimStatus: 'DOUBTFUL',
         fullScanStatus: 'PASSED',
+        redFlagStatus: 'PASSED',
+        duplicateStatus: 'PASSED',
       },
     };
     const ws = buildObservationWorkbook([clean]).getWorksheet('Observations')!;

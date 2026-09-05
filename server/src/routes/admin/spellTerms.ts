@@ -49,6 +49,7 @@ router.post(
   '/',
   [
     body('term').isString().trim().notEmpty().isLength({ max: 100 }),
+    body('expansion').optional({ nullable: true }).isString().trim().isLength({ max: 120 }),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
   ],
   validate,
@@ -57,7 +58,26 @@ router.post(
       const created = await getService(req).create(req.body, req.session!.userId);
       // Advisory only, and computed after the write: the term is saved either way, so a
       // dictionary hiccup can never block an admin from adding one.
-      res.status(201).json({ data: created, warning: await properNounWarning(created.term) });
+      res.status(201).json({
+        data: created,
+        // An abbreviation is never a dictionary word, so the proper-noun advisory would fire
+        // on every glossary entry and mean nothing.
+        warning: created.expansion ? null : await properNounWarning(created.term),
+      });
+    } catch (err) {
+      handleErr(err, res, next);
+    }
+  }
+);
+
+router.post(
+  '/glossary-import',
+  [body('text').isString().isLength({ min: 1, max: 100_000 })],
+  validate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await getService(req).importGlossary(req.body.text, req.session!.userId);
+      res.json({ data: result });
     } catch (err) {
       handleErr(err, res, next);
     }
@@ -84,13 +104,17 @@ router.put(
   [
     param('id').isUUID(),
     body('term').optional().isString().trim().notEmpty().isLength({ max: 100 }),
+    body('expansion').optional({ nullable: true }).isString().trim().isLength({ max: 120 }),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
   ],
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const updated = await getService(req).update(req.params.id, req.body, req.session!.userId);
-      res.json({ data: updated, warning: await properNounWarning(updated.term) });
+      res.json({
+        data: updated,
+        warning: updated.expansion ? null : await properNounWarning(updated.term),
+      });
     } catch (err) {
       handleErr(err, res, next);
     }

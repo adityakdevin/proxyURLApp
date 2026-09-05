@@ -410,6 +410,10 @@ model DocumentTypeMaster {
 model SpellTerm {
   id        String   @id @default(uuid()) @db.VarChar(36)
   term      String   @unique @db.VarChar(100)
+  // Glossary (reviewer request: "Pvt - Private", "Ltd - Limited"). A row WITH an expansion
+  // is a known abbreviation: never flagged as a misspelling, and never used as a
+  // near-miss target either. A row WITHOUT one is an ordinary expected term.
+  expansion String?  @db.VarChar(120)
   status    Status   @default(ACTIVE)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -462,6 +466,13 @@ model Claim {
   intraClaimStatus     ValidationStatus @default(PENDING) @map("intra_claim_status")
   fullScanStatus       ValidationStatus @default(PENDING) @map("full_scan_status")
   redFlagStatus        ValidationStatus @default(PENDING) @map("red_flag_status")
+  duplicateStatus      ValidationStatus @default(PENDING) @map("duplicate_status")
+
+  // WHY the QR check landed where it did, not just pass/fail (reviewer request: "QR Code
+  // verification - to be bifurcated as per outcome"). NO_QR | UNREADABLE | MISMATCH | OK.
+  // A plain column rather than a widened ValidationStatus: that enum is shared by all six
+  // checks and none of these words mean anything to the other five.
+  qrOutcome            String?          @map("qr_outcome") @db.VarChar(20)
 
   status    Status   @default(ACTIVE)
   createdAt DateTime @default(now()) @map("created_at")
@@ -476,6 +487,7 @@ model Claim {
   documents         Document[]
   validationRuns    ValidationRun[]
   validationResults ValidationResult[]
+  fieldValues       ClaimFieldValue[]
 
   @@unique([claimId, subCategoryId])
   @@index([subCategoryId])
@@ -486,6 +498,32 @@ model Claim {
   // walk that same order as a keyset range — without this both are a full scan plus filesort.
   @@index([status, createdAt, id])
   @@map("claims")
+}
+
+// One unique data point read off a claim's documents (name, DOB, account number, ...).
+//
+// Exists so the duplicacy check can ask "has this value been seen on a DIFFERENT claim?"
+// without re-reading every other claim's documents. Rewritten from scratch on each
+// validation run of the owning claim, so it never drifts from what the documents say.
+//
+// `norm` is the match key (case/punctuation folded); `value` is what a reviewer is shown.
+model ClaimFieldValue {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  claimId    String   @map("claim_id") @db.VarChar(36)
+  documentId String?  @map("document_id") @db.VarChar(36)
+  field      String   @db.VarChar(32)
+  value      String   @db.VarChar(255)
+  norm       String   @db.VarChar(255)
+  page       Int?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  // The duplicacy lookup is "same field + same norm, different claim", scoped to the
+  // sub-project via the claim join — this index is what keeps it off a full scan.
+  @@index([field, norm])
+  @@index([claimId])
+  @@map("claim_field_values")
 }
 
 model ClaimRemark {

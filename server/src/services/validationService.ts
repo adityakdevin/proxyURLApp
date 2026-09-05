@@ -37,6 +37,7 @@ const COLUMNS = [
   'intraClaimStatus',
   'fullScanStatus',
   'redFlagStatus',
+  'duplicateStatus',
 ] as const;
 
 /**
@@ -170,8 +171,12 @@ export class ValidationService {
         });
         await tx.claim.update({
           where: { id: claim.id },
-          data: Object.fromEntries(COLUMNS.map((c) => [c, 'DOCS_NOT_AVAILABLE'])),
+          data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'DOCS_NOT_AVAILABLE'])), qrOutcome: null },
         });
+        // DUP never runs on this path, so its index would keep the values read from the
+        // documents this claim no longer has — and OTHER claims would go on matching them.
+        // A stale row here is a false duplicate on somebody else's claim.
+        await tx.claimFieldValue.deleteMany({ where: { claimId: claim.id } });
         await tx.validationRun.update({
           where: { id: runId },
           data: { status: 'COMPLETED', finishedAt: new Date() },
@@ -186,7 +191,7 @@ export class ValidationService {
       // Reset all five columns to IN_PROGRESS for this run.
       await this.prisma.claim.update({
         where: { id: claim.id },
-        data: Object.fromEntries(COLUMNS.map((c) => [c, 'IN_PROGRESS'])),
+        data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'IN_PROGRESS'])), qrOutcome: null },
       });
 
       const documents: ValidatorDoc[] = claim.documents.map((d) => ({
@@ -217,6 +222,7 @@ export class ValidationService {
         summary: string;
         details?: unknown;
         findings?: FindingInput[];
+        claimFields?: Record<string, string | null>;
       };
 
       // Timed so the log can say WHICH check is slow. Before this a claim reported only its
@@ -308,7 +314,7 @@ export class ValidationService {
           }
           await tx.claim.update({
             where: { id: claim.id },
-            data: { [r.v.column]: r.status },
+            data: { [r.v.column]: r.status, ...(r.claimFields ?? {}) },
           });
         }, TX);
       };
@@ -366,7 +372,7 @@ export class ValidationService {
           });
           await tx.claim.updateMany({
             where: { id: run.claimId },
-            data: Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])),
+            data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])), qrOutcome: null },
           });
         }, TX);
       } catch {
@@ -408,7 +414,7 @@ export class ValidationService {
       if (claimIds.length > 0) {
         await tx.claim.updateMany({
           where: { id: { in: claimIds } },
-          data: Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])),
+          data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'PENDING'])), qrOutcome: null },
         });
       }
       return { count: res.count, claimIds };

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { CHECK_FILTERS, CHECK_STATUS_OPTIONS, type CheckFilterKey } from '@/lib/checkFilters';
 import { useNavigate } from 'react-router-dom';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus, Loader2 } from 'lucide-react';
@@ -40,10 +41,13 @@ interface ClaimRow {
   spellCheckStatus: string;
   spellSummary: string | null;
   qrStatus: string;
+  qrOutcome?: string | null;
   metaExtractionStatus: string;
   intraClaimStatus: string;
   fullScanStatus: string;
-  /** Outstanding validation work, which the five columns above cannot express: they keep
+  redFlagStatus: string;
+  duplicateStatus: string;
+  /** Outstanding validation work, which the status columns above cannot express: they keep
    *  their previous values until a validator starts writing. Null when nothing is pending. */
   validationState: 'QUEUED' | 'RUNNING' | null;
   createdAt: string;
@@ -114,6 +118,14 @@ export default function ClaimDashboard() {
     assignedToMe: boolean;
     search: string;
   }>({ assignedToMe: false, search: '' });
+  // Checkpoint filters. Held separately from `filters`/`appliedFilters` so the bulk-scope
+  // guard those two implement is left exactly as it was.
+  const [checks, setChecks] = useState<Partial<Record<CheckFilterKey, string>>>({});
+  // The checkpoint filters the CURRENT rows were fetched with — the same applied/live split
+  // as appliedFilters, and for the same reason: the bulk bar resolves "all matching" from
+  // these, so a live value here would let a mutating action run against a set the reviewer
+  // was never shown.
+  const [appliedChecks, setAppliedChecks] = useState<Partial<Record<CheckFilterKey, string>>>({});
   const noAssignment = role !== 'ADMIN' && !user?.projectId;
   const [filterStatuses, setFilterStatuses] = useState<Status[]>([]);
 
@@ -158,6 +170,7 @@ export default function ClaimDashboard() {
     // filters while the bulk bar had already advanced to the new ones — the exact split this
     // applied/live pair exists to prevent.
     const requested = filters;
+    const requestedChecks = checks;
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (requested.subCategoryId) params.set('subCategoryId', requested.subCategoryId);
@@ -165,10 +178,15 @@ export default function ClaimDashboard() {
       if (requested.assignedToMe) params.set('assignedToMe', 'true');
       if (requested.assignedToUserId) params.set('assignedToUserId', requested.assignedToUserId);
       if (requested.search) params.set('search', requested.search);
+      for (const cf of CHECK_FILTERS) {
+        const v = requestedChecks[cf.key];
+        if (v) params.set(cf.key, v);
+      }
       const r = await api.get<PaginatedResponse<ClaimRow>>(`/claims?${params}`);
       setData(r.data);
       setPagination(r.pagination);
       setAppliedFilters(requested);
+      setAppliedChecks(requestedChecks);
     } catch (e) {
       toast({
         title: 'Error',
@@ -233,6 +251,11 @@ export default function ClaimDashboard() {
     if (filters.assignedToMe) params.set('assignedToMe', 'true');
     if (filters.assignedToUserId) params.set('assignedToUserId', filters.assignedToUserId);
     if (filters.search) params.set('search', filters.search);
+    // The export must describe the rows on screen, checkpoint filters included.
+    for (const cf of CHECK_FILTERS) {
+      const v = checks[cf.key];
+      if (v) params.set(cf.key, v);
+    }
     window.open(`/api/claims/export?${params.toString()}`, '_blank');
   };
 
@@ -332,12 +355,7 @@ export default function ClaimDashboard() {
     {
       id: 'qr',
       header: 'QR',
-      cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} />,
-    },
-    {
-      id: 'meta',
-      header: 'Meta',
-      cell: ({ row }) => <ValidationBadge status={row.original.metaExtractionStatus} />,
+      cell: ({ row }) => <ValidationBadge status={row.original.qrStatus} outcome={row.original.qrOutcome} />,
     },
     {
       id: 'intra',
@@ -348,6 +366,16 @@ export default function ClaimDashboard() {
       id: 'full',
       header: 'Full Scan',
       cell: ({ row }) => <ValidationBadge status={row.original.fullScanStatus} />,
+    },
+    {
+      id: 'redflag',
+      header: 'Red Flags',
+      cell: ({ row }) => <ValidationBadge status={row.original.redFlagStatus} />,
+    },
+    {
+      id: 'duplicate',
+      header: 'Duplicate',
+      cell: ({ row }) => <ValidationBadge status={row.original.duplicateStatus} />,
     },
     {
       id: 'created',
@@ -461,6 +489,17 @@ export default function ClaimDashboard() {
             className="w-[180px]"
           />
         )}
+        {CHECK_FILTERS.map((cf) => (
+          <FilterSelect
+            key={cf.key}
+            value={checks[cf.key] ?? ''}
+            onChange={(v) => setChecks((prev) => ({ ...prev, [cf.key]: v }))}
+            allLabel="All"
+            prefix={cf.label}
+            options={CHECK_STATUS_OPTIONS}
+            className="w-[128px]"
+          />
+        ))}
         <div className="ml-auto flex gap-2">
           <Button variant="outline" onClick={handleExport}>
             Export
@@ -498,6 +537,9 @@ export default function ClaimDashboard() {
           assignedToUserId: appliedFilters.assignedToUserId,
           assignedToMe: appliedFilters.assignedToMe,
           search: appliedFilters.search.trim() || undefined,
+          // Without these, "Select all N matching" resolved a WIDER set than the filtered
+          // rows on screen — and validate/delete/reassign then ran on all of it.
+          ...appliedChecks,
         }}
         filtersSummary={filtersSummary}
         role={role}

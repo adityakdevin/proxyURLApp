@@ -19,7 +19,7 @@ const GRACE_MS = 30000;
 /**
  * True when any visible row has validation work outstanding — queued OR executing.
  *
- * `validationState` is the load-bearing half. The five status columns hold their PREVIOUS
+ * `validationState` is the load-bearing half. The status columns hold their PREVIOUS
  * values until a validator starts writing, so a claim sitting in the queue is indistinguishable
  * from one nobody touched. Queue 116 claims against a drainer running 2 at a time and 114 rows
  * report "nothing happening" — which is exactly what "re-validate just queues it and no row
@@ -37,6 +37,8 @@ export function hasRunningChecks(
     metaExtractionStatus?: string;
     intraClaimStatus?: string;
     fullScanStatus?: string;
+    redFlagStatus?: string;
+    duplicateStatus?: string;
   }[]
 ): boolean {
   return rows.some(
@@ -47,7 +49,9 @@ export function hasRunningChecks(
       r.qrStatus === IN_FLIGHT ||
       r.metaExtractionStatus === IN_FLIGHT ||
       r.intraClaimStatus === IN_FLIGHT ||
-      r.fullScanStatus === IN_FLIGHT
+      r.fullScanStatus === IN_FLIGHT ||
+      r.redFlagStatus === IN_FLIGHT ||
+      r.duplicateStatus === IN_FLIGHT
   );
 }
 

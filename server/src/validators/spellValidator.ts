@@ -14,20 +14,28 @@ import { extractNames, extractRelationNames } from './crossDocLogic.js';
  *  admin-managed `SpellTerm` table so the list can be tuned without a deploy;
  *  fall back to the built-in EXPECTED_TERMS when it's empty or unreadable so the
  *  check never silently degrades to "no terms → nothing ever flagged". */
-async function loadExpectedTerms(prisma: PrismaClient): Promise<string[]> {
+async function loadTermsAndGlossary(
+  prisma: PrismaClient
+): Promise<{ terms: string[]; glossary: Set<string> }> {
   try {
     const rows = await prisma.spellTerm.findMany({
       where: { status: 'ACTIVE' },
-      select: { term: true },
+      select: { term: true, expansion: true },
     });
+    // A glossary entry ("pvt" → "Private") is a known abbreviation, not a near-miss target:
+    // it must never be flagged, and must never be something OTHER words get corrected TO.
+    const glossary = new Set(
+      rows.filter((r) => r.expansion).map((r) => r.term.toLowerCase().trim())
+    );
     // Rows that can never match are dropped here as a backstop; SpellTermService rejects
     // them at entry, so this only catches terms stored before that validation existed.
     const terms = rows
+      .filter((r) => !r.expansion)
       .map((r) => r.term.toLowerCase().trim())
       .filter((t) => t.length >= MIN_TERM_LEN && !/\s/.test(t));
-    return terms.length > 0 ? terms : EXPECTED_TERMS;
+    return { terms: terms.length > 0 ? terms : EXPECTED_TERMS, glossary };
   } catch {
-    return EXPECTED_TERMS;
+    return { terms: EXPECTED_TERMS, glossary: new Set() };
   }
 }
 
@@ -97,7 +105,7 @@ export const spellValidator: Validator = {
     // near-misses of a curated term list isolates the words reviewers actually flag.
     // The dictionary loads lazily on the first document that has candidate words.
     let spell: Spell | null = null;
-    const terms = await loadExpectedTerms(ctx.prisma);
+    const { terms, glossary } = await loadTermsAndGlossary(ctx.prisma);
     const nameWords = claimNameWords(ctx.shared);
     const sample: string[] = []; // details.suspect: "token→term" (<=50)
     const doubtfulSample: string[] = [];
@@ -110,7 +118,9 @@ export const spellValidator: Validator = {
       const s = spell ?? (spell = await getSpell());
       // A token counts as a real word if the dictionary accepts it in its own case
       // or lowercased (dictionary-en holds many proper nouns only capitalised).
-      const isRealWord = (w: string) => dictHasWord(s, w);
+      // A glossary abbreviation counts as a real word: that is the whole point of the
+      // reviewers being able to add "Pvt" and "Ltd" themselves.
+      const isRealWord = (w: string) => dictHasWord(s, w) || glossary.has(w.toLowerCase());
       // OCR word boxes let us anchor each hit to a region on an image (Phase 2).
       const boxIndex = indexBoxes(ctx.wordBoxes.get(documentId) ?? []);
       for (const hit of findTermMisspellings(words, isRealWord, terms)) {

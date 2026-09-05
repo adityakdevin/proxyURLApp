@@ -14,6 +14,7 @@ import {
   checkSignatoryWord,
   checkEditorWatermark,
   checkDates,
+  checkTimestamps,
   ocrAdjacent,
   aadhaarNumbers,
 } from '../redFlagLogic.js';
@@ -279,5 +280,39 @@ describe('ocrAdjacent', () => {
   });
   it('is false for a genuinely malformed token', () => {
     expect(ocrAdjacent('XY9QD1234E', /^[A-Z]{5}[0-9]{4}[A-Z]$/)).toBe(false);
+  });
+});
+
+describe('checkTimestamps (created vs modified)', () => {
+  const CREATED = '2025-11-20 12:40:00 UTC';
+
+  it('passes when both timestamps are identical (untouched file)', () => {
+    expect(checkTimestamps(CREATED, CREATED)).toEqual([]);
+  });
+
+  it('passes when they differ by less than the tolerance', () => {
+    expect(checkTimestamps(CREATED, '2025-11-20 12:40:30 UTC')).toEqual([]);
+  });
+
+  it('flags a document modified after it was created', () => {
+    const [f] = checkTimestamps(CREATED, '2025-11-21 09:00:00 UTC');
+    expect(f.code).toBe('REDFLAG_MODIFIED_AFTER_CREATE');
+    expect(f.severity).toBe('ERROR');
+  });
+
+  it('flags a modified date that precedes the created date', () => {
+    const [f] = checkTimestamps(CREATED, '2025-11-19 09:00:00 UTC');
+    expect(f.code).toBe('REDFLAG_TIMESTAMP_ORDER');
+  });
+
+  it('compares across timezone offsets rather than raw text', () => {
+    // Same instant, written two ways — must not be reported as an edit.
+    expect(checkTimestamps('2025-11-20 12:40:00 UTC', '2025-11-20 18:10:00 +05:30')).toEqual([]);
+  });
+
+  it('says nothing when either date is missing or unparseable', () => {
+    expect(checkTimestamps(CREATED, undefined)).toEqual([]);
+    expect(checkTimestamps(CREATED, '')).toEqual([]);
+    expect(checkTimestamps(CREATED, 'not a date')).toEqual([]);
   });
 });
