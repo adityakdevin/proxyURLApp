@@ -37,6 +37,7 @@ const COLUMNS = [
   'intraClaimStatus',
   'fullScanStatus',
   'redFlagStatus',
+  'duplicateStatus',
 ] as const;
 
 /**

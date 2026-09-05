@@ -32,7 +32,11 @@ export type CrossField =
   | 'VEHICLE_NO'
   | 'MODEL'
   | 'EMP_CODE'
-  | 'ADDRESS';
+  | 'ADDRESS'
+  | 'DOB'
+  | 'ACCOUNT_NO'
+  | 'RECEIPT_NO'
+  | 'APPLICATION_NO';
 
 export interface CrossPage {
   documentId: string;
@@ -211,6 +215,22 @@ export function addressMatches(a: string, b: string): boolean {
   return hit / small.size >= ADDRESS_MIN_OVERLAP;
 }
 
+/** Dates agree on the DAY, whatever separator or year width the document used:
+ *  "05/11/1994", "5-11-94" and "05.11.1994" are one birth date. */
+export function dateMatches(a: string, b: string): boolean {
+  const parts = (v: string) => {
+    const m = /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/.exec(v.trim());
+    if (!m) return null;
+    let y = +m[3];
+    if (y < 100) y += y < 50 ? 2000 : 1900;
+    return `${+m[1]}-${+m[2]}-${y}`;
+  };
+  const pa = parts(a);
+  const pb = parts(b);
+  if (!pa || !pb) return true; // unparseable → not evidence of a mismatch
+  return pa === pb;
+}
+
 // ── Field extraction (label-anchored) ────────────────────────────────────────────
 function allMatches(text: string, re: RegExp): string[] {
   const out: string[] = [];
@@ -355,9 +375,17 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   // field on the next line cannot be swallowed into the address.
   ADDRESS:
     /(?:address|addr|residence|r\/o|resident\s+of)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .,\-\/#()]{9,150})/gi,
+  // The label is required: a bare date on a page is an invoice/issue date far more often
+  // than a birth date, and comparing those would flag every honest claim.
+  DOB: /(?:date\s*of\s*birth|d\.?o\.?b\.?|birth\s*date)\s*[:\-]?\s*(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})/gi,
+  ACCOUNT_NO:
+    /(?:a\/c|acc?(?:oun)?t)\.?\s*(?:no|number|#)?\s*[:\-]\s*([0-9][0-9\- ]{5,22}[0-9])/gi,
+  RECEIPT_NO: /receipt\s*(?:no|number|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
+  APPLICATION_NO:
+    /(?:application|appl?n)\.?\s*(?:no|number|id|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
 };
 
-function extractField(field: CrossField, text: string): string[] {
+export function extractField(field: CrossField, text: string): string[] {
   if (field === 'NAME') return extractNames(text);
   if (field.startsWith('RELATION_')) {
     const kind = field.slice('RELATION_'.length) as RelationKind;
@@ -396,6 +424,10 @@ const CHECKS: Check[] = [
   { field: 'MODEL', scope: ['INVOICE', 'RC', 'INSURANCE'], match: modelMatches },
   { field: 'EMP_CODE', scope: ['STAFF_ID', 'PAYSLIP'], match: idMatches },
   { field: 'ADDRESS', scope: ALL_TYPES, match: addressMatches },
+  // One person has one birth date, so a disagreement between a claim's own documents is
+  // real. The reference numbers below are deliberately NOT compared: each document
+  // legitimately carries its own receipt/application number.
+  { field: 'DOB', scope: ALL_TYPES, match: dateMatches },
 ];
 
 const FIELD_LABEL: Record<CrossField, string> = {
@@ -410,6 +442,10 @@ const FIELD_LABEL: Record<CrossField, string> = {
   MODEL: 'Model',
   EMP_CODE: 'Employee code',
   ADDRESS: 'Address',
+  DOB: 'Date of birth',
+  ACCOUNT_NO: 'Account number',
+  RECEIPT_NO: 'Receipt number',
+  APPLICATION_NO: 'Application number',
 };
 
 interface Val {

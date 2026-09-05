@@ -59,6 +59,7 @@ interface ClaimDetail {
   spellCheckStatus: string;
   qrStatus: string;
   qrOutcome?: string | null;
+  duplicateStatus: string;
   metaExtractionStatus: string;
   intraClaimStatus: string;
   fullScanStatus: string;
@@ -84,7 +85,7 @@ function humanSize(bytes: number | null): string {
 }
 
 interface ValResult {
-  validatorKey: 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG';
+  validatorKey: 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG' | 'DUP';
   status: ValidationStatus;
   summary: string | null;
   findings?: Finding[];
@@ -201,6 +202,7 @@ const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof
   { key: 'INTRA', label: 'Intra-Claim', column: 'intraClaimStatus' },
   { key: 'REDFLAG', label: 'Red Flags', column: 'redFlagStatus' },
   { key: 'FULL', label: 'Full Scan', column: 'fullScanStatus' },
+  { key: 'DUP', label: 'Duplicate', column: 'duplicateStatus' },
 ];
 
 export default function ClaimUpdate() {

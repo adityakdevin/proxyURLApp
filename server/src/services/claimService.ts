@@ -71,6 +71,8 @@ export interface ListClaimsFilters {
   /** Per-check result filters (each of the five validation columns). */
   spellCheckStatus?: ValidationStatus;
   qrStatus?: ValidationStatus;
+  redFlagStatus?: ValidationStatus;
+  duplicateStatus?: ValidationStatus;
   metaExtractionStatus?: ValidationStatus;
   intraClaimStatus?: ValidationStatus;
   fullScanStatus?: ValidationStatus;
@@ -524,6 +526,8 @@ export class ClaimService {
     'metaExtractionStatus',
     'intraClaimStatus',
     'fullScanStatus',
+    'redFlagStatus',
+    'duplicateStatus',
   ]);
 
   async list(filters: ListClaimsFilters) {
@@ -654,6 +658,8 @@ export class ClaimService {
     if (filters.metaExtractionStatus) where.metaExtractionStatus = filters.metaExtractionStatus;
     if (filters.intraClaimStatus) where.intraClaimStatus = filters.intraClaimStatus;
     if (filters.fullScanStatus) where.fullScanStatus = filters.fullScanStatus;
+    if (filters.redFlagStatus) where.redFlagStatus = filters.redFlagStatus;
+    if (filters.duplicateStatus) where.duplicateStatus = filters.duplicateStatus;
     if (filters.scope && filters.scope !== 'ALL') {
       // Intersect, never overwrite. Overwriting silently discarded a scoped caller's own
       // sub-category filter — harmless while this only fed a list, but bulk MUTATES through
@@ -696,6 +702,8 @@ export class ClaimService {
       meta: collapseValidationStatus(c.metaExtractionStatus),
       intra: collapseValidationStatus(c.intraClaimStatus),
       full: collapseValidationStatus(c.fullScanStatus),
+      redFlag: collapseValidationStatus(c.redFlagStatus),
+      duplicate: collapseValidationStatus(c.duplicateStatus),
       documents: c._count.documents,
       created: c.createdAt.toISOString().slice(0, 10),
     }));
@@ -737,6 +745,8 @@ export class ClaimService {
         metaExtractionStatus: true,
         intraClaimStatus: true,
         fullScanStatus: true,
+        redFlagStatus: true,
+        duplicateStatus: true,
       },
       // Ascending mirrors the source sheet's S.No ordering (oldest = row 1).
       orderBy: { createdAt: 'asc' },
@@ -766,6 +776,8 @@ export class ClaimService {
         metaExtractionStatus: c.metaExtractionStatus,
         intraClaimStatus: c.intraClaimStatus,
         fullScanStatus: c.fullScanStatus,
+        redFlagStatus: c.redFlagStatus,
+        duplicateStatus: c.duplicateStatus,
       },
     }));
   }

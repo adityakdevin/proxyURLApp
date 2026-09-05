@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { CHECK_FILTERS, CHECK_STATUS_OPTIONS } from '@/lib/checkFilters';
 import { useNavigate } from 'react-router-dom';
 import { ColumnDef } from '@tanstack/react-table';
 import { Upload, Download, Loader2 } from 'lucide-react';
@@ -35,6 +36,8 @@ interface ClaimRow {
   subCategory: { id: string; name: string };
   assignedTo: { id: string; fullName: string } | null;
   spellCheckStatus: string;
+  redFlagStatus: string;
+  duplicateStatus: string;
   qrStatus: string;
   qrOutcome?: string | null;
   metaExtractionStatus: string;
@@ -46,21 +49,6 @@ interface ClaimRow {
   createdAt: string;
 }
 
-const CHECK_FILTERS = [
-  { key: 'spellCheckStatus', label: 'Spell' },
-  { key: 'qrStatus', label: 'QR' },
-  { key: 'metaExtractionStatus', label: 'Meta' },
-  { key: 'intraClaimStatus', label: 'Intra' },
-  { key: 'fullScanStatus', label: 'Full' },
-] as const;
-const CHECK_STATUS_OPTIONS = [
-  { value: 'PENDING', label: 'Pending' },
-  { value: 'IN_PROGRESS', label: 'In Progress' },
-  { value: 'PASSED', label: 'Passed' },
-  { value: 'DOUBTFUL', label: 'Doubtful' },
-  { value: 'FAILED', label: 'Failed' },
-  { value: 'DOCS_NOT_AVAILABLE', label: 'Docs N/A' },
-];
 
 interface ImportReport {
   subCategoryId: string;
@@ -323,6 +311,18 @@ export default function AdminClaims() {
       header: 'Full Scan',
       meta: { sortField: 'fullScanStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.fullScanStatus} />,
+    },
+    {
+      id: 'redflag',
+      header: 'Red Flags',
+      meta: { sortField: 'redFlagStatus' },
+      cell: ({ row }) => <ValidationBadge status={row.original.redFlagStatus} />,
+    },
+    {
+      id: 'duplicate',
+      header: 'Duplicate',
+      meta: { sortField: 'duplicateStatus' },
+      cell: ({ row }) => <ValidationBadge status={row.original.duplicateStatus} />,
     },
     {
       id: 'actions',

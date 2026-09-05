@@ -1,12 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import { BBox } from '../lib/bbox.js';
 
-export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG';
+export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG' | 'DUP';
 export type ClaimColumn =
   | 'metaExtractionStatus'
   | 'spellCheckStatus'
   | 'qrStatus'
   | 'intraClaimStatus'
+  | 'duplicateStatus'
   | 'fullScanStatus'
   | 'redFlagStatus';
 

@@ -41,10 +41,11 @@ const CHECK_LABEL: Record<string, string> = {
   INTRA: 'Intra-Claim',
   FULL: 'Full Scan',
   REDFLAG: 'Red Flags',
+  DUP: 'Duplicate',
 };
 
 // Switcher order, matching the cards on the claim page. 'ALL' drops the ?v= filter.
-const CHECK_TABS = ['ALL', 'SPELL', 'QR', 'META', 'INTRA', 'FULL', 'REDFLAG'] as const;
+const CHECK_TABS = ['ALL', 'SPELL', 'QR', 'META', 'INTRA', 'FULL', 'REDFLAG', 'DUP'] as const;
 
 /**
  * Standalone document tab, opened by the claim page with window.open so a reviewer can keep

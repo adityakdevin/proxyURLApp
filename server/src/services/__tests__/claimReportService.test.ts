@@ -51,6 +51,8 @@ const obsRow: ObservationExportRow = {
     metaExtractionStatus: 'PASSED',
     intraClaimStatus: 'PASSED',
     fullScanStatus: 'FAILED',
+    redFlagStatus: 'PASSED',
+    duplicateStatus: 'PASSED',
   },
 };
 
@@ -79,6 +81,8 @@ describe('buildObservationWorkbook', () => {
         metaExtractionStatus: 'PASSED',
         intraClaimStatus: 'DOUBTFUL',
         fullScanStatus: 'PASSED',
+        redFlagStatus: 'PASSED',
+        duplicateStatus: 'PASSED',
       },
     };
     const ws = buildObservationWorkbook([clean]).getWorksheet('Observations')!;
