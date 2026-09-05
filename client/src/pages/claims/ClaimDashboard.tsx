@@ -121,6 +121,11 @@ export default function ClaimDashboard() {
   // Checkpoint filters. Held separately from `filters`/`appliedFilters` so the bulk-scope
   // guard those two implement is left exactly as it was.
   const [checks, setChecks] = useState<Partial<Record<CheckFilterKey, string>>>({});
+  // The checkpoint filters the CURRENT rows were fetched with — the same applied/live split
+  // as appliedFilters, and for the same reason: the bulk bar resolves "all matching" from
+  // these, so a live value here would let a mutating action run against a set the reviewer
+  // was never shown.
+  const [appliedChecks, setAppliedChecks] = useState<Partial<Record<CheckFilterKey, string>>>({});
   const noAssignment = role !== 'ADMIN' && !user?.projectId;
   const [filterStatuses, setFilterStatuses] = useState<Status[]>([]);
 
@@ -165,6 +170,7 @@ export default function ClaimDashboard() {
     // filters while the bulk bar had already advanced to the new ones — the exact split this
     // applied/live pair exists to prevent.
     const requested = filters;
+    const requestedChecks = checks;
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (requested.subCategoryId) params.set('subCategoryId', requested.subCategoryId);
@@ -173,13 +179,14 @@ export default function ClaimDashboard() {
       if (requested.assignedToUserId) params.set('assignedToUserId', requested.assignedToUserId);
       if (requested.search) params.set('search', requested.search);
       for (const cf of CHECK_FILTERS) {
-        const v = checks[cf.key];
+        const v = requestedChecks[cf.key];
         if (v) params.set(cf.key, v);
       }
       const r = await api.get<PaginatedResponse<ClaimRow>>(`/claims?${params}`);
       setData(r.data);
       setPagination(r.pagination);
       setAppliedFilters(requested);
+      setAppliedChecks(requestedChecks);
     } catch (e) {
       toast({
         title: 'Error',
@@ -530,6 +537,9 @@ export default function ClaimDashboard() {
           assignedToUserId: appliedFilters.assignedToUserId,
           assignedToMe: appliedFilters.assignedToMe,
           search: appliedFilters.search.trim() || undefined,
+          // Without these, "Select all N matching" resolved a WIDER set than the filtered
+          // rows on screen — and validate/delete/reassign then ran on all of it.
+          ...appliedChecks,
         }}
         filtersSummary={filtersSummary}
         role={role}

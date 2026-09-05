@@ -205,7 +205,10 @@ export class SpellTermService {
         await this.prisma.spellTerm.upsert({
           where: { term },
           create: { term, expansion, status: Status.ACTIVE, createdBy: actorId, updatedBy: actorId },
-          update: { expansion, updatedBy: actorId },
+          // Reactivate. The validator loads ACTIVE terms only, so importing over a
+          // deactivated row and leaving it INACTIVE reports "saved" while the abbreviation
+          // carries on being flagged — the exact complaint the import exists to end.
+          update: { expansion, status: Status.ACTIVE, updatedBy: actorId },
         });
         saved++;
       } catch (err) {

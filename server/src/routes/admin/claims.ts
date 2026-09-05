@@ -9,7 +9,7 @@ import {
 } from '../../services/observationImportService.js';
 import { buildObservationWorkbook } from '../../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
-import { recordClaimAudit } from '../../lib/bulkClaims.js';
+import { recordClaimAudit, CHECK_KEYS } from '../../lib/bulkClaims.js';
 
 /** The validation-check result values a claim can be filtered by. From the Prisma enum, not
  *  a hand-copied list: a new member was silently rejected here while the bulk route, which
@@ -76,9 +76,7 @@ router.get(
     query('assignedToUserId').optional().isUUID(),
     query('search').optional().isString(),
     query('status').optional().isIn(['ACTIVE', 'INACTIVE']),
-    query(['spellCheckStatus', 'qrStatus', 'metaExtractionStatus', 'intraClaimStatus', 'fullScanStatus'])
-      .optional()
-      .isIn(CHECK_STATUSES),
+    query([...CHECK_KEYS]).optional().isIn(CHECK_STATUSES),
     query('sortBy').optional().isString(),
     query('sortOrder').optional().isIn(['asc', 'desc']),
     query('page').optional().isInt({ min: 1 }).toInt(),
@@ -99,6 +97,8 @@ router.get(
         metaExtractionStatus: q.metaExtractionStatus as ValidationStatus | undefined,
         intraClaimStatus: q.intraClaimStatus as ValidationStatus | undefined,
         fullScanStatus: q.fullScanStatus as ValidationStatus | undefined,
+        redFlagStatus: q.redFlagStatus as ValidationStatus | undefined,
+        duplicateStatus: q.duplicateStatus as ValidationStatus | undefined,
         sortBy: q.sortBy,
         sortOrder: q.sortOrder as 'asc' | 'desc' | undefined,
         scope: 'ALL',

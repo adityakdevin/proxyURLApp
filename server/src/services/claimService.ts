@@ -95,6 +95,11 @@ export interface ExportRow {
   meta: string;
   intra: string;
   full: string;
+  redFlag: string;
+  duplicate: string;
+  /** The bifurcated QR result (NO_QR / UNREADABLE / MISMATCH / OK). Empty for claims
+   *  validated before the column existed — `qr` still carries the pass/fail status. */
+  qrOutcome: string;
   documents: number;
   created: string;
 }
@@ -704,6 +709,7 @@ export class ClaimService {
       full: collapseValidationStatus(c.fullScanStatus),
       redFlag: collapseValidationStatus(c.redFlagStatus),
       duplicate: collapseValidationStatus(c.duplicateStatus),
+      qrOutcome: c.qrOutcome ?? '',
       documents: c._count.documents,
       created: c.createdAt.toISOString().slice(0, 10),
     }));

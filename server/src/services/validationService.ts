@@ -173,6 +173,10 @@ export class ValidationService {
           where: { id: claim.id },
           data: { ...Object.fromEntries(COLUMNS.map((c) => [c, 'DOCS_NOT_AVAILABLE'])), qrOutcome: null },
         });
+        // DUP never runs on this path, so its index would keep the values read from the
+        // documents this claim no longer has — and OTHER claims would go on matching them.
+        // A stale row here is a false duplicate on somebody else's claim.
+        await tx.claimFieldValue.deleteMany({ where: { claimId: claim.id } });
         await tx.validationRun.update({
           where: { id: runId },
           data: { status: 'COMPLETED', finishedAt: new Date() },
