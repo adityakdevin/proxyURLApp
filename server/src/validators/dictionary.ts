@@ -1,5 +1,6 @@
 import nspell from 'nspell';
 import enDictionary from 'dictionary-en';
+import { pluralStems } from './logic.js';
 
 /** The slice of nspell this codebase uses. */
 export interface Spell {
@@ -40,5 +41,9 @@ export async function getSpell(): Promise<Spell> {
  * validator applies to OCR tokens.
  */
 export function isRealWord(spell: Spell, word: string): boolean {
-  return spell.correct(word) || spell.correct(word.toLowerCase());
+  const known = (w: string) => spell.correct(w) || spell.correct(w.toLowerCase());
+  if (known(word)) return true;
+  // Plurals are not misspellings. The dictionary has "dealers" but not the plural of every
+  // proper noun and trade term on this paperwork, so fall back to the singular form.
+  return pluralStems(word).some(known);
 }

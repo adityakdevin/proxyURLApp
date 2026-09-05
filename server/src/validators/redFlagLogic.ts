@@ -367,6 +367,61 @@ export function checkEditorWatermark(producer?: string | null, creator?: string 
   return hit ? [err('REDFLAG_EDITOR_WATERMARK', `Document produced/edited by "${hit.trim()}"`, null, { tool: hit.trim() })] : [];
 }
 
+// A PDF written once and never edited carries the same CreationDate and ModDate — that is
+// what a genuine system-generated invoice, or a scanner's output, looks like. A later edit
+// with a PDF writer pushes ModDate forward and leaves CreationDate behind, which is the
+// signal the reviewers asked for. Tolerance: some writers stamp the two fields in separate
+// passes and land a second or two apart, and flagging that would bury the real hits.
+const TIMESTAMP_TOLERANCE_MS = 60_000;
+
+/** readPdfInfo hands us display-formatted dates ("YYYY-MM-DD HH:MM:SS UTC" or "… +05:30");
+ *  Date.parse wants the ISO spelling. Returns null for anything unparseable so a garbled
+ *  property is simply not compared rather than reported as tampering. */
+function parseDocDate(v?: string | null): number | null {
+  if (!v) return null;
+  const iso = v
+    .trim()
+    .replace(' ', 'T')
+    .replace(' UTC', 'Z')
+    .replace(/\s(?=[+-]\d{2}:\d{2}$)/, '');
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * Created vs Modified. Equal timestamps mean the file was never rewritten; a gap means it
+ * was opened in an editor after it was produced. A ModDate BEFORE the CreationDate cannot
+ * happen naturally at all — one of the two was set by hand, which is the stronger signal.
+ *
+ * Only compared when BOTH dates exist: a blank ModDate is common and on its own says
+ * nothing, so treating it as a flag would fire on a large share of honest documents.
+ */
+export function checkTimestamps(created?: string | null, modified?: string | null): RedFlagFinding[] {
+  const c = parseDocDate(created);
+  const m = parseDocDate(modified);
+  if (c === null || m === null) return [];
+  const delta = m - c;
+  if (delta < -TIMESTAMP_TOLERANCE_MS) {
+    return [
+      err('REDFLAG_TIMESTAMP_ORDER', `Modified date "${modified}" is BEFORE created date "${created}"`, null, {
+        created,
+        modified,
+      }),
+    ];
+  }
+  if (delta > TIMESTAMP_TOLERANCE_MS) {
+    return [
+      err(
+        'REDFLAG_MODIFIED_AFTER_CREATE',
+        `Document modified after creation — created "${created}", modified "${modified}"`,
+        null,
+        { created, modified }
+      ),
+    ];
+  }
+  return [];
+}
+
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // Feb=28; leap adds a day below
 const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 

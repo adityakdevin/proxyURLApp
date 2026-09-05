@@ -31,7 +31,8 @@ export type CrossField =
   | 'ENGINE'
   | 'VEHICLE_NO'
   | 'MODEL'
-  | 'EMP_CODE';
+  | 'EMP_CODE'
+  | 'ADDRESS';
 
 export interface CrossPage {
   documentId: string;
@@ -169,6 +170,45 @@ export function modelMatches(a: string, b: string): boolean {
   const [small, big] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
   for (const t of small) if (!big.has(t)) return false;
   return true;
+}
+
+// An address is the one common field nobody writes the same way twice: line breaks move,
+// "Road"/"Rd" alternate, a floor or landmark appears on one document and not the other.
+// Comparing the strings would flag every honest claim, so compare the DISTINCTIVE tokens
+// and require most of the shorter side to appear in the longer one.
+const ADDRESS_NOISE = new Set([
+  'house', 'no', 'flat', 'plot', 'door', 'room', 'floor', 'flr', 'near', 'opp', 'opposite',
+  'behind', 'beside', 'above', 'below', 'block', 'sector', 'phase', 'lane', 'street', 'road',
+  'nagar', 'colony', 'post', 'dist', 'district', 'tehsil', 'taluk', 'village', 'vill', 'city',
+  'town', 'state', 'pin', 'pincode', 'india', 'the', 'and', 'building', 'bldg', 'cross', 'main',
+]);
+const ADDRESS_MIN_OVERLAP = 0.6;
+const PIN_RE = /\b(\d{6})\b/;
+
+/** Addresses agree when most distinctive tokens are shared AND the PIN codes do not
+ *  contradict. Deliberately loose: a false mismatch on an address costs a reviewer more
+ *  than a missed one, so this reports as a WARNING at the call site. */
+export function addressMatches(a: string, b: string): boolean {
+  const pinA = PIN_RE.exec(a)?.[1];
+  const pinB = PIN_RE.exec(b)?.[1];
+  // A PIN is the one part of an address written identically everywhere. Two different PINs
+  // are two different places, whatever the rest of the text looks like.
+  if (pinA && pinB && pinA !== pinB) return false;
+  const toks = (v: string) =>
+    new Set(
+      v
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length > 2 && !ADDRESS_NOISE.has(t))
+    );
+  const ta = toks(a);
+  const tb = toks(b);
+  if (ta.size === 0 || tb.size === 0) return true; // nothing distinctive → not a mismatch
+  const [small, big] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
+  let hit = 0;
+  for (const t of small) if (big.has(t)) hit++;
+  return hit / small.size >= ADDRESS_MIN_OVERLAP;
 }
 
 // ── Field extraction (label-anchored) ────────────────────────────────────────────
@@ -311,6 +351,10 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   ENGINE: /engine\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{5,20})/gi,
   MODEL: /(?:model|variant|make\s*(?:&|and)?\s*model)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/gi,
   EMP_CODE: /(?:emp(?:loyee)?\.?\s*(?:code|id|no|number)|staff\s*(?:id|code|no))\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/]{1,20})/gi,
+  // Runs to the end of the line: the character class excludes newlines, so a following
+  // field on the next line cannot be swallowed into the address.
+  ADDRESS:
+    /(?:address|addr|residence|r\/o|resident\s+of)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .,\-\/#()]{9,150})/gi,
 };
 
 function extractField(field: CrossField, text: string): string[] {
@@ -351,6 +395,7 @@ const CHECKS: Check[] = [
   { field: 'VEHICLE_NO', scope: ['RC', 'INSURANCE'], match: idMatches },
   { field: 'MODEL', scope: ['INVOICE', 'RC', 'INSURANCE'], match: modelMatches },
   { field: 'EMP_CODE', scope: ['STAFF_ID', 'PAYSLIP'], match: idMatches },
+  { field: 'ADDRESS', scope: ALL_TYPES, match: addressMatches },
 ];
 
 const FIELD_LABEL: Record<CrossField, string> = {
@@ -364,6 +409,7 @@ const FIELD_LABEL: Record<CrossField, string> = {
   VEHICLE_NO: 'Vehicle number',
   MODEL: 'Model',
   EMP_CODE: 'Employee code',
+  ADDRESS: 'Address',
 };
 
 interface Val {
@@ -426,7 +472,10 @@ export function crossDocFieldFindings(pages: CrossPage[]): FindingInput[] {
       // agreement across the other doc types (Invoice/RC/Insurance/Payslip/Staff-ID/DMS)
       // stays ERROR. Same soft treatment for unclassifiable (UNKNOWN) pages.
       const kycInvolved = check.field === 'NAME' && (o.docType === 'KYC' || expType === 'KYC');
-      const soft = o.docType === 'UNKNOWN' || expType === 'UNKNOWN' || kycInvolved;
+        // Address is always soft: the matcher is deliberately loose, and a reviewer reading a
+      // reformatted-but-correct address as a hard red flag is the failure that matters here.
+      const soft =
+        o.docType === 'UNKNOWN' || expType === 'UNKNOWN' || kycInvolved || check.field === 'ADDRESS';
       findings.push({
         documentId: o.documentId,
         code: `CROSS_${check.field}_MISMATCH`,

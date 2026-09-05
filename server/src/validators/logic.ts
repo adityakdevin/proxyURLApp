@@ -363,6 +363,24 @@ export function isDoubtfulHit(token: string, term: string, distance: number): bo
 export const MIN_TERM_LEN = 4;
 
 /**
+ * Singular candidates for a possibly-plural word.
+ *
+ * Reviewers asked that plurals not be red-flagged. The dictionary already carries regular
+ * plurals of common words, but not of the proper nouns and trade terms these documents are
+ * full of — so "Marutis" was reported as a misspelling of the Spell Term "Maruti", which is
+ * exactly the noise the request was about. Both places that decide whether a word is
+ * acceptable (the dictionary lookup and the term matcher) use this same rule.
+ */
+export function pluralStems(word: string): string[] {
+  const w = word.toLowerCase();
+  const out: string[] = [];
+  if (/ies$/.test(w)) out.push(w.slice(0, -3) + 'y'); // policies → policy
+  if (/(?:ch|sh|s|x|z)es$/.test(w)) out.push(w.slice(0, -2)); // boxes → box
+  if (/[^s]s$/.test(w)) out.push(w.slice(0, -1)); // dealers → dealer ("class" is untouched)
+  return out;
+}
+
+/**
  * From spell candidates, find DISTINCT tokens that misspell an expected term:
  * a token ≥4 chars that isn't a real word (`isRealWord` false in any case) yet
  * lands 1–2 edits from a term in `terms`. Short terms (<6 chars) match at edit
@@ -427,6 +445,8 @@ export function findTermMisspellings(
       if (!best || d < best.d || (d === best.d && best.edge && !edge)) best = { term, d, edge };
       if (d === 1 && !edge) break; // can't do better
     }
+    // A plural of the very term we matched is not a misspelling of it.
+    if (best && pluralStems(token).includes(best.term.toLowerCase())) continue;
     if (best) {
       hits.set(token, {
         term: best.term,
