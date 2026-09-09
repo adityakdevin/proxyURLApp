@@ -16,7 +16,6 @@ import {
   BookText,
   PanelLeftClose,
   PanelLeftOpen,
-  MonitorSmartphone,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -32,10 +31,7 @@ const navItems: NavItem[] = [
   { path: '/admin/categories', label: 'Categories', icon: FolderTree },
   { path: '/admin/sub-categories', label: 'Sub-Categories', icon: Folder },
   { path: '/admin/url-configs', label: 'URL Configs', icon: Link2 },
-  // Reachable at last. The page has existed since sessions were single-per-user, when there
-  // was little to look at; now that an account can hold several at once it is where an admin
-  // sees who is signed in from where, and ends a session they do not recognise.
-  { path: '/admin/sessions', label: 'Active Sessions', icon: MonitorSmartphone },
+  // { path: '/admin/sessions', label: 'Active Sessions', icon: MonitorSmartphone },
 ];
 
 const claimsNavItems: NavItem[] = [
