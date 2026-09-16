@@ -312,7 +312,16 @@ export async function rasterizePdf(
         await page.render({ canvasContext, viewport } as never).promise;
         out.push({
           page: p,
-          png: canvas.toBuffer('image/png'),
+          // encode(), NOT toBuffer(). toBuffer is SYNCHRONOUS: at the QR retry scale of 8 an
+          // A4 page is ~4760x6736, so PNG-deflating ~128 MB of RGBA ran on the main thread
+          // and froze the whole process for tens of seconds. Prisma's interactive-transaction
+          // timeout is a JS timer, so a transaction opened by a check that had already
+          // finished expired while this blocked, and the run failed with "Transaction already
+          // closed ... however 70368 ms passed" against a 30000 ms budget — numbers that match
+          // the QR check's own timings, not any query. It also froze every HTTP request on the
+          // box, which is why the claims list crawled during validation. encode() does the
+          // same work on the libuv threadpool.
+          png: await canvas.encode('png'),
           width: Math.round(viewport.width),
           height: Math.round(viewport.height),
           totalPages: doc.numPages,
