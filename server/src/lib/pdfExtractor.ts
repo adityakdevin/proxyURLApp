@@ -278,6 +278,11 @@ export async function rasterizePdf(
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     // @napi-rs/canvas ships prebuilt binaries (incl. Windows) — no node-gyp build.
     const { createCanvas } = await import('@napi-rs/canvas');
+    // Clock starts AFTER the dynamic imports. Node caches them, so they cost something once
+    // per process and nothing thereafter — counting them made the first line of a run report
+    // a 712ms "load" that was almost entirely module resolution, which is the opposite of
+    // the steady-state number this is here to produce.
+    const startedAt = Date.now();
     const data = new Uint8Array(await fs.readFile(absolutePath));
     // Without the bundled standard fonts, pages using non-embedded fonts render
     // BLANK in Node ("Requesting object that isn't resolved yet Times_path_…"),
@@ -298,6 +303,7 @@ export async function rasterizePdf(
       disableFontFace: true,
       standardFontDataUrl,
     }).promise;
+    const loadedAt = Date.now();
     const out: RasterPage[] = [];
     try {
       const pageCount = Math.min(doc.numPages, maxPages);
@@ -331,6 +337,17 @@ export async function rasterizePdf(
       await doc.cleanup?.();
       await doc.destroy?.();
     }
+    // Split LOAD from RENDER, because they answer different questions. Every call re-reads
+    // the whole file and re-parses it, and the high-resolution retries in ocr.ts and
+    // qrValidator call this once PER PAGE — so a claim can pay two dozen full document loads
+    // to render two dozen single pages. Whether that is worth restructuring depends on the
+    // load/render split, which nothing was measuring. The filename is operator-supplied, so
+    // strip control characters rather than let it forge log lines.
+    console.log(
+      `[pdf] raster ${path.basename(absolutePath).replace(/[\p{C}]/gu, '?')} scale ${scale}: ` +
+        `${out.length}p in ${Date.now() - startedAt}ms ` +
+        `(load ${loadedAt - startedAt}ms, render+encode ${Date.now() - loadedAt}ms)`
+    );
     return out;
   } catch (e) {
     // Never silent. Every failure here — a missing file, a corrupt or password-protected

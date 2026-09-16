@@ -292,17 +292,27 @@ export class TesseractOcrPort implements OcrPort {
       // The 12-page cap bounds a BLIND whole-document OCR. When the caller already knows
       // exactly which pages lack a text layer, honour that list instead — applying the cap
       // first meant an ID-card page at position 13+ of a bundled claim PDF was never read.
+      const rasterStartedAt = Date.now();
       const pages = onlyPages
         ? await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, 2, onlyPages)
         : await rasterizePdf(absolutePath, 12);
+      const rasterMs = Date.now() - rasterStartedAt;
       if (pages.length === 0) return { text: '', words: [] };
       const worker = await this.getWorker();
       const parts: string[] = [];
       const words: WordBox[] = [];
       const perPage: { page: number; text: string }[] = [];
       let highResBudget = MAX_HIGHRES_RETRY_PAGES;
+      // META is the most expensive check in a run and reported only one total, so there was
+      // no way to tell a slow OCR engine from a slow rasteriser from too many high-res
+      // retries — three problems with three different fixes.
+      let recognizeMs = 0;
+      let retryMs = 0;
+      let retries = 0;
       for (const pg of pages) {
+        const recognizeStartedAt = Date.now();
         let { data, rotation, skew, score } = await recognize(worker, pg.png);
+        recognizeMs += Date.now() - recognizeStartedAt;
         let dims = { w: pg.width, h: pg.height };
 
         // Still reading poorly? Render the SAME page larger and look once more, at the
@@ -310,6 +320,8 @@ export class TesseractOcrPort implements OcrPort {
         // badly filtered, and re-sweeping every rotation at this size would not pay.
         if (score < UPRIGHT_SCORE && highResBudget > 0) {
           highResBudget--;
+          retries++;
+          const retryStartedAt = Date.now();
           const [hi] = await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, HIGH_RASTER_SCALE, [pg.page]);
           const retry = hi && (await recognizeWith(worker, hi.png, rotation, skew !== undefined));
           if (retry && retry.score > score * HIGHRES_GAIN) {
@@ -318,6 +330,7 @@ export class TesseractOcrPort implements OcrPort {
             // Boxes are measured against the image actually recognized.
             dims = { w: hi.width, h: hi.height };
           }
+          retryMs += Date.now() - retryStartedAt;
         }
 
         const t = (data.text ?? '').trim();
@@ -329,6 +342,10 @@ export class TesseractOcrPort implements OcrPort {
         // Deskewed pages contribute text but no boxes — see extractImage above.
         if (!skew) words.push(...collectWords(data, dims.w, dims.h, pg.page, rotation));
       }
+      console.log(
+        `[ocr] ${path.basename(absolutePath).replace(/[\p{C}]/gu, '?')} ${pages.length}p: ` +
+          `raster ${rasterMs}ms, recognize ${recognizeMs}ms, ${retries} high-res retry ${retryMs}ms`
+      );
       return {
         text: parts.join('\n').trim(),
         words,
