@@ -30,6 +30,47 @@ const TX = { timeout: 30_000, maxWait: 15_000 };
 import { resolveScanRoot } from '../lib/directoryReader.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
 
+/**
+ * How long a single check may run before it is abandoned.
+ *
+ * Generous on purpose. The slowest legitimate check seen in production is META at 183s on a
+ * scanned bundle, and failing real work is a worse outcome than a slow queue. This exists
+ * only to break an infinite hang, not to police slowness.
+ */
+function checkTimeoutMs(): number {
+  const raw = Number(process.env.VALIDATION_CHECK_TIMEOUT_MS ?? 600_000);
+  return Number.isFinite(raw) && raw > 0 ? raw : 600_000;
+}
+
+/**
+ * Cap one check's execution.
+ *
+ * Nothing in the OCR or PDF-rasterisation path has a timeout, so one hung page stopped the
+ * check, the run, AND the entire queue: the drainer's Promise.all waits on every worker, so
+ * a stuck worker keeps `draining` non-null forever and every later enqueue just sets
+ * `rearm` and returns having kicked nothing. Observed in production — eight claims queued
+ * at 12:23:49 were not touched until 15:34:24, then drained one at a time rather than two,
+ * which is the signature of one worker stuck inside a check while the other had already
+ * returned on an empty queue. Nothing logged, no row changed state, for three hours.
+ *
+ * ponytail: this frees the DRAINER, not the work. The hung promise is still out there
+ * holding its tesseract worker until ocr.close() reaps it. Real cancellation means an
+ * AbortSignal threaded through every validator and the OCR port — do that if these start
+ * stacking up.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, key: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${key} timed out after ${Math.round(ms / 1000)}s`)),
+        ms
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 const COLUMNS = [
   'metaExtractionStatus',
   'spellCheckStatus',
@@ -231,7 +272,7 @@ export class ValidationService {
         const startedAt = Date.now();
         let ran: Ran;
         try {
-          const outcome = await v.run(ctx);
+          const outcome = await withTimeout(v.run(ctx), checkTimeoutMs(), v.key);
           // DOUBTFUL is decided here, not per validator: a check that passed but raised
           // warning-level findings must not show the reviewer a green badge.
           ran = { ...outcome, v, status: deriveCheckStatus(outcome.status, outcome.findings) };

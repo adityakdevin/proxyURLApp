@@ -86,9 +86,27 @@ function runStartupSweeps() {
     .finally(() => kickDrain(prisma, validatorRegistry));
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   runStartupSweeps(); // once, regardless of whether HTTPS is also enabled
+});
+
+// A failure to bind must name itself. Without this listener the 'error' event has no
+// handler, so it rethrows as a bare EADDRINUSE stack trace — which PM2 printed 303,917
+// times over seven days on the production box while `pm2 status` reported the app as
+// "online". An orphaned node process from an earlier deploy held 3001 and went on serving
+// production unsupervised, a week behind the deployed build, with its output going nowhere
+// anyone was reading. The restart loop was not the damage; the silence was.
+server.on('error', (e: NodeJS.ErrnoException) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(
+      `FATAL: port ${PORT} is already in use. Another server process is still running — ` +
+        `stop it before starting this one (netstat -ano | findstr :${PORT}).`
+    );
+  } else {
+    console.error('FATAL: HTTP server failed to start:', e);
+  }
+  process.exit(1);
 });
 
 // Optional in-app TLS: enabled when HTTPS_KEY + HTTPS_CERT point at readable PEM

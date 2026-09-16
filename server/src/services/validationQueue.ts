@@ -22,7 +22,14 @@ let rearm = false;
 function concurrency(): number {
   // Read per call, not once at import: a module-level const is fixed before any config is
   // loaded and cannot be exercised by a test.
-  return Math.max(1, Number(process.env.VALIDATION_CONCURRENCY ?? 2));
+  //
+  // Guard the cast, do not just clamp it. Number('two') is NaN, Math.max(1, NaN) is NaN,
+  // and Array.from({ length: NaN }) is an EMPTY array — so a typo'd env var spawned ZERO
+  // workers, drainLoop's Promise.all resolved on nothing, and every queued run sat
+  // untouched with not one line logged. The silent-total-failure case has to fall back to
+  // the default, not to whatever the arithmetic happens to produce.
+  const raw = Number(process.env.VALIDATION_CONCURRENCY ?? 2);
+  return Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 2;
 }
 
 /**

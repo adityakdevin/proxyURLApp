@@ -167,6 +167,53 @@ describe('ValidationService + drainer', () => {
     expect(rows.map((r) => r.validatorKey).sort()).toEqual(traced.map((v) => v.key).sort());
   });
 
+  it('abandons a check that hangs instead of stalling the run forever', async () => {
+    // A hung OCR page used to stop the check, the run, AND the drainer: drainLoop's
+    // Promise.all waits on every worker, so a stuck one kept `draining` non-null and every
+    // later enqueue set `rearm` and kicked nothing. Eight production claims queued at
+    // 12:23:49 were not touched until 15:34:24 because of exactly this.
+    const prev = process.env.VALIDATION_CHECK_TIMEOUT_MS;
+    process.env.VALIDATION_CHECK_TIMEOUT_MS = '100';
+    try {
+      const hangs: Validator[] = [
+        { key: 'META', column: 'metaExtractionStatus', run: () => new Promise<never>(() => {}) },
+        {
+          key: 'FULL',
+          column: 'fullScanStatus',
+          run: async () => ({ status: 'PASSED', summary: 'ok' }),
+        },
+      ];
+      const claim = await makeClaim('C-HANG');
+      await prisma.document.create({
+        data: {
+          claimId: claim.id,
+          source: 'UPLOADED',
+          fileName: 'doc.pdf',
+          storagePath: `/tmp/${SUF}-C-HANG.pdf`,
+          createdBy: adminId,
+        },
+      });
+      const run = await prisma.validationRun.create({
+        data: { claimId: claim.id, trigger: 'MANUAL', status: 'QUEUED' },
+      });
+
+      expect(await new ValidationService(prisma, hangs).runOne(run.id)).toBe(true);
+
+      // The run reached an end state rather than hanging, the stuck check is FAILED and says
+      // why, and the check that did work still recorded its own result.
+      const after = await prisma.validationRun.findUnique({ where: { id: run.id } });
+      expect(after!.status).toBe('COMPLETED');
+      const rows = await prisma.validationResult.findMany({ where: { runId: run.id } });
+      const meta = rows.find((r) => r.validatorKey === 'META');
+      expect(meta!.status).toBe('FAILED');
+      expect(meta!.summary).toMatch(/timed out/);
+      expect(rows.find((r) => r.validatorKey === 'FULL')!.status).toBe('PASSED');
+    } finally {
+      if (prev === undefined) delete process.env.VALIDATION_CHECK_TIMEOUT_MS;
+      else process.env.VALIDATION_CHECK_TIMEOUT_MS = prev;
+    }
+  });
+
   it('writes each result as its check finishes, before the run is COMPLETED', async () => {
     // The reviewer's page reads the latest run whatever its status, so a result written
     // early is on screen early. Previously all five were held to one commit at the end and
