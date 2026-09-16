@@ -229,16 +229,38 @@ async function recognize(worker: Worker, image: Buffer | string) {
   return best;
 }
 
+/**
+ * How many Tesseract workers OCR a single document's pages at once.
+ *
+ * Pages were read strictly one after another on one worker. Measured on production, a
+ * scanned 8-page bundle spent 53.5s of a 115s claim inside `recognize` — 46% of the whole
+ * run, and all of it serial on one core of four.
+ *
+ * Default 2, not "number of cores". Each worker is a separate thread holding its own wasm
+ * instance and language data, and VALIDATION_CONCURRENCY already runs 2 claims at once, so
+ * the default is really 4 workers against 8 GB while QR is rasterising scale-8 canvases
+ * alongside. This buys LATENCY on one claim; it does not buy batch throughput, because the
+ * box is already CPU-bound with two claims in flight. Raise it with RSS in view.
+ */
+function ocrWorkers(): number {
+  const raw = Number(process.env.OCR_WORKERS ?? 2);
+  return Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 2;
+}
+
 export class TesseractOcrPort implements OcrPort {
-  private worker: Worker | null = null;
+  private workers: Worker[] = [];
+
+  /** Grow the pool to `n` workers and hand back that many. Spun up once per run: creating
+   *  one (and loading its language data) costs seconds, far more than any single page. */
+  private async getPool(n: number): Promise<Worker[]> {
+    while (this.workers.length < n) {
+      this.workers.push(await createWorker('eng', undefined, { cachePath: OCR_CACHE_PATH }));
+    }
+    return this.workers.slice(0, n);
+  }
 
   private async getWorker(): Promise<Worker> {
-    if (!this.worker) {
-      // Reuse one worker across all images in a run — spinning one up (and loading
-      // the language data) per image is the dominant cost otherwise.
-      this.worker = await createWorker('eng', undefined, { cachePath: OCR_CACHE_PATH });
-    }
-    return this.worker;
+    return (await this.getPool(1))[0];
   }
 
   async extractImageText(absolutePath: string): Promise<string> {
@@ -298,53 +320,93 @@ export class TesseractOcrPort implements OcrPort {
         : await rasterizePdf(absolutePath, 12);
       const rasterMs = Date.now() - rasterStartedAt;
       if (pages.length === 0) return { text: '', words: [] };
-      const worker = await this.getWorker();
-      const parts: string[] = [];
-      const words: WordBox[] = [];
-      const perPage: { page: number; text: string }[] = [];
+      // One lane per worker, each pulling the next page off a shared cursor, so a page that
+      // needs the full rotation sweep does not hold up the pages behind it. Never more lanes
+      // than pages: spinning up a worker costs seconds and an idle one still holds its
+      // language data.
+      const lanes = Math.min(ocrWorkers(), pages.length);
+      const pool = await this.getPool(lanes);
+      // Results land BY INDEX, not by completion order. Pages finish out of order once they
+      // run in parallel, and the card extractors downstream read line and page structure —
+      // text stitched in finishing order is text in the wrong order.
+      const perIndex: ({ text: string; words: WordBox[]; page: number } | null)[] = new Array(
+        pages.length
+      ).fill(null);
+      let cursor = 0;
       let highResBudget = MAX_HIGHRES_RETRY_PAGES;
       // META is the most expensive check in a run and reported only one total, so there was
       // no way to tell a slow OCR engine from a slow rasteriser from too many high-res
-      // retries — three problems with three different fixes.
+      // retries — three problems with three different fixes. These sum CPU time across
+      // lanes, so with lanes > 1 they deliberately exceed the wall time; the lane count is
+      // logged beside them so the two cannot be confused.
       let recognizeMs = 0;
       let retryMs = 0;
       let retries = 0;
-      for (const pg of pages) {
-        const recognizeStartedAt = Date.now();
-        let { data, rotation, skew, score } = await recognize(worker, pg.png);
-        recognizeMs += Date.now() - recognizeStartedAt;
-        let dims = { w: pg.width, h: pg.height };
+      const ocrStartedAt = Date.now();
 
-        // Still reading poorly? Render the SAME page larger and look once more, at the
-        // configuration that won — a photographed page is usually short of pixels, not
-        // badly filtered, and re-sweeping every rotation at this size would not pay.
-        if (score < UPRIGHT_SCORE && highResBudget > 0) {
-          highResBudget--;
-          retries++;
-          const retryStartedAt = Date.now();
-          const [hi] = await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, HIGH_RASTER_SCALE, [pg.page]);
-          const retry = hi && (await recognizeWith(worker, hi.png, rotation, skew !== undefined));
-          if (retry && retry.score > score * HIGHRES_GAIN) {
-            data = retry.data;
-            score = retry.score;
-            // Boxes are measured against the image actually recognized.
-            dims = { w: hi.width, h: hi.height };
+      await Promise.all(
+        pool.map(async (worker) => {
+          for (;;) {
+            const index = cursor++;
+            if (index >= pages.length) return;
+            const pg = pages[index];
+            const recognizeStartedAt = Date.now();
+            let { data, rotation, skew, score } = await recognize(worker, pg.png);
+            recognizeMs += Date.now() - recognizeStartedAt;
+            let dims = { w: pg.width, h: pg.height };
+
+            // Still reading poorly? Render the SAME page larger and look once more, at the
+            // configuration that won — a photographed page is usually short of pixels, not
+            // badly filtered, and re-sweeping every rotation at this size would not pay.
+            //
+            // The budget is shared across lanes. Test and decrement sit together with no
+            // await between them, so no two lanes can both see the last unit and spend it.
+            if (score < UPRIGHT_SCORE && highResBudget > 0) {
+              highResBudget--;
+              retries++;
+              const retryStartedAt = Date.now();
+              const [hi] = await rasterizePdf(
+                absolutePath,
+                MAX_OCR_TARGETED_PAGES,
+                HIGH_RASTER_SCALE,
+                [pg.page]
+              );
+              const retry = hi && (await recognizeWith(worker, hi.png, rotation, skew !== undefined));
+              if (retry && retry.score > score * HIGHRES_GAIN) {
+                data = retry.data;
+                score = retry.score;
+                // Boxes are measured against the image actually recognized.
+                dims = { w: hi.width, h: hi.height };
+              }
+              retryMs += Date.now() - retryStartedAt;
+            }
+
+            perIndex[index] = {
+              text: (data.text ?? '').trim(),
+              // Deskewed pages contribute text but no boxes — see extractImage above.
+              words: skew ? [] : collectWords(data, dims.w, dims.h, pg.page, rotation),
+              page: pg.page,
+            };
           }
-          retryMs += Date.now() - retryStartedAt;
-        }
+        })
+      );
 
-        const t = (data.text ?? '').trim();
-        if (t) {
-          parts.push(t);
+      const parts: string[] = [];
+      const words: WordBox[] = [];
+      const perPage: { page: number; text: string }[] = [];
+      for (const r of perIndex) {
+        if (!r) continue;
+        if (r.text) {
+          parts.push(r.text);
           // Kept verbatim (newlines and all) — the card extractors read line structure.
-          perPage.push({ page: pg.page, text: t });
+          perPage.push({ page: r.page, text: r.text });
         }
-        // Deskewed pages contribute text but no boxes — see extractImage above.
-        if (!skew) words.push(...collectWords(data, dims.w, dims.h, pg.page, rotation));
+        words.push(...r.words);
       }
       console.log(
-        `[ocr] ${path.basename(absolutePath).replace(/[\p{C}]/gu, '?')} ${pages.length}p: ` +
-          `raster ${rasterMs}ms, recognize ${recognizeMs}ms, ${retries} high-res retry ${retryMs}ms`
+        `[ocr] ${path.basename(absolutePath).replace(/[\p{C}]/gu, '?')} ${pages.length}p ` +
+          `${lanes} lane(s): raster ${rasterMs}ms, ocr wall ${Date.now() - ocrStartedAt}ms ` +
+          `(recognize ${recognizeMs}ms cpu, ${retries} high-res retry ${retryMs}ms cpu)`
       );
       return {
         text: parts.join('\n').trim(),
@@ -358,9 +420,10 @@ export class TesseractOcrPort implements OcrPort {
   }
 
   async close(): Promise<void> {
-    if (this.worker) {
-      await this.worker.terminate();
-      this.worker = null;
-    }
+    // Every worker, not just the first: a leaked thread holds its wasm instance and language
+    // data for the life of the process, and the drainer creates a port per run.
+    const open = this.workers;
+    this.workers = [];
+    await Promise.all(open.map((w) => w.terminate()));
   }
 }
