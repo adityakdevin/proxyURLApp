@@ -71,6 +71,38 @@ function withTimeout<T>(p: Promise<T>, ms: number, key: string): Promise<T> {
   ]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * Checks the operator has switched off, by validator key (comma-separated, e.g. "META").
+ *
+ * META is kept in the codebase and in the registry — this only stops it EXECUTING, so
+ * turning it back on is an env change and a restart, not a revert.
+ */
+function disabledChecks(): Set<string> {
+  // Read per call, not once at import, for the same reason as the other config here: a
+  // module-level const is fixed before any config is loaded and cannot be exercised by a test.
+  return new Set(
+    (process.env.VALIDATION_DISABLED_CHECKS ?? '')
+      .split(',')
+      .map((k) => k.trim().toUpperCase())
+      .filter(Boolean)
+  );
+}
+
+/**
+ * Checks whose ENTIRE input is the text META extracts into `ctx.shared`.
+ *
+ * With META off these read an empty map and find nothing wrong — SPELL reports no
+ * misspellings, INTRA no mismatch, DUP no duplicates, and all three go green. A fraud check
+ * that certifies a claim clean because it never looked at it is worse than one that is slow,
+ * and worse still because nothing on the screen would say so. So they are reported as not
+ * run, alongside META itself.
+ *
+ * QR and REDFLAG are deliberately NOT here. QR rasterises and decodes on its own and loses
+ * only the text comparison; REDFLAG reads PDF metadata and loses only its highlight boxes.
+ * Both degrade with META off — neither is blinded by it.
+ */
+const META_DEPENDENT = new Set(['SPELL', 'INTRA', 'FULL', 'DUP']);
+
 const COLUMNS = [
   'metaExtractionStatus',
   'spellCheckStatus',
@@ -375,9 +407,38 @@ export class ValidationService {
       // top of QR's scale-8 canvases. With two claim workers on an 8 GB box that is the
       // margin this change was supposed to respect. It runs after, alone.
       const PARALLEL_SAFE = (v: Validator) => v.key !== 'META' && v.key !== 'REDFLAG';
-      const meta = this.validators.filter((v) => v.key === 'META');
-      const parallel = this.validators.filter(PARALLEL_SAFE);
-      const tail = this.validators.filter((v) => v.key === 'REDFLAG');
+
+      // Anything switched off, plus anything that cannot answer without it. Recorded as
+      // DOUBTFUL and never PASSED: the badge has to say "we did not check this", because the
+      // one thing a disabled check must not do is look like a clean one. DOUBTFUL is reused
+      // rather than adding a SKIPPED enum value, which would mean a schema change, a
+      // db:push on the production box and new badge/filter cases in the client for a state
+      // the UI already renders in amber with the summary alongside it.
+      const disabled = disabledChecks();
+      const isOff = (v: Validator) =>
+        disabled.has(v.key) || (disabled.has('META') && META_DEPENDENT.has(v.key));
+      const off = this.validators.filter(isOff);
+      const on = this.validators.filter((v) => !isOff(v));
+      for (const v of off) {
+        await persist({
+          v,
+          status: 'DOUBTFUL',
+          summary: disabled.has(v.key)
+            ? `Not run: ${v.key} is switched off in VALIDATION_DISABLED_CHECKS.`
+            : `Not run: this check reads the text META extracts, and META is switched off ` +
+              `in VALIDATION_DISABLED_CHECKS. It has not passed — it was not performed.`,
+        });
+      }
+      if (off.length > 0) {
+        console.log(
+          `[validation] claim ${claim.claimId.replace(/[\p{C}]/gu, '?')} skipping ` +
+            `${off.map((v) => v.key).join(',')} (disabled)`
+        );
+      }
+
+      const meta = on.filter((v) => v.key === 'META');
+      const parallel = on.filter(PARALLEL_SAFE);
+      const tail = on.filter((v) => v.key === 'REDFLAG');
       const results: Ran[] = [];
       for (const v of meta) results.push(await runOneValidator(v));
       results.push(...(await Promise.all(parallel.map(runOneValidator))));

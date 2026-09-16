@@ -214,6 +214,73 @@ describe('ValidationService + drainer', () => {
     }
   });
 
+  it('a disabled check, and anything blinded by it, reports not-run rather than passing', async () => {
+    // Switching META off leaves SPELL/INTRA/FULL/DUP reading an empty ctx.shared, where they
+    // find nothing wrong and go green — a clean bill of health from checks that never looked.
+    // QR and REDFLAG do their own work and only degrade, so they must still run.
+    const prev = process.env.VALIDATION_DISABLED_CHECKS;
+    process.env.VALIDATION_DISABLED_CHECKS = 'META';
+    try {
+      const ran: string[] = [];
+      const mk = (key: Validator['key'], column: Validator['column']): Validator => ({
+        key,
+        column,
+        run: async () => {
+          ran.push(key);
+          return { status: 'PASSED' as const, summary: 'ok' };
+        },
+      });
+      const all: Validator[] = [
+        mk('META', 'metaExtractionStatus'),
+        mk('SPELL', 'spellCheckStatus'),
+        mk('INTRA', 'intraClaimStatus'),
+        mk('FULL', 'fullScanStatus'),
+        mk('DUP', 'duplicateStatus'),
+        mk('QR', 'qrStatus'),
+        mk('REDFLAG', 'redFlagStatus'),
+      ];
+
+      const claim = await makeClaim('C-OFF');
+      await prisma.document.create({
+        data: {
+          claimId: claim.id,
+          source: 'UPLOADED',
+          fileName: 'doc.pdf',
+          storagePath: `/tmp/${SUF}-C-OFF.pdf`,
+          createdBy: adminId,
+        },
+      });
+      const run = await prisma.validationRun.create({
+        data: { claimId: claim.id, trigger: 'MANUAL', status: 'QUEUED' },
+      });
+      await new ValidationService(prisma, all).runOne(run.id);
+
+      // Only the two that can still do real work executed.
+      expect(ran.sort()).toEqual(['QR', 'REDFLAG']);
+
+      const rows = await prisma.validationResult.findMany({ where: { runId: run.id } });
+      // Every check still has a row — a missing row reads as "nothing to see", which is the
+      // silence this whole change exists to avoid.
+      expect(rows).toHaveLength(all.length);
+      for (const key of ['META', 'SPELL', 'INTRA', 'FULL', 'DUP']) {
+        const row = rows.find((r) => r.validatorKey === key)!;
+        expect(row.status).toBe('DOUBTFUL'); // never PASSED
+        expect(row.summary).toMatch(/^Not run:/);
+      }
+      expect(rows.find((r) => r.validatorKey === 'QR')!.status).toBe('PASSED');
+
+      // And the claim's columns agree with the rows, so the list cannot show a green tick.
+      const after = await prisma.claim.findUnique({ where: { id: claim.id } });
+      expect(after!.metaExtractionStatus).toBe('DOUBTFUL');
+      expect(after!.spellCheckStatus).toBe('DOUBTFUL');
+      expect(after!.duplicateStatus).toBe('DOUBTFUL');
+      expect(after!.qrStatus).toBe('PASSED');
+    } finally {
+      if (prev === undefined) delete process.env.VALIDATION_DISABLED_CHECKS;
+      else process.env.VALIDATION_DISABLED_CHECKS = prev;
+    }
+  });
+
   it('writes each result as its check finishes, before the run is COMPLETED', async () => {
     // The reviewer's page reads the latest run whatever its status, so a result written
     // early is on screen early. Previously all five were held to one commit at the end and
