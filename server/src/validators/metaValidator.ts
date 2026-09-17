@@ -207,11 +207,18 @@ export const metaValidator: Validator = {
       }
       const timeoutMs =
         (doc.mimeType ?? '') === 'application/pdf' ? PDF_EXTRACT_TIMEOUT_MS : EXTRACT_TIMEOUT_MS;
-      const { text, words, pageTexts, totalPages } = await withTimeout(
-        extract(ctx, doc),
-        timeoutMs,
-        { text: '', words: [], pageTexts: [] }
-      );
+      const extractedDoc = await withTimeout(extract(ctx, doc), timeoutMs, {
+        text: '',
+        words: [],
+        pageTexts: [] as string[],
+      });
+      const { text, words, totalPages } = extractedDoc;
+      // OCR leaves a page that read nothing OUT of its per-page list, and extract() writes
+      // pages back by index — so a blank or unreadable page leaves a HOLE. Every reader of
+      // these pages iterates them (cappedPages below, DUP, segment, QR) and crashed on the
+      // hole with "Cannot read properties of undefined", failing META and with it every
+      // check on the claim. An unread page is an empty page, not a missing slot.
+      const pageTexts = Array.from(extractedDoc.pageTexts, (t) => t ?? '');
       // A scan that stopped at the page cap must not read as a clean scan. SPELL, INTRA and
       // FULL all work off the text this validator stores, so an unread page is a check that
       // never ran — FULL will report a required document "missing" when it is simply past
