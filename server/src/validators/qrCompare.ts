@@ -119,6 +119,19 @@ function identifierMatches(a: string, b: string): boolean {
 const NAME_LABELS = new Set(["Insured's Name", 'Holder Name', 'Customer Name', "Father's Name"]);
 
 /**
+ * Gender agrees when the two sides mean the same thing. An Aadhaar QR writes "F"/"M" while
+ * the card prints "FEMALE"/"MALE", and comparing them as identifiers made every such card
+ * read "QR code says Gender is F, but the card reads FEMALE" — an ERROR that failed the QR
+ * check on a perfectly genuine Aadhaar (seen on MZBFB811LSN).
+ */
+const genderMatches = (a: string, b: string): boolean => {
+  const letter = (v: string) => v.trim().toUpperCase().replace(/[^A-Z]/g, '').charAt(0);
+  const la = letter(a);
+  const lb = letter(b);
+  return !la || !lb || la === lb;
+};
+
+/**
  * Parse a QR payload into key → value.
  *
  * Three shapes in the wild: the pipe-delimited "Label:Value" a policy QR carries, the XML of
@@ -188,7 +201,9 @@ export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldC
       seen.add(label);
       const ok = NAME_LABELS.has(label)
         ? nameMatches(qrRaw, documentValue)
-        : identifierMatches(qrRaw, documentValue);
+        : label === 'Gender'
+          ? genderMatches(qrRaw, documentValue)
+          : identifierMatches(qrRaw, documentValue);
       out.push({
         label,
         qrValue: qrRaw.replace(/\s+/g, ' ').trim(),

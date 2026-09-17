@@ -170,3 +170,18 @@ describe('QR vs document comparison', () => {
     expect(labels).toEqual(['Holder Name']);
   });
 });
+
+// An Aadhaar QR writes the gender as one letter; the card prints the word. On
+// MZBFB811LSN that read as "QR code says Gender is F, but the card reads FEMALE" — an
+// ERROR, so the QR check failed on a genuine card.
+describe('gender', () => {
+  const fields = (value: string) => [{ label: 'Gender', value }];
+  it('accepts the QR letter against the printed word', () => {
+    expect(compareQrToFields('uid:123456789012|gender:F', fields('FEMALE'))[0].verdict).toBe('MATCH');
+    expect(compareQrToFields('uid:123456789012|gender:M', fields('MALE'))[0].verdict).toBe('MATCH');
+    expect(compareQrToFields('uid:123456789012|gender:FEMALE', fields('FEMALE'))[0].verdict).toBe('MATCH');
+  });
+  it('still catches a real disagreement', () => {
+    expect(compareQrToFields('uid:123456789012|gender:M', fields('FEMALE'))[0].verdict).toBe('MISMATCH');
+  });
+});
