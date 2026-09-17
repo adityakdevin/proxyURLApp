@@ -157,6 +157,38 @@ async function prepareDeskewed(
   }
 }
 
+/**
+ * Photos narrower than this are enlarged to it before OCR.
+ *
+ * Claim photos arrive small: salary slips at ~613x393, employee cards at ~290x450. At that
+ * size the print is ~8px tall and Tesseract returns noise — two slips carrying "Dayes",
+ * "Profesion" and "Retantion" read as "[REE RR RR EE FREESE…", so the spell check had nothing
+ * to check and passed them. PDF pages get a high-resolution second look; photos got none.
+ * Measured on the six sample photos: 1600 read both slips (25 → 111 words) and caught "Sing"
+ * on one more ID card, with no regressions; 1200 missed that card, 2000 read one slip worse.
+ */
+const MIN_OCR_IMAGE_WIDTH = 1600;
+
+/** The image as OCR should see it: small photos enlarged, everything else untouched. */
+async function upscaleSmallImage(
+  absolutePath: string
+): Promise<{ input: Buffer | string; width: number; height: number }> {
+  try {
+    const img = await Jimp.read(absolutePath);
+    const { width, height } = img.bitmap;
+    if (width >= MIN_OCR_IMAGE_WIDTH) return { input: absolutePath, width, height };
+    img.resize({ w: MIN_OCR_IMAGE_WIDTH });
+    return {
+      input: Buffer.from(await img.getBuffer('image/png')),
+      width: img.bitmap.width,
+      height: img.bitmap.height,
+    };
+  } catch {
+    // Unreadable by Jimp → let Tesseract try the file as-is; no dimensions means no boxes.
+    return { input: absolutePath, width: 0, height: 0 };
+  }
+}
+
 /** Rasterization scale for the second look at a page that read poorly. A photographed
  *  invoice is resolution-starved rather than badly filtered: at the same contrast setting
  *  one real claim page scored 54 at scale 2, 108 at scale 3 and 140 at scale 4. */
@@ -266,7 +298,8 @@ export class TesseractOcrPort implements OcrPort {
   async extractImageText(absolutePath: string): Promise<string> {
     try {
       const worker = await this.getWorker();
-      const { data } = await recognize(worker, absolutePath);
+      const { input } = await upscaleSmallImage(absolutePath);
+      const { data } = await recognize(worker, input);
       return (data.text ?? '').trim();
     } catch {
       return '';
@@ -276,18 +309,12 @@ export class TesseractOcrPort implements OcrPort {
   async extractImage(absolutePath: string): Promise<{ text: string; words: WordBox[] }> {
     try {
       const worker = await this.getWorker();
+      // Dimensions are those of the image actually recognized; boxes are normalized to it,
+      // so they land in the same place on the original photo.
+      const { input, width, height } = await upscaleSmallImage(absolutePath);
       // blocks:true keeps the word hierarchy (with per-word bbox) in the result.
-      const { data, rotation, skew } = await recognize(worker, absolutePath);
+      const { data, rotation, skew } = await recognize(worker, input);
       const text = (data.text ?? '').trim();
-      let width = 0;
-      let height = 0;
-      try {
-        const img = await Jimp.read(absolutePath);
-        width = img.bitmap.width;
-        height = img.bitmap.height;
-      } catch {
-        // dimensions unavailable → words emitted without boxes (text still returned)
-      }
       // A deskewed pass read a page that had been rotated by a few degrees, and
       // unrotateBox only undoes quarter turns — so its boxes would sit slightly off the
       // words they mark. Text still counts; a highlight in the wrong place does not.

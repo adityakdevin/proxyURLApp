@@ -22,6 +22,24 @@ describe('spellValidator', () => {
     // Random OCR garbage and personal/place names are not near any form vocabulary.
     expect((await spellValidator.run(ctx('zzzqqq wwwxxx gaurav madhya taluka jaiswal'))).status).toBe('PASSED');
   });
+  // What OCR returned for a 613x393 salary slip that DID carry "Dayes" and "Profesion".
+  // Finding nothing wrong in noise is not a pass: nothing was checked.
+  it('warns (DOUBTFUL, not PASSED) when a document read as noise', async () => {
+    const noise =
+      '[REE RR RR EE FREESE HE CFE EI J SEE celicidliiiis i: HERR S REE FENRIS ET ENN) ' +
+      'EEER CIEREEamsnen lk Eiii: [HEEREEIEEE EI 5232s ||| AERIS Sf Bl? id § ERE H H i. ili';
+    const res = await spellValidator.run(ctx(noise));
+    const unreadable = (res.findings ?? []).filter((f) => f.code === 'SPELL_UNREADABLE');
+    expect(unreadable).toHaveLength(1);
+    expect(unreadable[0].severity).toBe('WARNING');
+  });
+  it('does not call a readable document unreadable', async () => {
+    const slip =
+      'LG SOFT INDIA PRIVATE LIMITED Payslip for the month of April Branch Department Grade ' +
+      'Designation Total Days Present Earnings Amount Deductions Basic Salary Profession Tax';
+    const res = await spellValidator.run(ctx(slip));
+    expect((res.findings ?? []).some((f) => f.code === 'SPELL_UNREADABLE')).toBe(false);
+  });
   it('FAILS when several expected form terms are misspelled', async () => {
     const forged = 'Employee profesion enginear with retantion of 30 dayes on salary slip';
     expect((await spellValidator.run(ctx(forged))).status).toBe('FAILED');

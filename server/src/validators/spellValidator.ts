@@ -56,6 +56,18 @@ function indexBoxes(boxes: WordBox[]): Map<string, WordBox[]> {
   return idx;
 }
 
+/**
+ * A document whose words are mostly not words was not read, and a spell check over it proves
+ * nothing. Measured on the 33 stored documents: the two salary slips OCR returned as noise
+ * scored 0.24 and 0.25; every readable document scored 0.47 or more (one mock-up 0.37).
+ * The word floor keeps a short, name-heavy ID card (8-15 words, few of them dictionary words)
+ * from being called unreadable.
+ * ponytail: whole-document ratio, so one unreadable page inside a readable PDF is not caught;
+ * score per page (ctx.pageTexts) if that shows up.
+ */
+const UNREADABLE_REAL_WORD_RATIO = 0.35;
+const UNREADABLE_MIN_WORDS = 12;
+
 /** Tesseract word confidence (0-100) below which a hit is treated as doubtful rather
  *  than as a misspelling. Digital PDF text has no confidence and is never softened. */
 const LOW_OCR_CONFIDENCE = 70;
@@ -121,6 +133,24 @@ export const spellValidator: Validator = {
       // A glossary abbreviation counts as a real word: that is the whole point of the
       // reviewers being able to add "Pvt" and "Ltd" themselves.
       const isRealWord = (w: string) => dictHasWord(s, w) || glossary.has(w.toLowerCase());
+      // Finding no misspelling in OCR noise is not a pass — nothing was actually checked.
+      // Say so, as a WARNING, so the check reads DOUBTFUL rather than a green tick.
+      if (words.length >= UNREADABLE_MIN_WORDS) {
+        const real = words.filter(isRealWord).length;
+        if (real / words.length < UNREADABLE_REAL_WORD_RATIO) {
+          const name = ctx.documents.find((d) => d.id === documentId)?.fileName ?? 'A document';
+          findings.push({
+            documentId,
+            code: 'SPELL_UNREADABLE',
+            severity: 'WARNING',
+            message:
+              `${name} could not be read reliably (only ${Math.round((100 * real) / words.length)}% ` +
+              `of its words are real words), so its spelling was not checked — please check it visually`,
+            data: { realWords: real, words: words.length },
+          });
+          continue;
+        }
+      }
       // OCR word boxes let us anchor each hit to a region on an image (Phase 2).
       const boxIndex = indexBoxes(ctx.wordBoxes.get(documentId) ?? []);
       for (const hit of findTermMisspellings(words, isRealWord, terms)) {
