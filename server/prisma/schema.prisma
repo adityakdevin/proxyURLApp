@@ -648,6 +648,11 @@ model ValidationRun {
   createdAt   DateTime            @default(now()) @map("created_at")
   triggeredBy String?             @map("triggered_by") @db.VarChar(36)
   message     String?             @db.VarChar(500)
+  // Which checks the operator ticked when this run was started, comma-separated
+  // ("SPELL,QR"). NULL means all of them, which is what every run before this column was.
+  // Stored on the run, not passed to the drainer: the run is picked up later, in another
+  // process after a restart, and the selection has to survive that.
+  checks      String?             @db.VarChar(100)
 
   claim   Claim              @relation(fields: [claimId], references: [id], onDelete: Cascade)
   results ValidationResult[]

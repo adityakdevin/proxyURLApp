@@ -62,3 +62,23 @@ export function makeErrorHandler<E extends CodedError>(
     next(err);
   };
 }
+
+/**
+ * The checks an operator ticked, from a request body or an upload form field.
+ *
+ * Accepts an array or a comma-separated string (a multipart form field can only carry text).
+ * Unknown keys are dropped, and META is never selectable: it is the text extraction every
+ * other check reads. An empty result means "all", which is what every run did before the
+ * tick-boxes existed.
+ */
+export const SELECTABLE_CHECKS = ['SPELL', 'QR', 'INTRA', 'FULL', 'REDFLAG', 'DUP'] as const;
+
+export function pickChecks(raw: unknown): string[] | undefined {
+  const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];
+  const keys = list
+    .map((k) => String(k).trim().toUpperCase())
+    .filter((k): k is (typeof SELECTABLE_CHECKS)[number] =>
+      (SELECTABLE_CHECKS as readonly string[]).includes(k)
+    );
+  return keys.length > 0 && keys.length < SELECTABLE_CHECKS.length ? [...new Set(keys)] : undefined;
+}

@@ -11,7 +11,7 @@ import { claimUploadDir } from '../lib/uploadPaths.js';
 import { isInline, isAllowedUploadName } from '../lib/mimeTypes.js';
 import { enqueue } from '../services/validationQueue.js';
 import { registry } from '../validators/registry.js';
-import { validate, prismaOf } from '../lib/routeHelpers.js';
+import { validate, prismaOf, pickChecks } from '../lib/routeHelpers.js';
 
 // mergeParams so :id from the parent /claims/:id mount is available here.
 const router = Router({ mergeParams: true });
@@ -20,8 +20,8 @@ const claimSvc = (req: Request) => new ClaimService(prismaOf(req));
 const docSvc = (req: Request) => new DocumentService(prismaOf(req), new FsFileSystemPort());
 
 /** Fire-and-forget auto-validation; log (never crash) on a queue error. */
-const enqueueValidation = (req: Request, claimId: string) => {
-  void enqueue(prismaOf(req), registry, claimId, 'AUTO', req.session!.userId).catch((e) =>
+const enqueueValidation = (req: Request, claimId: string, checks?: string[]) => {
+  void enqueue(prismaOf(req), registry, claimId, 'AUTO', req.session!.userId, checks).catch((e) =>
     console.error(`Auto-validation enqueue failed for claim ${claimId}:`, e)
   );
 };
@@ -127,7 +127,8 @@ router.post(
           )
         );
       }
-      enqueueValidation(req, claim.id);
+      // A multipart field, so the tick-boxes travel with the files they belong to.
+      enqueueValidation(req, claim.id, pickChecks(req.body?.checks));
       res.status(201).json({ data: created });
     } catch (err) {
       next(err);

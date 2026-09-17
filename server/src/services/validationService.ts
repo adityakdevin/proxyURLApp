@@ -415,8 +415,21 @@ export class ValidationService {
       // db:push on the production box and new badge/filter cases in the client for a state
       // the UI already renders in amber with the summary alongside it.
       const disabled = disabledChecks();
+      // Checks the operator ticked for THIS run. META is never on the list: it is the text
+      // extraction every other check reads, so it runs whatever was ticked, and its own row
+      // stays the extraction status it always was.
+      const selected = run.checks
+        ? new Set(
+            run.checks
+              .split(',')
+              .map((k) => k.trim().toUpperCase())
+              .filter(Boolean)
+          )
+        : null;
+      const notSelected = (v: Validator) =>
+        selected !== null && v.key !== 'META' && !selected.has(v.key);
       const isOff = (v: Validator) =>
-        disabled.has(v.key) || (disabled.has('META') && META_DEPENDENT.has(v.key));
+        disabled.has(v.key) || (disabled.has('META') && META_DEPENDENT.has(v.key)) || notSelected(v);
       const off = this.validators.filter(isOff);
       const on = this.validators.filter((v) => !isOff(v));
       for (const v of off) {
@@ -425,8 +438,11 @@ export class ValidationService {
           status: 'DOUBTFUL',
           summary: disabled.has(v.key)
             ? `Not run: ${v.key} is switched off in VALIDATION_DISABLED_CHECKS.`
-            : `Not run: this check reads the text META extracts, and META is switched off ` +
-              `in VALIDATION_DISABLED_CHECKS. It has not passed — it was not performed.`,
+            : notSelected(v)
+              ? `Not run: ${v.key} was not ticked when this run was started. It has not ` +
+                `passed — it was not performed.`
+              : `Not run: this check reads the text META extracts, and META is switched off ` +
+                `in VALIDATION_DISABLED_CHECKS. It has not passed — it was not performed.`,
         });
       }
       if (off.length > 0) {

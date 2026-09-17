@@ -3,7 +3,7 @@ import { param } from 'express-validator';
 import { ClaimService } from '../services/claimService.js';
 import { enqueue } from '../services/validationQueue.js';
 import { registry } from '../validators/registry.js';
-import { validate, prismaOf } from '../lib/routeHelpers.js';
+import { validate, prismaOf, pickChecks } from '../lib/routeHelpers.js';
 
 const router = Router({ mergeParams: true });
 
@@ -23,7 +23,15 @@ router.post('/validate', [param('id').isUUID()], validate, async (req: Request, 
   try {
     const ok = await claimSvc(req).canEditClaim(req.params.id, req.session!.userId, req.session!.role);
     if (!ok) return res.status(403).json({ error: 'Cannot edit this claim', code: 'CLAIM_NOT_EDITABLE' });
-    const run = await enqueue(prismaOf(req), registry, req.params.id, 'MANUAL', req.session!.userId);
+    // Only the ticked checks run; nothing ticked (or all of them) means the whole set.
+    const run = await enqueue(
+      prismaOf(req),
+      registry,
+      req.params.id,
+      'MANUAL',
+      req.session!.userId,
+      pickChecks(req.body?.checks)
+    );
     res.status(202).json({ data: { runId: run.id } });
   } catch (err) {
     next(err);

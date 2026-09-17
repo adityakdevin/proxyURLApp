@@ -42,16 +42,27 @@ export async function enqueue(
   validators: Validator[],
   claimId: string,
   trigger: 'AUTO' | 'MANUAL',
-  triggeredBy?: string
+  triggeredBy?: string,
+  /** Checks the operator ticked. Undefined or empty = all of them. */
+  checks?: string[]
 ): Promise<{ id: string }> {
+  const selected = checks && checks.length > 0 ? [...new Set(checks)].join(',') : null;
   const queued = await prisma.validationRun.findFirst({
     where: { claimId, status: 'QUEUED' },
   });
-  const run = queued
+  let run = queued
     ? queued
     : await prisma.validationRun.create({
-        data: { claimId, trigger, triggeredBy: triggeredBy ?? null },
+        data: { claimId, trigger, triggeredBy: triggeredBy ?? null, checks: selected },
       });
+  // Coalescing onto a queued run WIDENS the selection, never narrows it: two enqueues asking
+  // for different checks must both get what they asked for, and "all" wins outright.
+  if (queued && queued.checks !== null) {
+    const widened = selected === null ? null : [...new Set([...queued.checks.split(','), ...selected.split(',')])].join(',');
+    if (widened !== queued.checks) {
+      run = await prisma.validationRun.update({ where: { id: queued.id }, data: { checks: widened } });
+    }
+  }
   void kickDrain(prisma, validators);
   return { id: run.id };
 }

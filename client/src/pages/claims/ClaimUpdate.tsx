@@ -26,6 +26,7 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { useAuthStore } from '@/stores/authStore';
 import { ClaimHit, ClaimJumpBox } from '@/components/claims/ClaimJumpBox';
+import { ALL_CHECK_KEYS, CheckPicker, checksPayload } from '@/components/claims/CheckPicker';
 import { QrDataList } from '@/components/claims/QrDataList';
 
 interface Status {
@@ -240,6 +241,9 @@ export default function ClaimUpdate() {
 
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  // Which checks a run should perform. All of them, as the requirement asks, until the
+  // reviewer says otherwise; the choice covers both Validate and an upload on this claim.
+  const [checks, setChecks] = useState<string[]>(ALL_CHECK_KEYS);
 
   const fetchDocs = async () => {
     try {
@@ -262,6 +266,9 @@ export default function ClaimUpdate() {
     try {
       const form = new FormData();
       Array.from(files).forEach((f) => form.append('files', f));
+      // A form field, not JSON: the tick-boxes travel with the files they apply to.
+      const picked = checksPayload(checks);
+      if (picked) form.append('checks', picked.join(','));
       await api.postForm(`/claims/${id}/documents`, form);
       toast({ title: 'Uploaded' });
       fetchDocs();
@@ -357,7 +364,7 @@ export default function ClaimUpdate() {
   const handleValidate = async () => {
     setIsValidating(true);
     try {
-      await api.post(`/claims/${id}/validate`, {});
+      await api.post(`/claims/${id}/validate`, { checks: checksPayload(checks) });
       toast({ title: 'Validation started' });
       await fetchValidation();
     } catch (err) {
@@ -551,14 +558,17 @@ export default function ClaimUpdate() {
             })}
           </div>
           {canEdit && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleValidate}
-              disabled={validationRunning}
-            >
-              {validationRunning ? 'Validating…' : validatedOnce ? 'Re-validate' : 'Validate'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <CheckPicker selected={checks} onChange={setChecks} disabled={validationRunning} />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleValidate}
+                disabled={validationRunning}
+              >
+                {validationRunning ? 'Validating…' : validatedOnce ? 'Re-validate' : 'Validate'}
+              </Button>
+            </div>
           )}
         </div>
       </div>

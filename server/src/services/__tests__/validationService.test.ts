@@ -214,6 +214,60 @@ describe('ValidationService + drainer', () => {
     }
   });
 
+  it('runs only the ticked checks, and the rest report not-run rather than passing', async () => {
+    const ran: string[] = [];
+    const mk = (key: Validator['key'], column: Validator['column']): Validator => ({
+      key,
+      column,
+      run: async () => {
+        ran.push(key);
+        return { status: 'PASSED' as const, summary: 'ok' };
+      },
+    });
+    const all: Validator[] = [
+      mk('META', 'metaExtractionStatus'),
+      mk('SPELL', 'spellCheckStatus'),
+      mk('INTRA', 'intraClaimStatus'),
+      mk('FULL', 'fullScanStatus'),
+      mk('DUP', 'duplicateStatus'),
+      mk('QR', 'qrStatus'),
+      mk('REDFLAG', 'redFlagStatus'),
+    ];
+
+    const claim = await makeClaim('C-PICK');
+    await prisma.document.create({
+      data: {
+        claimId: claim.id,
+        source: 'UPLOADED',
+        fileName: 'doc.pdf',
+        storagePath: `/tmp/${SUF}-C-PICK.pdf`,
+        createdBy: adminId,
+      },
+    });
+    const run = await prisma.validationRun.create({
+      data: { claimId: claim.id, trigger: 'MANUAL', status: 'QUEUED', checks: 'SPELL,QR' },
+    });
+    await new ValidationService(prisma, all).runOne(run.id);
+
+    // META always runs — it is the text every other check reads — plus the two ticked.
+    expect(ran.sort()).toEqual(['META', 'QR', 'SPELL']);
+
+    const rows = await prisma.validationResult.findMany({ where: { runId: run.id } });
+    expect(rows).toHaveLength(all.length); // every check still has a row
+    for (const key of ['INTRA', 'FULL', 'DUP', 'REDFLAG']) {
+      const row = rows.find((r) => r.validatorKey === key)!;
+      expect(row.status).toBe('DOUBTFUL'); // never PASSED
+      expect(row.summary).toMatch(/^Not run: .* was not ticked/);
+    }
+    expect(rows.find((r) => r.validatorKey === 'SPELL')!.status).toBe('PASSED');
+
+    // The claim's columns agree, so the list cannot show a green tick for a check that
+    // never ran.
+    const after = await prisma.claim.findUnique({ where: { id: claim.id } });
+    expect(after!.duplicateStatus).toBe('DOUBTFUL');
+    expect(after!.spellCheckStatus).toBe('PASSED');
+  });
+
   it('a disabled check, and anything blinded by it, reports not-run rather than passing', async () => {
     // Switching META off leaves SPELL/INTRA/FULL/DUP reading an empty ctx.shared, where they
     // find nothing wrong and go green — a clean bill of health from checks that never looked.
