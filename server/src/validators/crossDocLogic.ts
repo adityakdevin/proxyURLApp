@@ -444,6 +444,30 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
     /(?:application|appl?n)\.?\s*(?:no|number|id|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
 };
 
+/**
+ * Words that make an "Address:" the COMPANY's address, not a person's.
+ *
+ * A policy schedule prints its insurer's head office under "Registered & Corporate Office
+ * Address:", in the same shape as "Insured's Address:". Every claim insured by that company
+ * then carried it, so the insurer's Mumbai office read as a duplicate data point shared across
+ * claims AND as an address mismatch against the customer's own address.
+ */
+const COMPANY_ADDRESS_WORD =
+  /\b(?:corporate|registered|regd|office|branch|broker|agent|dealer|dealership|showroom|workshop|garage|misp|insurer|insurance|company|bank|financier|financer|hypothecation)\b/i;
+
+/**
+ * Is this address labelled as a company's?
+ *
+ * Judged on the run-up SINCE THE LAST COLON OR NEWLINE only. A whole-window look-back would
+ * read "Previous OD Insurer : NA Insured's Address" as the insurer's — the word belongs to the
+ * field before it, and the colon is what says so.
+ */
+function isCompanyAddress(text: string, at: number): boolean {
+  const before = text.slice(Math.max(0, at - 60), at);
+  const runUp = before.slice(Math.max(before.lastIndexOf(':'), before.lastIndexOf('\n')) + 1);
+  return COMPANY_ADDRESS_WORD.test(runUp);
+}
+
 const DIGIT_REQUIRED = new Set<CrossField>(['CHASSIS', 'ENGINE', 'RECEIPT_NO', 'APPLICATION_NO', 'EMP_CODE']);
 
 export function extractField(field: CrossField, text: string): string[] {
@@ -455,8 +479,16 @@ export function extractField(field: CrossField, text: string): string[] {
   if (field === 'VEHICLE_NO') return extractVehicleNos(text);
   const re = FIELD_RE[field];
   if (!re) return [];
+  if (field === 'ADDRESS') {
+    const out: string[] = [];
+    for (const m of text.matchAll(re)) {
+      if (isCompanyAddress(text, m.index ?? 0)) continue;
+      const v = cutAtNextLabel((m[1] ?? '').trim().replace(/\s+/g, ' '), false);
+      if (v) out.push(v);
+    }
+    return [...new Set(out)];
+  }
   const vals = allMatches(text, re);
-  if (field === 'ADDRESS') return [...new Set(vals.map((v) => cutAtNextLabel(v, false)).filter(Boolean))];
   // A real chassis/engine/reference number always carries a digit; this drops a stray label
   // word that slipped through as a value. The patterns are case-insensitive, so [A-Z0-9]
   // also accepts "Invoice" — stored as a receipt number, it "matched" 49 other claims.

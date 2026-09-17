@@ -364,6 +364,19 @@ describe('extracted values stop at the next label', () => {
     expect(extractRelationNames('S/O: Digvijay Singh')).toEqual(['Digvijay Singh']);
   });
 
+  // A policy schedule prints the INSURER's head office in the same "Address:" shape as the
+  // customer's. Every claim from the same insurer then shared it: on MZBGD813MSN the insurer's
+  // Mumbai office was reported as a duplicate data point and as an address mismatch.
+  it("ignores a company's own office address", () => {
+    const policy =
+      'Toll Free No: 1800-2666-9666 Registered & Corporate Office Address: ICICI Lombard House, 414, ' +
+      'P Balu Marg, Prabhadevi, Mumbai - 400025\n' +
+      "Previous OD Insurer : NA Insured's Address : 140 A DIVYA ROCK ISLAND ALWASA SANWER, INDORE";
+    expect(extractField('ADDRESS', policy)).toEqual(['140 A DIVYA ROCK ISLAND ALWASA SANWER, INDORE']);
+    expect(extractField('ADDRESS', 'Broker Address: 6th Floor, Oberoi Commerz, Goregaon (E), Mumbai- 400063')).toEqual([]);
+    expect(extractField('ADDRESS', 'Dealer Address : 78/1/2, Village Pipaliya Rao, Bhawarkuan, Indore')).toEqual([]);
+  });
+
   it('cuts an address at the label that follows it', () => {
     expect(extractField('ADDRESS', 'Address: NEAR UTKARSH HOSPITAL NADIAD 387002 Vehicle Particulars')).toEqual([
       'NEAR UTKARSH HOSPITAL NADIAD 387002',
