@@ -55,6 +55,15 @@ const OPAQUE_QR_HELP =
 const rawPreview = (v: string) =>
   v.length <= 300 ? v : `${v.slice(0, 300)}… (${v.length.toLocaleString()} characters)`;
 
+/**
+ * Policy QRs print an http:// verification link, and kiasafety.com does not answer on http at
+ * all — the copied link timed out in every desktop browser (ERR_CONNECTION_TIMED_OUT) while a
+ * phone scanner, which upgrades to https, opened it. The same link over https returns the
+ * policy record, so the link is shown and opened as https.
+ * ponytail: blanket upgrade; a QR host that serves http only would need a per-host exception.
+ */
+const toHttps = (url: string) => url.replace(/^http:\/\//i, 'https://');
+
 function RawPayload({ value }: { value: string }) {
   return (
     <details className="mt-2">
@@ -114,7 +123,20 @@ export function QrDataList({
                         <td className="py-1.5 pr-4 align-top font-medium text-gray-700 whitespace-nowrap">
                           {label}
                         </td>
-                        <td className="py-1.5 break-all text-gray-600">{value}</td>
+                        <td className="py-1.5 break-all text-gray-600">
+                          {/^https?:\/\/\S+$/i.test(value) ? (
+                            <a
+                              href={toHttps(value)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline"
+                            >
+                              {toHttps(value)}
+                            </a>
+                          ) : (
+                            value
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
