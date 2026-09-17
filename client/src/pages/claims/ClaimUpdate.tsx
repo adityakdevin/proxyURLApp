@@ -244,6 +244,11 @@ export default function ClaimUpdate() {
   // Which checks a run should perform. All of them, as the requirement asks, until the
   // reviewer says otherwise; the choice covers both Validate and an upload on this claim.
   const [checks, setChecks] = useState<string[]>(ALL_CHECK_KEYS);
+  // The picker is BUILT and works end to end (Master sheet item 28), but it is additional to
+  // what the client has signed off, so it stays out of sight until they ask for it. Hidden,
+  // `checks` never leaves its default, so every run performs every check exactly as before.
+  // Flip this to true to show it again — nothing else needs changing.
+  const SHOW_CHECK_PICKER = false;
 
   const fetchDocs = async () => {
     try {
@@ -559,7 +564,9 @@ export default function ClaimUpdate() {
           </div>
           {canEdit && (
             <div className="flex items-center gap-2">
-              <CheckPicker selected={checks} onChange={setChecks} disabled={validationRunning} />
+              {SHOW_CHECK_PICKER && (
+                <CheckPicker selected={checks} onChange={setChecks} disabled={validationRunning} />
+              )}
               <Button
                 size="sm"
                 variant="outline"
