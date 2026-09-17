@@ -10,6 +10,7 @@ import {
   extractRelationNames,
   extractRelationNamesByKind,
   extractVehicleNos,
+  extractField,
   crossDocFieldFindings,
   CrossPage,
 } from '../crossDocLogic.js';
@@ -333,5 +334,47 @@ describe('addressMatches', () => {
 
   it('does not flag when one side carries nothing distinctive', () => {
     expect(addressMatches('Near the road', 'PLOT 44, MG ROAD, BENGALURU')).toBe(true);
+  });
+});
+
+// Values the duplicate and full-scan checks actually stored on real claims, each one a label
+// or the next column read as part of the value. Every one produced a false finding.
+describe('extracted values stop at the next label', () => {
+  it('drops a reference "number" with no digit in it', () => {
+    expect(extractField('RECEIPT_NO', 'Receipt No: Invoice Date 12/01/2026')).toEqual([]);
+    expect(extractField('RECEIPT_NO', 'Receipt No: RC-10023')).toEqual(['RC-10023']);
+    expect(extractField('APPLICATION_NO', 'Application No: Status')).toEqual([]);
+  });
+
+  it('cuts a name at the label that follows it on the same line', () => {
+    expect(extractNames('Name : Gaurav Kumar Singh Date of Joining: 12/05/2023')).toEqual(['Gaurav Kumar Singh']);
+    expect(extractNames('Account Holder Name: PRADEEP KUMAR IFSC: SBIN0001234')).toEqual(['PRADEEP KUMAR']);
+    expect(extractNames("Insured's Name: KANNAPIRAN BABURAJ Period of Third Party")).toEqual(['KANNAPIRAN BABURAJ']);
+    expect(extractNames('Name: K SATISHKUMAR Te')).toEqual(['K SATISHKUMAR']);
+    expect(extractNames('Name: RAVI K')).toEqual(['RAVI K']); // a trailing initial is part of the name
+  });
+
+  it('rejects a label read as the whole name', () => {
+    expect(extractNames('Name : Registration No. New')).toEqual([]);
+  });
+
+  it('rejects OCR fragments that are not names', () => {
+    expect(extractRelationNames('S/O: r repair of the vehicle subject to')).toEqual([]);
+    expect(extractRelationNames("Father's Name: r Family")).toEqual([]);
+    expect(extractRelationNames('S/O: Digvijay Singh')).toEqual(['Digvijay Singh']);
+  });
+
+  it('cuts an address at the label that follows it', () => {
+    expect(extractField('ADDRESS', 'Address: NEAR UTKARSH HOSPITAL NADIAD 387002 Vehicle Particulars')).toEqual([
+      'NEAR UTKARSH HOSPITAL NADIAD 387002',
+    ]);
+    expect(extractField('ADDRESS', 'Address: A 710 NIRAV AVENUE, KARAMSAD Date')).toEqual(['A 710 NIRAV AVENUE, KARAMSAD']);
+    expect(
+      extractField('ADDRESS', 'Address : 92 3,MUTHACHI PILLAIYAR KOVIL STREET, CUDDALORE , TAMIL NADU-608601 Previous TP Policy No. Previous T')
+    ).toEqual(['92 3,MUTHACHI PILLAIYAR KOVIL STREET, CUDDALORE , TAMIL NADU-608601']);
+    // Address words that look like labels elsewhere stay: a village, district and PIN are the address.
+    expect(extractField('ADDRESS', 'Address: VILLAGE BUAURI, DISTRICT JABALPUR, PIN 482003')).toEqual([
+      'VILLAGE BUAURI, DISTRICT JABALPUR, PIN 482003',
+    ]);
   });
 });

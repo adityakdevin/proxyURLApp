@@ -278,7 +278,62 @@ const FIELD_LABEL_WORD = new Set([
 /** Does this captured value just repeat a form label instead of naming a person? */
 function isLabelValue(v: string): boolean {
   const first = v.trim().toLowerCase().split(/[\s.]+/)[0];
-  return first.length === 0 || FIELD_LABEL_WORD.has(first);
+  return first.length === 0 || FIELD_LABEL_WORD.has(first) || NEXT_LABEL_WORD.has(first);
+}
+
+/**
+ * Words that START the next field on a form, where a value read off a flattened line runs on
+ * into it. Every one of these was stored as part of a value on a real claim, and each such
+ * value produced a false duplicate or mismatch finding:
+ *   "Gaurav Kumar Singh Date of"            (payslip: "... Date of Joining:")
+ *   "PRADEEP KUMAR IFSC"                     (bank details)
+ *   "KANNAPIRAN BABURAJ Period of Third Pa"  (policy schedule, next column)
+ *   "... 387002 Vehicle Particulars", "... TAMIL NADU-608601 Previous TP Policy No."
+ * Deliberately NOT here: words that genuinely occur inside an address (village, district,
+ * state, city, pin, road, bank colony) — ADDRESS is cut with this set too.
+ */
+const NEXT_LABEL_WORD = new Set([
+  'date', 'dob', 'gender', 'phone', 'mobile', 'mob', 'tel', 'email', 'signature', 'ifsc',
+  'registration', 'vehicle', 'policy', 'invoice', 'receipt', 'period', 'previous', 'proposal',
+  'designation', 'department', 'joining', 'relationship', 'nominee', 'engine', 'chassis',
+  'model', 'particulars', 'premium', 'gstin', 'pan', 'uid', 'vid', 'account',
+]);
+
+/** Extra label words that end a PERSON's name but are ordinary words inside an address. */
+const NAME_ONLY_LABEL_WORD = new Set([
+  'address', 'district', 'state', 'city', 'town', 'village', 'pin', 'pincode', 'bank', 'branch',
+  'customer', 'insured', 'employee', 'emp', 'code', 'age', 'sex', 'occupation', 'nationality',
+  'birth', 'issue', 'issued', 'father', 'mother', 'husband', 'wife', 'guardian', 'spouse',
+  'aadhaar', 'aadhar', 'name',
+]);
+
+/** Cut a value at the first word (after its first) that begins the next form label. */
+function cutAtNextLabel(v: string, forName: boolean): string {
+  const words = v.split(' ');
+  const i = words.findIndex((w, k) => {
+    if (k === 0) return false;
+    const bare = w.toLowerCase().replace(/[^a-z]/g, '');
+    return NEXT_LABEL_WORD.has(bare) || (forName && NAME_ONLY_LABEL_WORD.has(bare));
+  });
+  return (i === -1 ? words : words.slice(0, i)).join(' ').replace(/[\s,.:\-]+$/, '');
+}
+
+/**
+ * Clean a person-name reading, or null when it is not a name at all.
+ *  - cut at the next label ("... Date of Joining");
+ *  - drop a trailing OCR fragment that is not an initial ("K SATISHKUMAR Te"; "RAVI K" keeps K);
+ *  - reject a reading that starts lower-case or contains prose ("r repair of the vehicle
+ *    subject to", "r Family"): OCR debris, not a person.
+ * ponytail: the lower-case rule would reject a name OCR'd entirely in lower case; documents
+ * print names capitalised, so none has shown up.
+ */
+function cleanPersonName(raw: string): string | null {
+  let v = cutAtNextLabel(raw, true);
+  const words = v.split(' ');
+  const last = words[words.length - 1];
+  if (words.length > 1 && last.length <= 2 && last !== last.toUpperCase()) v = words.slice(0, -1).join(' ');
+  if (!v || !/^[A-Z]/.test(v) || /\b(?:the|to|for|of|and|with|subject|from)\b/.test(v)) return null;
+  return v;
 }
 
 /** Relation names tagged with WHOSE name it is. */
@@ -287,9 +342,11 @@ export function extractRelationNamesByKind(text: string): { kind: RelationKind; 
   const seen = new Set<string>();
   for (const m of text.matchAll(RELATION_RE)) {
     const label = (m[1] ?? m[3] ?? '').toLowerCase();
-    const value = (m[2] ?? m[4] ?? '').trim().replace(/\s+/g, ' ');
+    const raw = (m[2] ?? m[4] ?? '').trim().replace(/\s+/g, ' ');
     const kind = RELATION_OF[label];
-    if (!kind || !value || isLabelValue(value)) continue;
+    if (!kind || !raw || isLabelValue(raw)) continue;
+    const value = cleanPersonName(raw);
+    if (!value) continue;
     const key = `${kind}:${value}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -346,7 +403,9 @@ export function extractNames(text: string): string[] {
     // A salutation is no part of a name: reviewers compare "Lalit Mohan" against the salary
     // slip, not "Mr. Lalit Mohan", and nameMatches already drops honorifics on both sides.
     v = dropHonorific(v);
-    if (v && !isLabelValue(v)) out.push(v);
+    if (!v || isLabelValue(v)) continue;
+    const name = cleanPersonName(v);
+    if (name) out.push(name);
   }
   return [...new Set(out)].filter((n) => !relations.some((r) => nameMatches(n, r)));
 }
@@ -385,6 +444,8 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
     /(?:application|appl?n)\.?\s*(?:no|number|id|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
 };
 
+const DIGIT_REQUIRED = new Set<CrossField>(['CHASSIS', 'ENGINE', 'RECEIPT_NO', 'APPLICATION_NO', 'EMP_CODE']);
+
 export function extractField(field: CrossField, text: string): string[] {
   if (field === 'NAME') return extractNames(text);
   if (field.startsWith('RELATION_')) {
@@ -395,9 +456,11 @@ export function extractField(field: CrossField, text: string): string[] {
   const re = FIELD_RE[field];
   if (!re) return [];
   const vals = allMatches(text, re);
-  // A real chassis/engine number always carries a digit; this drops a stray label word
-  // ("Engine", "Model") that slipped through as a value.
-  return field === 'CHASSIS' || field === 'ENGINE' ? vals.filter((v) => /\d/.test(v)) : vals;
+  if (field === 'ADDRESS') return [...new Set(vals.map((v) => cutAtNextLabel(v, false)).filter(Boolean))];
+  // A real chassis/engine/reference number always carries a digit; this drops a stray label
+  // word that slipped through as a value. The patterns are case-insensitive, so [A-Z0-9]
+  // also accepts "Invoice" — stored as a receipt number, it "matched" 49 other claims.
+  return DIGIT_REQUIRED.has(field) ? vals.filter((v) => /\d/.test(v)) : vals;
 }
 
 // ── Consistency checks ───────────────────────────────────────────────────────────
