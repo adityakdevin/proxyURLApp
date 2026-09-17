@@ -10,60 +10,10 @@ import {
   FileText,
   ListChecks,
   Search,
-  X,
 } from 'lucide-react';
 import { Finding } from '@/lib/claimTypes';
 import { copyText } from '@/lib/utils';
-
-export interface DocField {
-  label: string;
-  value: string | null;
-}
-
-export type FieldDocType = 'PAN' | 'AADHAR' | 'INVOICE' | 'INSURANCE';
-
-export interface FieldGroup {
-  type: FieldDocType;
-  /** 1-based pages this group came from; empty for a claim validated before page texts
-   *  were stored, where the whole file yields one group. */
-  pages: number[];
-  fields: DocField[];
-}
-
-/** One field checked against the QR code printed on the same page. */
-export interface QrFieldCheck {
-  label: string;
-  qrValue: string;
-  documentValue: string;
-  verdict: 'MATCH' | 'MISMATCH';
-  page?: number;
-}
-
-const TYPE_LABEL: Record<FieldDocType, string> = {
-  PAN: 'PAN Card',
-  AADHAR: 'Aadhaar',
-  INVOICE: 'Invoice',
-  INSURANCE: 'Insurance Policy',
-};
-
-// One accent per document type, so a reviewer scanning a long bundle finds the section they
-// want by colour before they read the heading.
-const TYPE_ACCENT: Record<FieldDocType, string> = {
-  PAN: 'bg-violet-50 text-violet-700 ring-violet-200',
-  AADHAR: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  INVOICE: 'bg-sky-50 text-sky-700 ring-sky-200',
-  INSURANCE: 'bg-amber-50 text-amber-700 ring-amber-200',
-};
-
-/** Values that are identifiers read better in a monospace face — digits stop wobbling and
- *  a transposed character is visible at a glance. */
-const isIdentifier = (label: string) => /number|no\b|id\b|vid|chassis|engine|policy|pan/i.test(label);
-
-const pageRange = (pages: number[]): string | null => {
-  if (pages.length === 0) return null;
-  if (pages.length === 1) return `Page ${pages[0]}`;
-  return `Pages ${pages[0]}–${pages[pages.length - 1]}`;
-};
+import { QrDataList, QrEntry } from '@/components/claims/QrDataList';
 
 /**
  * Copy one line to the clipboard, with a tick to confirm it landed.
@@ -94,162 +44,6 @@ function CopyButton({ text, what }: { text: string; what: string }) {
     >
       {copied ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
     </button>
-  );
-}
-
-/** The QR verdict for one field, if the code sits on a page this group covers. */
-function checkFor(qrChecks: QrFieldCheck[], group: FieldGroup, label: string) {
-  return qrChecks.find(
-    (c) => c.label === label && (c.page === undefined || group.pages.includes(c.page))
-  );
-}
-
-/** One field row: label, value, a copy button on hover, and — where the page carries a QR
- *  code that names the same field — whether the two agree. */
-function FieldRow({ label, value, check }: DocField & { check?: QrFieldCheck }) {
-  const mismatch = check?.verdict === 'MISMATCH';
-  return (
-    <div
-      className={`group relative flex flex-wrap items-start gap-2 border-b border-gray-100 bg-white py-2 last:border-0 ${
-        mismatch ? '-mx-3 border-b-red-100 !bg-red-50 px-3' : ''
-      }`}
-    >
-      <span className="w-24 shrink-0 pt-0.5 text-xs font-medium leading-4 text-gray-500">
-        {label}
-        {mismatch && (
-          <span className="mt-1 flex w-fit items-center gap-0.5 rounded bg-red-100 px-1 py-px text-[10px] font-semibold text-red-700 ring-1 ring-red-200">
-            <X className="h-2.5 w-2.5" />
-            QR differs
-          </span>
-        )}
-      </span>
-      {value ? (
-        <>
-          <span className="flex min-w-0 flex-1 items-start gap-1">
-            {/* The tick leads the VALUE, not the label: what was verified against the QR is
-                the value, and reading down the column shows at a glance which ones agree. */}
-            {check && !mismatch && (
-              <span
-                title={`Matches the QR code on this page ("${check.qrValue}")`}
-                aria-label="Matches the QR code"
-                className="flex shrink-0 pt-0.5"
-              >
-                <Check className="h-3 w-3 text-green-600" />
-              </span>
-            )}
-            {/* Identifiers get a smaller monospace face rather than a mid-token line break:
-                "UK401K20250020 / 4" split across two lines reads as two different numbers,
-                which is the one thing a reviewer comparing IDs must not see. */}
-            <span
-              className={`min-w-0 flex-1 break-words text-sm text-gray-900 ${
-                isIdentifier(label) ? 'font-mono text-[13px] leading-5 tracking-tight' : ''
-              }`}
-            >
-              {value}
-            </span>
-          </span>
-          {/* Lifted out of the flow so it costs the value NO width: in a 340px sidebar the
-              ~20px it used to reserve was the difference between a chassis number fitting on
-              one line and breaking mid-token, which is the one thing a reviewer comparing
-              IDs must not see. It inherits the row's background so that, while hovered, it
-              reads as an overlay rather than sitting on top of the text. */}
-          <span className="absolute right-0 top-1.5 bg-inherit pl-1">
-            <CopyButton text={value} what={label} />
-          </span>
-        </>
-      ) : (
-        // Absent fields stay visible — "the document does not carry this" is information —
-        // but muted, so they never compete with the values that are actually there.
-        <span className="flex-1 text-sm italic text-gray-300">Not found</span>
-      )}
-      {mismatch && (
-        // The QR's value is the evidence; showing it beside the printed one is the whole
-        // point of the check, so it is spelled out rather than left in a tooltip.
-        // 104px = the w-24 label column plus the gap-2, so this sits under the VALUE.
-        <span className="w-full pl-[104px] text-xs text-red-700">
-          QR code says <span className="font-mono">{check!.qrValue}</span>
-        </span>
-      )}
-    </div>
-  );
-}
-
-function GroupCard({
-  group,
-  qrChecks,
-  onJumpToPage,
-}: {
-  group: FieldGroup;
-  qrChecks: QrFieldCheck[];
-  onJumpToPage?: (page: number) => void;
-}) {
-  const range = pageRange(group.pages);
-  const filled = group.fields.filter((f) => f.value).length;
-  // A field with no tick is either "agreed" or "the QR never mentioned it" — indistinguishable
-  // per row, so the card states the totals once.
-  const checksHere = group.fields
-    .map((f) => checkFor(qrChecks, group, f.label))
-    .filter((c): c is QrFieldCheck => !!c);
-  const bad = checksHere.filter((c) => c.verdict === 'MISMATCH').length;
-  // A bundle can hold four documents; collapsing the ones already reviewed keeps the pane
-  // the reviewer is working on in view without scrolling past the rest.
-  const [open, setOpen] = useState(true);
-
-  return (
-    <section className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-      <header className="flex items-center gap-2 border-b bg-gray-50/80 px-3 py-2">
-        <span className={`rounded px-2 py-0.5 text-xs font-semibold ring-1 ${TYPE_ACCENT[group.type]}`}>
-          {TYPE_LABEL[group.type] ?? group.type}
-        </span>
-        {range &&
-          (onJumpToPage ? (
-            <button
-              type="button"
-              onClick={() => onJumpToPage(group.pages[0])}
-              className="rounded px-1.5 py-0.5 text-xs text-blue-600 hover:bg-blue-50 hover:underline"
-              title="Scroll the document to this page"
-            >
-              {range}
-            </button>
-          ) : (
-            <span className="text-xs text-gray-500">{range}</span>
-          ))}
-        <span className="ml-auto text-xs tabular-nums text-gray-400">
-          {filled}/{group.fields.length} read
-        </span>
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          title={open ? 'Collapse this document' : 'Expand this document'}
-          aria-expanded={open}
-          className="-mr-1 rounded p-0.5 text-gray-400 transition hover:bg-gray-200 hover:text-gray-700"
-        >
-          {open ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}
-          <span className="sr-only">
-            {open ? 'Collapse' : 'Expand'} {TYPE_LABEL[group.type] ?? group.type}
-          </span>
-        </button>
-      </header>
-      {checksHere.length > 0 && (
-        <div
-          className={`flex items-center gap-1.5 border-b px-3 py-1 text-[11px] font-medium ${
-            bad > 0 ? 'border-red-100 bg-red-50 text-red-700' : 'border-green-100 bg-green-50 text-green-700'
-          }`}
-        >
-          {bad > 0 ? <X className="h-3 w-3 shrink-0" /> : <Check className="h-3 w-3 shrink-0" />}
-          {bad > 0
-            ? `${bad} of ${checksHere.length} field${checksHere.length === 1 ? '' : 's'} disagree with the QR code`
-            : `${checksHere.length} field${checksHere.length === 1 ? '' : 's'} verified against the QR code`}
-        </div>
-      )}
-      {open && (
-        <div className="px-3 py-1">
-          {group.fields.map((f) => (
-            <FieldRow key={f.label} {...f} check={checkFor(qrChecks, group, f.label)} />
-          ))}
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -489,50 +283,42 @@ function FindingsCard({
 }
 
 /**
- * Everything about the document that is not the document: its findings, and the fields read
- * off it — one card per document type, because a claim document is routinely a bundle
- * (invoice, then policy, then PAN, then Aadhaar in one PDF).
- *
- * No DMS or digital-verification pane. There is no DMS feed in this system, and PAN and
- * Aadhaar QR payloads are issuer-encrypted, so nothing could populate a verification
- * column — both rendered a permanent placeholder and were removed.
+ * Everything about the document that is not the document: its findings and, on the QR
+ * check, the decoded QR codes — rendered by the same component as the claim page's
+ * "View QR Data" dialog, so the two screens always show the same details.
  */
 export function FieldPanes({
-  groups,
+  qrEntries,
   findings,
   numberOf,
   activeId,
   onSelect,
   onJumpToPage,
   showFields,
-  qrChecks = [],
 }: {
-  groups: FieldGroup[];
+  /** QR codes decoded from this document. */
+  qrEntries: QrEntry[];
   findings: Finding[];
   numberOf: Map<string, number>;
   activeId: string | null;
   onSelect: (id: string) => void;
   onJumpToPage?: (page: number) => void;
   showFields: boolean;
-  /** Per-field QR verdicts for this document, shown against the matching rows. */
-  qrChecks?: QrFieldCheck[];
 }) {
   return (
     <div className="flex min-h-0 flex-col rounded-lg border border-gray-200 bg-gray-50">
       <header className="flex items-center gap-2 rounded-t-lg border-b bg-white px-3 py-2.5">
         <FileText className="h-4 w-4 text-gray-400" />
-        <h2 className="text-sm font-semibold text-gray-800">{showFields ? 'Document details' : 'Findings'}</h2>
-        {showFields && groups.length > 0 && (
+        <h2 className="text-sm font-semibold text-gray-800">{showFields ? 'QR Data' : 'Findings'}</h2>
+        {showFields && qrEntries.length > 0 && (
           <span className="ml-auto text-xs text-gray-400">
-            {/* "in this file" would be a lie now that the list is filtered to the documents
-                carrying a QR — the file usually holds more than these. */}
-            {groups.length} document{groups.length === 1 ? '' : 's'} with a QR code
+            {qrEntries.length} QR code{qrEntries.length === 1 ? '' : 's'}
           </span>
         )}
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
-        {/* On the QR view the fields are the point, so an empty findings card is pure noise
+        {/* On the QR view the QR data is the point, so an empty findings card is pure noise
             and it is hidden. On every other check the findings ARE the panel, so the empty
             state has to stay — otherwise the panel would render blank with no explanation. */}
         {(!showFields || findings.length > 0) && (
@@ -547,25 +333,20 @@ export function FieldPanes({
         )}
 
         {showFields &&
-          (groups.length === 0 ? (
+          (qrEntries.length === 0 ? (
             <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-center">
               <FileText className="mx-auto mb-2 h-6 w-6 text-gray-300" />
               <p className="text-sm font-medium text-gray-600">No QR code found</p>
               <p className="mt-1 text-xs text-gray-400">
-                This panel lists only the documents a QR code was read from, so there is nothing to
-                check here. PAN and Aadhaar Secure QR codes are encrypted by the issuer and cannot be
-                read in-app. Run Validate on the claim if it has not been scanned yet.
+                No QR code was read from this document. PAN and Aadhaar Secure QR codes are
+                encrypted by the issuer and cannot be read in-app. Run Validate on the claim if it
+                has not been scanned yet.
               </p>
             </div>
           ) : (
-            groups.map((g) => (
-              <GroupCard
-                key={`${g.type}-${g.pages[0] ?? 0}`}
-                group={g}
-                qrChecks={qrChecks}
-                onJumpToPage={onJumpToPage}
-              />
-            ))
+            <section className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+              <QrDataList entries={qrEntries} onJumpToPage={onJumpToPage} />
+            </section>
           ))}
       </div>
     </div>

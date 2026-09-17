@@ -11,7 +11,8 @@ import {
   RotateCw,
 } from 'lucide-react';
 import { DocumentViewerPanel } from '@/components/claims/DocumentViewer';
-import { FieldPanes, FieldGroup, QrFieldCheck } from '@/components/claims/FieldPanes';
+import { FieldPanes } from '@/components/claims/FieldPanes';
+import { QrEntry } from '@/components/claims/QrDataList';
 import { api } from '@/lib/api';
 import { Finding } from '@/lib/claimTypes';
 import { useAuthStore } from '@/stores/authStore';
@@ -20,11 +21,9 @@ import { ClaimHit, ClaimJumpBox } from '@/components/claims/ClaimJumpBox';
 interface ValResult {
   validatorKey: string;
   findings?: Finding[];
-  /** QR carries per-field verdicts against the page the code is printed on, and the
-   *  codes it decoded — the QR tab counts codes, not findings. */
+  /** QR carries the codes it decoded — the QR tab counts codes, not findings. */
   details?: {
-    comparisons?: (QrFieldCheck & { documentId: string })[];
-    decoded?: { documentId: string; page?: number }[];
+    decoded?: (QrEntry & { documentId: string })[];
   } | null;
 }
 interface ValRun {
@@ -100,7 +99,6 @@ export default function DocumentView() {
   const [fileName, setFileName] = useState('');
   const [claimLabel, setClaimLabel] = useState('');
   const [results, setResults] = useState<ValResult[]>([]);
-  const [groups, setGroups] = useState<FieldGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
   const [running, setRunning] = useState(false);
@@ -225,62 +223,18 @@ export default function DocumentView() {
     }
   };
 
-  // Field panes are only rendered for the QR check, so they are only fetched for it.
-  useEffect(() => {
-    if (!compare) return;
-    let cancelled = false;
-    api
-      .get<{ data: { groups: FieldGroup[] } }>(`/claims/${id}/documents/${documentId}/fields`)
-      .then((r) => !cancelled && setGroups(r.data.groups))
-      .catch(() => {
-        /* the pane shows its own "no fields to show" state */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, documentId, compare]);
-
-  // Pages of THIS document that a QR code was actually read from.
-  const qrPages = useMemo(
+  // QR codes decoded from THIS document, shown in the side panel on the QR check.
+  const qrEntries = useMemo(
     () =>
       (results.find((r) => r.validatorKey === 'QR')?.details?.decoded ?? []).filter(
         (d) => d.documentId === documentId
-      ),
-    [results, documentId]
-  );
-
-  // The QR tab shows only the documents a QR was FOUND on — an invoice with no code has
-  // nothing for this check to say, and listing it invites the reader to look for a verdict
-  // that can never appear. Groups with no page info (a plain image, or a claim validated
-  // before per-page text was stored) are kept: there is no page to match them on.
-  const qrGroups = useMemo(
-    () =>
-      groups.filter(
-        (g) =>
-          g.pages.length === 0 ||
-          qrPages.some((d) => d.page === undefined || g.pages.includes(d.page))
-      ),
-    [groups, qrPages]
-  );
-
-  // QR verdicts for THIS document, shown against the matching rows of the field panes.
-  const qrChecks = useMemo(
-    () =>
-      (results.find((r) => r.validatorKey === 'QR')?.details?.comparisons ?? []).filter(
-        (c) => c.documentId === documentId
       ),
     [results, documentId]
   );
 
   // QR codes decoded in THIS document. The other tabs count findings — i.e. problems — but
   // a QR check with nothing wrong still has a result worth showing: how many codes it read.
-  const qrCount = useMemo(
-    () =>
-      (results.find((r) => r.validatorKey === 'QR')?.details?.decoded ?? []).filter(
-        (d) => d.documentId === documentId
-      ).length,
-    [results, documentId]
-  );
+  const qrCount = qrEntries.length;
 
   const checkLabel = check ? CHECK_LABEL[check] ?? check : null;
 
@@ -474,14 +428,13 @@ export default function DocumentView() {
         </div>
         {panelOpen && (
           <FieldPanes
-            groups={qrGroups}
+            qrEntries={qrEntries}
             findings={findings}
             numberOf={numberOf}
             activeId={activeId}
             onSelect={pickFinding}
             onJumpToPage={jumpToPage}
             showFields={compare}
-            qrChecks={qrChecks}
           />
         )}
       </main>
