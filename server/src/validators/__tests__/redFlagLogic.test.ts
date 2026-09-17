@@ -269,6 +269,17 @@ describe('Calendar dates', () => {
   it('flags month > 12', () => {
     expect(codes(checkDates('15/13/2025'))).toEqual(['REDFLAG_BAD_DATE']);
   });
+  // MZBGD813MSN failed Red Flags on "6/29/26" — 29 June 2026, printed month-first. A date is
+  // only impossible when NEITHER reading is a real day.
+  it('passes a month-first date that is real when read M/D', () => {
+    expect(checkDates('Printed on 6/29/26')).toEqual([]);
+    expect(checkDates('12/31/2025')).toEqual([]);
+  });
+  it('still flags a date that is impossible both ways', () => {
+    expect(codes(checkDates('04/31/2025'))).toEqual(['REDFLAG_BAD_DATE']); // Apr 31 either way
+    expect(codes(checkDates('02/29/2025'))).toEqual(['REDFLAG_BAD_DATE']); // Feb 29, non-leap
+    expect(codes(checkDates('13/13/2025'))).toEqual(['REDFLAG_BAD_DATE']);
+  });
 });
 
 describe('ocrAdjacent', () => {

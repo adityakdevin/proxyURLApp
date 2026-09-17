@@ -425,7 +425,18 @@ export function checkTimestamps(created?: string | null, modified?: string | nul
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // Feb=28; leap adds a day below
 const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 
-/** Reject calendar-impossible dates (31 in a 30-day month, 29+ Feb in a non-leap year). */
+/** A real calendar day? */
+function isRealDay(day: number, month: number, year: number): boolean {
+  if (month < 1 || month > 12 || day < 1) return false;
+  return day <= (month === 2 && isLeap(year) ? 29 : DAYS_IN_MONTH[month - 1]);
+}
+
+/** Reject calendar-impossible dates (31 in a 30-day month, 29+ Feb in a non-leap year).
+ *
+ *  Impossible means impossible in BOTH orders. Indian paperwork prints day-first, but system-
+ *  generated stamps (e-receipts, "Printed On" footers) print month-first: "6/29/26" is 29 June
+ *  2026, and reading it only as day/month raised a red flag - an ERROR that failed the claim -
+ *  on a perfectly ordinary date. A date that is real either way is not evidence of anything. */
 export function checkDates(fileText: string): RedFlagFinding[] {
   const out: RedFlagFinding[] = [];
   const seen = new Set<string>();
@@ -437,12 +448,13 @@ export function checkDates(fileText: string): RedFlagFinding[] {
     const month = +m[2];
     let year = +m[3];
     if (year < 100) year += year < 50 ? 2000 : 1900;
+    if (isRealDay(day, month, year) || isRealDay(month, day, year)) continue;
     if (month < 1 || month > 12 || day < 1) {
       out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}"`, null, { date: raw }));
       continue;
     }
     const max = month === 2 && isLeap(year) ? 29 : DAYS_IN_MONTH[month - 1];
-    if (day > max) out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}" (${day} > ${max} for month ${month})`, null, { date: raw }));
+    out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}" (${day} > ${max} for month ${month})`, null, { date: raw }));
   }
   return out;
 }
