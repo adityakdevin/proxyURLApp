@@ -275,6 +275,12 @@ describe('Calendar dates', () => {
     expect(checkDates('Printed on 6/29/26')).toEqual([]);
     expect(checkDates('12/31/2025')).toEqual([]);
   });
+  // "+91-20-2721 8080" is the NSDL helpline printed on every PAN card. Read as a date it is
+  // day 91, month 20, year 2721 — and it failed Red Flags on MZBFF811VSN525302.
+  it('ignores a phone number that only looks like a date', () => {
+    expect(checkDates('For queries call +91-20-2721 8080')).toEqual([]);
+    expect(checkDates('Tel 044-33-1234')).toEqual([]);
+  });
   it('still flags a date that is impossible both ways', () => {
     expect(codes(checkDates('04/31/2025'))).toEqual(['REDFLAG_BAD_DATE']); // Apr 31 either way
     expect(codes(checkDates('02/29/2025'))).toEqual(['REDFLAG_BAD_DATE']); // Feb 29, non-leap

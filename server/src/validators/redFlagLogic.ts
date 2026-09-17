@@ -448,6 +448,10 @@ export function checkDates(fileText: string): RedFlagFinding[] {
     const month = +m[2];
     let year = +m[3];
     if (year < 100) year += year < 50 ? 2000 : 1900;
+    // Not a date at all: "+91-20-2721 8080", the NSDL helpline printed on every PAN card, reads
+    // as day 91 / month 20 / year 2721 and failed Red Flags on any claim carrying a PAN card.
+    // No document in a claim is dated outside this range.
+    if (year < 1900 || year > 2100) continue;
     if (isRealDay(day, month, year) || isRealDay(month, day, year)) continue;
     if (month < 1 || month > 12 || day < 1) {
       out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}"`, null, { date: raw }));
