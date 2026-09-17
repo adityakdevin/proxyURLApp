@@ -8,6 +8,7 @@ import { classifyPage } from './segment.js';
 import { docFieldGroups } from './docFields.js';
 import { aadhaarQrAsFields, isUnreadableQrPayload } from './aadhaarSecureQr.js';
 import { compareQrToFields, QrFieldComparison } from './qrCompare.js';
+import { verifyKiaPolicy, kiaVerificationUrl } from './policyOnline.js';
 import { rasterizePdf, largestImageWidthPerPage, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
 import { BBox, clamp01 } from '../lib/bbox.js';
 
@@ -315,6 +316,12 @@ function idCardPagesWithoutQr(
   return out;
 }
 
+/** The text of the page a QR sits on (the whole document for an image or unpaged text). */
+function pageTextFor(doc: ValidatorDoc, ctx: ValidatorContext, page?: number): string {
+  const pages = ctx.pageTexts.get(doc.id);
+  return (page !== undefined ? pages?.[page - 1] : undefined) ?? ctx.shared.get(doc.id) ?? '';
+}
+
 /** PAN / AADHAR, judged from the text META already extracted for this document. */
 function govtKindFor(doc: ValidatorDoc, ctx: ValidatorContext): string | null {
   const pages = ctx.pageTexts.get(doc.id);
@@ -416,6 +423,8 @@ export const qrValidator: Validator = {
     // Reset here rather than inside decodeQrPdf: an image decoded after a PDF would
     // otherwise clear a flag the PDF had already raised.
     resetDecoderDegraded();
+    // One lookup per policy link: a bundle often carries the same policy QR on two pages.
+    const verifiedUrls = new Set<string>();
     for (const doc of scannable) {
       let hits: (QrHit & { page?: number })[];
       if (doc.mimeType === 'application/pdf') {
@@ -483,6 +492,17 @@ export const qrValidator: Validator = {
                 bbox: h.bbox ?? null,
                 data: { label: c.label, qrValue: c.qrValue, documentValue: c.documentValue },
               });
+            }
+          }
+          // Does KIA Safety's own record of the policy back the printed page up?
+          const url = kiaVerificationUrl(h.value);
+          if (url && !verifiedUrls.has(url)) {
+            verifiedUrls.add(url);
+            for (const f of await verifyKiaPolicy(h.value, pageTextFor(doc, ctx, h.page))) {
+              const finding = { documentId: doc.id, ...f, page: h.page ?? null, bbox: h.bbox ?? null };
+              // An ERROR is the QR contradicting its page, exactly like a field mismatch. An
+              // unreachable site is INFO: unverified is not wrong.
+              (f.severity === 'ERROR' ? mismatches : found).push(finding);
             }
           }
         }
