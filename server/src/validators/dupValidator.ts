@@ -1,5 +1,6 @@
 import { Validator, ValidatorContext, FindingInput } from './types.js';
 import { CrossField, extractField } from './crossDocLogic.js';
+import { locate } from './redFlagValidator.js';
 
 /**
  * Duplicacy check — the same unique data point appearing on a DIFFERENT claim.
@@ -171,6 +172,13 @@ export const dupValidator: Validator = {
             `${LABEL[field] ?? field} "${item.value}" also appears on claim ` +
             `${list}${claims.size > 5 ? ` and ${claims.size - 5} more` : ''}.`,
           page: item.page,
+          // Without a box the findings row cannot zoom to the value. Null when the page has
+          // no word coordinates or the value spans more boxes than locate() will join (a long
+          // address); the row then falls back to jumping to the page.
+          bbox:
+            item.page != null
+              ? locate(ctx.wordBoxes.get(item.documentId) ?? [], item.page, item.value)
+              : null,
           data: { field, value: item.value, claims: [...claims].slice(0, 20) },
         });
       }

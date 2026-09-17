@@ -242,13 +242,23 @@ function FindingsCard({
                     >
                       <button
                         type="button"
-                        onClick={() => f.bbox && onSelect(f.id)}
-                        disabled={!f.bbox}
-                        title={f.bbox ? 'Zoom to this on the document' : undefined}
+                        // No box (a long address, or a page read without word coordinates)
+                        // still has a page: going there beats a dead row.
+                        onClick={() =>
+                          f.bbox ? onSelect(f.id) : f.page && onJumpToPage?.(f.page)
+                        }
+                        disabled={!f.bbox && !(f.page && onJumpToPage)}
+                        title={
+                          f.bbox
+                            ? 'Zoom to this on the document'
+                            : f.page && onJumpToPage
+                            ? `Scroll the document to page ${f.page}`
+                            : undefined
+                        }
                         className={`flex min-w-0 flex-1 items-start gap-2 px-2 py-1.5 text-left text-xs leading-snug ${
                           active
                             ? 'font-semibold text-blue-950'
-                            : f.bbox
+                            : f.bbox || (f.page && onJumpToPage)
                             ? 'cursor-pointer text-gray-600'
                             : 'cursor-default text-gray-500'
                         }`}

@@ -79,7 +79,7 @@ function locatableValue(data?: Record<string, unknown>): string | null {
  *  spellValidator consumes word boxes in reading order. Null when the page has no
  *  coordinates (a text-only extraction) or the value cannot be found, in which case the
  *  finding keeps today's page-number-only behaviour rather than pointing somewhere wrong. */
-function locate(boxes: WordBox[], page: number, value: string): BBox | null {
+export function locate(boxes: WordBox[], page: number, value: string): BBox | null {
   const target = norm(value);
   const onPage = boxes.filter((b) => b.page === page);
   for (let i = 0; i < onPage.length; i++) {
