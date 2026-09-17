@@ -1,3 +1,4 @@
+import { readFile } from 'fs/promises';
 import exifr from 'exifr';
 
 export interface FileMeta {
@@ -63,7 +64,10 @@ export async function readFileMeta(
   let raw: Record<string, unknown> = {};
   try {
     // Default segments cover TIFF/IFD0 (Make/Model/Software); add XMP for CreatorTool/Producer.
-    raw = ((await exifr.parse(absolutePath, { xmp: true })) ?? {}) as Record<string, unknown>;
+    // Hand exifr a BUFFER, never the path: its chunked path reader fails on Node 26 and leaks
+    // the FileHandle it opened, which Node 26 turns into a process crash on the next GC.
+    // ponytail: reads the whole file into memory; fine for ID-card photos and scans.
+    raw = ((await exifr.parse(await readFile(absolutePath), { xmp: true })) ?? {}) as Record<string, unknown>;
   } catch {
     raw = {};
   }
