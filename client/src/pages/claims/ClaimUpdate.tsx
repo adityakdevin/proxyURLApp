@@ -622,7 +622,10 @@ export default function ClaimUpdate() {
               <details
                 key={v.key}
                 id={`val-card-${v.key}`}
-                className={`group ${cardClass} border rounded-md ${v.key === 'FULL' ? 'col-span-2' : ''}`}
+                // Every card is the same half-width cell. Full Scan used to span both
+                // columns for its document list, which pushed the card after it into a row
+                // of its own — a full-width card, then a half-width one against empty space.
+                className={`group ${cardClass} border rounded-md`}
               >
                 <summary className="flex cursor-pointer select-none items-start justify-between gap-2 p-6 list-none [&::-webkit-details-marker]:hidden">
                   <div>{header}</div>
