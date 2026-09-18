@@ -1,6 +1,16 @@
 import { Validator, ValidatorContext, FindingInput } from './types.js';
 import { CrossField, extractField } from './crossDocLogic.js';
 import { locate } from './redFlagValidator.js';
+import {
+  extractIdentifiers,
+  IDENTIFIER_FIELDS,
+  IDENTIFIER_LABEL,
+  IdentifierField,
+} from './dupIdentifiers.js';
+
+type DupField = CrossField | IdentifierField;
+const isIdentifier = (f: DupField): f is IdentifierField =>
+  (IDENTIFIER_FIELDS as string[]).includes(f);
 
 /**
  * Duplicacy check — the same unique data point appearing on a DIFFERENT claim.
@@ -20,7 +30,7 @@ import { locate } from './redFlagValidator.js';
  *  share addresses, common names repeat, and a genuine repeat customer is not fraud. Those
  *  are reported for a reviewer's eye and cannot fail a claim on their own.
  */
-const DUP_FIELDS: { field: CrossField; hard: boolean }[] = [
+const DUP_FIELDS: { field: DupField; hard: boolean }[] = [
   { field: 'ACCOUNT_NO', hard: true },
   { field: 'RECEIPT_NO', hard: true },
   { field: 'APPLICATION_NO', hard: true },
@@ -30,9 +40,15 @@ const DUP_FIELDS: { field: CrossField; hard: boolean }[] = [
   { field: 'RELATION_FATHER', hard: false },
   { field: 'DOB', hard: false },
   { field: 'ADDRESS', hard: false },
+  // The rest of the client's Duplicacy sheet (policy, PAN, Aadhaar, DL, passport, voter ID,
+  // GSTIN, Udyam, FSSAI, PF, UAN, GPF, certificate and ration-card numbers). The reviewers
+  // asked for every one to count as a red flag; dupIdentifiers only reads each where it can
+  // be the customer's, so a dealer's or insurer's own number never matches across claims.
+  ...IDENTIFIER_FIELDS.map((field) => ({ field, hard: true })),
 ];
 
 const LABEL: Record<string, string> = {
+  ...IDENTIFIER_LABEL,
   ACCOUNT_NO: 'Account number',
   RECEIPT_NO: 'Receipt number',
   APPLICATION_NO: 'Application number',
@@ -45,7 +61,7 @@ const LABEL: Record<string, string> = {
 };
 
 /** Match key. Folds the ways the same value gets printed differently, per field kind. */
-export function normValue(field: CrossField, v: string): string {
+export function normValue(field: DupField, v: string): string {
   if (field === 'DOB') {
     const m = /^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/.exec(v.trim());
     if (!m) return v.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -72,7 +88,7 @@ const MIN_NORM_LEN = 4;
 const MAX_VALUES_PER_CLAIM = 500;
 
 interface Extracted {
-  field: CrossField;
+  field: DupField;
   value: string;
   norm: string;
   documentId: string;
@@ -90,8 +106,12 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
         ? pages.map((t, i) => ({ text: t, page: i + 1 }))
         : [{ text, page: null }];
     for (const unit of units) {
+      const ids = extractIdentifiers(unit.text);
       for (const { field } of DUP_FIELDS) {
-        for (const value of extractField(field, unit.text)) {
+        const values = isIdentifier(field)
+          ? ids.filter((i) => i.field === field).map((i) => i.value)
+          : extractField(field, unit.text);
+        for (const value of values) {
           const norm = normValue(field, value);
           if (norm.replace(/\s/g, '').length < MIN_NORM_LEN) continue;
           const key = `${field}:${norm}`;
@@ -134,7 +154,7 @@ export const dupValidator: Validator = {
     }
 
     // One query per field with an IN list — indexed on (field, norm), unlike a giant OR.
-    const byField = new Map<CrossField, Extracted[]>();
+    const byField = new Map<DupField, Extracted[]>();
     for (const m of mine) byField.set(m.field, [...(byField.get(m.field) ?? []), m]);
 
     const findings: FindingInput[] = [];

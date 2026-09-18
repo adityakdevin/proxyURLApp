@@ -58,3 +58,34 @@ describe('dupValidator findings', () => {
     expect(f.bbox).toEqual({ x: 0.3, y: 0.5, w: expect.closeTo(0.25, 5), h: expect.closeTo(0.02, 5) });
   });
 });
+
+describe('dupValidator — Duplicacy sheet numbers', () => {
+  // The client's cases 9 and 10: MZBEP812LSN709538 and MZBEP812LSN709192 carry the same
+  // policy number, 251589936500. That must fail the duplicate check, not pass it.
+  it('fails a claim whose policy number appears on another claim', async () => {
+    const prisma = {
+      claimFieldValue: {
+        deleteMany: async () => ({}),
+        createMany: async () => ({}),
+        findMany: async ({ where }: { where: { field: string; norm: { in: string[] } } }) =>
+          where.field === 'POLICY_NO' && where.norm.in.includes('251589936500')
+            ? [{ norm: '251589936500', claim: { claimId: 'MZBEP812LSN709192' } }]
+            : [],
+      },
+    };
+    const text = 'CERTIFICATE OF INSURANCE\nPolicy No.\n251589936500\nPrevious TP Policy No. : NA';
+    const outcome = await dupValidator.run({
+      claim: { id: 'c1', claimId: 'MZBEP812LSN709538', subCategoryId: 's1' },
+      documents: [],
+      prisma: prisma as never,
+      ocr: {} as never,
+      shared: new Map([['d1', text]]),
+      pageTexts: new Map([['d1', [text]]]),
+      wordBoxes: new Map(),
+    });
+    expect(outcome.status).toBe('FAILED');
+    const f = outcome.findings!.find((x) => x.code === 'DUP_POLICY_NO')!;
+    expect(f.severity).toBe('ERROR');
+    expect(f.message).toBe('Policy number "251589936500" also appears on claim MZBEP812LSN709192.');
+  });
+});
