@@ -302,7 +302,7 @@ export default function AdminClaims() {
     },
     {
       id: 'full',
-      header: 'Full Scan',
+      header: 'Missing Docs',
       meta: { sortField: 'fullScanStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.fullScanStatus} />,
     },

@@ -37,7 +37,7 @@ const CHECK_LABEL: Record<string, string> = {
   SPELL: 'Spell',
   QR: 'QR',
   INTRA: 'Intra-Claim',
-  FULL: 'Full Scan',
+  FULL: 'Missing Docs',
   REDFLAG: 'Red Flags',
   DUP: 'Duplicate',
 };

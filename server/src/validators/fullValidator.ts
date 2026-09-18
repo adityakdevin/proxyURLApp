@@ -74,7 +74,8 @@ export const fullValidator: Validator = {
         (name): FindingInput => ({
           documentId: null,
           code: 'FULL_MISSING_TYPE',
-          message: `Required document type missing: ${name}.`,
+          // Master sheet item 32: the reviewers' wording, not ours.
+          message: `Missing docs - ${name}`,
           data: { documentType: name },
         })
       ),

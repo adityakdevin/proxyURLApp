@@ -127,7 +127,7 @@ const VALIDATORS: { key: ValResult['validatorKey']; label: string; column: keyof
   { key: 'QR', label: 'QR', column: 'qrStatus' },
   { key: 'INTRA', label: 'Intra-Claim', column: 'intraClaimStatus' },
   { key: 'REDFLAG', label: 'Red Flags', column: 'redFlagStatus' },
-  { key: 'FULL', label: 'Full Scan', column: 'fullScanStatus' },
+  { key: 'FULL', label: 'Missing Docs', column: 'fullScanStatus' },
   { key: 'DUP', label: 'Duplicate', column: 'duplicateStatus' },
 ];
 
@@ -622,7 +622,7 @@ export default function ClaimUpdate() {
               <details
                 key={v.key}
                 id={`val-card-${v.key}`}
-                // Every card is the same half-width cell. Full Scan used to span both
+                // Every card is the same half-width cell. Missing Docs used to span both
                 // columns for its document list, which pushed the card after it into a row
                 // of its own — a full-width card, then a half-width one against empty space.
                 className={`group ${cardClass} border rounded-md`}

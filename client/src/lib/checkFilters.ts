@@ -13,7 +13,7 @@ export const CHECK_FILTERS = [
   { key: 'spellCheckStatus', label: 'Spell' },
   { key: 'qrStatus', label: 'QR' },
   { key: 'intraClaimStatus', label: 'Intra' },
-  { key: 'fullScanStatus', label: 'Full' },
+  { key: 'fullScanStatus', label: 'Missing Docs' },
   { key: 'redFlagStatus', label: 'Red Flag' },
   { key: 'duplicateStatus', label: 'Duplicate' },
 ] as const;

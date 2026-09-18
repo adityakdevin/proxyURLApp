@@ -404,7 +404,7 @@ export default function DocumentTypeMasters() {
                   types became mandatory without anyone deciding they were. */}
               <p className="text-xs text-muted-foreground">
                 Applies to <strong>every claim</strong>, not just this category. A claim whose
-                documents do not include this type fails Full Scan. Leave unticked unless the
+                documents do not include this type fails Missing Docs. Leave unticked unless the
                 document is genuinely mandatory on every claim.
               </p>
             </div>

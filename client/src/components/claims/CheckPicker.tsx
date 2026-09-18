@@ -14,7 +14,7 @@ export const SELECTABLE_CHECKS = [
   { key: 'SPELL', label: 'Spell' },
   { key: 'QR', label: 'QR' },
   { key: 'INTRA', label: 'Intra-Claim' },
-  { key: 'FULL', label: 'Full Scan' },
+  { key: 'FULL', label: 'Missing Docs' },
   { key: 'REDFLAG', label: 'Red Flags' },
   { key: 'DUP', label: 'Duplicate' },
 ] as const;

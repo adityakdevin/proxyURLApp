@@ -192,7 +192,7 @@ export const redFlagValidator: Validator = {
 
     // Cross-document field consistency moved to FULL. Red Flags is the format rules — a
     // malformed PAN, a 14-digit VID, an editor watermark. A value that disagrees BETWEEN
-    // documents is a comparison, and Full Scan is the tab named after doing that.
+    // documents is a comparison, and Missing Docs (formerly Full Scan) is the tab named after doing that.
 
     const errors = findings.filter((f) => f.severity === 'ERROR').length;
     const warnings = findings.filter((f) => f.severity === 'WARNING').length;

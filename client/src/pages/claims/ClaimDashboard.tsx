@@ -364,7 +364,7 @@ export default function ClaimDashboard() {
     },
     {
       id: 'full',
-      header: 'Full Scan',
+      header: 'Missing Docs',
       cell: ({ row }) => <ValidationBadge status={row.original.fullScanStatus} />,
     },
     {

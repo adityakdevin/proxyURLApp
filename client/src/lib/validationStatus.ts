@@ -1,5 +1,5 @@
 // Display + colour helpers for the five per-claim validation checks
-// (Spell / QR / Meta / Intra-Claim / Full Scan). Kept in one place so every
+// (Spell / QR / Meta / Intra-Claim / Missing Docs). Kept in one place so every
 // table and the claim detail view render the same labels and badge colours.
 
 export type ValidationStatus =

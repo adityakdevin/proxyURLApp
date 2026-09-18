@@ -62,7 +62,7 @@ export const OBSERVATION_CHECK_COLUMNS: { header: string; field: keyof Validatio
   { header: 'QR Code', field: 'qrStatus' },
   { header: 'Meta', field: 'metaExtractionStatus' },
   { header: 'Intra Claim', field: 'intraClaimStatus' },
-  { header: 'Full Scan', field: 'fullScanStatus' },
+  { header: 'Missing Docs', field: 'fullScanStatus' },
   // Red Flags was missing from the report even though it is the check reviewers act on
   // most; Duplicate is new. Appended, so the existing column positions do not move.
   { header: 'Red Flags', field: 'redFlagStatus' },

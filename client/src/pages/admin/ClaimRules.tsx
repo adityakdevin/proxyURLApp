@@ -49,7 +49,7 @@ const FIELD_LABELS: Record<RuleField, string> = {
   QR_STATUS: 'QR Check',
   META_STATUS: 'Meta Extraction',
   INTRA_STATUS: 'Intra-Claim',
-  FULL_STATUS: 'Full Scan',
+  FULL_STATUS: 'Missing Docs',
 };
 const OP_LABELS: Record<RuleOperator, string> = { EQ: '=', NEQ: '≠', GTE: '≥', LTE: '≤', GT: '>', LT: '<' };
 const NUMERIC_FIELDS: RuleField[] = ['DOCUMENT_COUNT', 'REMARK_COUNT'];
