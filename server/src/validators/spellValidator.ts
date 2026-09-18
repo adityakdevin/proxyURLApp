@@ -9,6 +9,11 @@ import {
   MIN_TERM_LEN,
 } from './logic.js';
 import { extractNames, extractRelationNames } from './crossDocLogic.js';
+import { ADDRESS_WORDS, INDIAN_PLACE_WORDS } from './indianPlaces.js';
+
+const PLACES: ReadonlySet<string> = new Set(INDIAN_PLACE_WORDS);
+/** Places and common address words: real words, so never flagged themselves. */
+const KNOWN_LOCAL_WORDS: ReadonlySet<string> = new Set([...INDIAN_PLACE_WORDS, ...ADDRESS_WORDS]);
 
 /** The expected-vocabulary the near-miss matcher checks against. Prefer the
  *  admin-managed `SpellTerm` table so the list can be tuned without a deploy;
@@ -132,7 +137,10 @@ export const spellValidator: Validator = {
       // or lowercased (dictionary-en holds many proper nouns only capitalised).
       // A glossary abbreviation counts as a real word: that is the whole point of the
       // reviewers being able to add "Pvt" and "Ltd" themselves.
-      const isRealWord = (w: string) => dictHasWord(s, w) || glossary.has(w.toLowerCase());
+      // A correctly spelled place is a real word too: never flagged, and never "corrected"
+      // into a form word ("Pune" was reported as a misspelling of "june").
+      const isRealWord = (w: string) =>
+        dictHasWord(s, w) || glossary.has(w.toLowerCase()) || KNOWN_LOCAL_WORDS.has(w.toLowerCase());
       // Finding no misspelling in OCR noise is not a pass — nothing was actually checked.
       // Say so, as a WARNING, so the check reads DOUBTFUL rather than a green tick.
       if (words.length >= UNREADABLE_MIN_WORDS) {
@@ -153,7 +161,9 @@ export const spellValidator: Validator = {
       }
       // OCR word boxes let us anchor each hit to a region on an image (Phase 2).
       const boxIndex = indexBoxes(ctx.wordBoxes.get(documentId) ?? []);
-      for (const hit of findTermMisspellings(words, isRealWord, terms)) {
+      // Places are near-miss targets too, after the form terms so a tie goes to the form
+      // word, and a hit against one is only ever doubtful.
+      for (const hit of findTermMisspellings(words, isRealWord, [...terms, ...PLACES], PLACES)) {
         const { token, term } = hit;
         const box = boxIndex.get(token)?.shift();
         // A low-confidence OCR read is itself grounds for doubt, whatever the glyphs say, and

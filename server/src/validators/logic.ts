@@ -414,7 +414,10 @@ export function isProperNounTerm(term: string, isRealWord: (w: string) => boolea
 export function findTermMisspellings(
   candidates: string[],
   isRealWord: (w: string) => boolean,
-  terms: string[] = EXPECTED_TERMS
+  terms: string[] = EXPECTED_TERMS,
+  /** Terms whose near-misses are only ever DOUBTFUL — place names, which OCR mangles more
+   *  than it mangles form words (see indianPlaces.ts). */
+  alwaysDoubtful?: ReadonlySet<string>
 ): TermMisspelling[] {
   const hits = new Map<string, { term: string; doubtful: boolean }>(); // token -> best match
   const seen = new Set<string>(); // skip re-checking an identical token (same header word on every page)
@@ -430,7 +433,17 @@ export function findTermMisspellings(
     let best: { term: string; d: number; edge: boolean } | null = null;
     for (const term of terms) {
       if (term.length < MIN_TERM_LEN || token === term) continue;
-      const cap = term.length >= 6 ? 2 : 1;
+      // Place names get a much tighter net. Measured on the stored claim text, allowing two
+      // edits turned surnames and OCR scraps into "misspelled places" — sharma→saharsa,
+      // bansal→bengal, lakh→ladakh, nisha→odisha. One edit, on a word of five letters or
+      // more, and a wrong FIRST letter only on a long word, which still catches "1angalore"
+      // (read as "angalore") while leaving "adiad" and "ucknow" alone.
+      // Short place names (Durg, Kota, Virar, Daman) are left out as targets: at four or five
+      // letters one edit reaches ordinary address words — Vihar→Virar, Durga→Durg,
+      // Kotak→Kota. They still count as real words, so they are never flagged themselves.
+      const place = alwaysDoubtful?.has(term) ?? false;
+      if (place && (term.length < 6 || token.length < 5 || (token[0] !== term[0] && token.length < 7))) continue;
+      const cap = place ? 1 : term.length >= 6 ? 2 : 1;
       const d = editDistanceCapped(token, term, cap);
       if (d < 1 || d > cap) continue;
       // A first-letter difference USED TO skip the term outright. Real misspellings alter an
@@ -451,7 +464,9 @@ export function findTermMisspellings(
       hits.set(token, {
         term: best.term,
         doubtful:
-          isDoubtfulHit(token, best.term, best.d) || isProperNounTerm(best.term, isRealWord),
+          isDoubtfulHit(token, best.term, best.d) ||
+          isProperNounTerm(best.term, isRealWord) ||
+          (alwaysDoubtful?.has(best.term) ?? false),
       });
     }
   }

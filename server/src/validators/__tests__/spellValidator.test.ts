@@ -40,6 +40,23 @@ describe('spellValidator', () => {
     const res = await spellValidator.run(ctx(slip));
     expect((res.findings ?? []).some((f) => f.code === 'SPELL_UNREADABLE')).toBe(false);
   });
+  // Master sheet item 13: correctly spelled places must never be flagged, but a misspelled
+  // one should be ("Bhopl", "1angalore").
+  describe('place names', () => {
+    const hits = async (text: string) =>
+      ((await spellValidator.run(ctx(text))).findings ?? []).map((f) => (f.data as { word: string }).word);
+
+    it('never flags a correctly spelled place, and never "corrects" one into a form word', async () => {
+      expect(await hits('Address: Bhopal, Madhya Pradesh. Branch Pune, Medchal, Bangalore')).toEqual([]);
+    });
+    it('flags a misspelled place for the reviewer, as doubtful', async () => {
+      const res = await spellValidator.run(ctx('Address: Bhopl, Madhya Pradesh 462001, 1angalore'));
+      const words = (res.findings ?? []).map((f) => (f.data as { word: string; expected: string }));
+      expect(words.map((w) => w.word).sort()).toEqual(['angalore', 'bhopl']);
+      expect((res.findings ?? []).every((f) => f.severity === 'WARNING')).toBe(true); // doubtful, never fails alone
+    });
+  });
+
   it('FAILS when several expected form terms are misspelled', async () => {
     const forged = 'Employee profesion enginear with retantion of 30 dayes on salary slip';
     expect((await spellValidator.run(ctx(forged))).status).toBe('FAILED');
