@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { ExportRow } from './claimService.js';
+import { ExportRow, FindingExportRow } from './claimService.js';
 import {
   OBSERVATION_CHECK_COLUMNS,
   OBSERVATION_EXPORT_HEADERS,
@@ -17,7 +17,7 @@ const HEADERS = [
   'QR',
   'Meta',
   'Intra-Claim',
-  'Full Scan',
+  'Missing Docs',
   'Documents',
   'Created',
   // Appended at the END, never inserted: columns 1-12 keep their positions, so anything
@@ -102,4 +102,33 @@ export function buildObservationWorkbook(rows: ObservationExportRow[]): ExcelJS.
     col.width = i === 9 ? 48 : i === 1 ? 20 : 16;
   });
   return wb;
+}
+
+/**
+ * Add the "Findings" sheet: every red flag and advisory, one row each, so a reviewer can
+ * filter, sort and paste findings without opening each claim. Shared by both exports.
+ */
+export function addFindingsSheet(wb: ExcelJS.Workbook, rows: FindingExportRow[]): void {
+  const ws = wb.addWorksheet('Findings');
+  ws.columns = [
+    { header: 'Claim ID', width: 22 },
+    { header: 'Check', width: 14 },
+    { header: 'Severity', width: 10 },
+    { header: 'Document', width: 34 },
+    { header: 'Page', width: 6 },
+    { header: 'Finding', width: 100 },
+  ];
+  ws.getRow(1).font = { bold: true };
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  for (const r of rows) {
+    ws.addRow([
+      sanitizeCell(r.claimId),
+      r.check,
+      r.severity,
+      sanitizeCell(r.document),
+      r.page ?? '',
+      // Messages quote document text, which is dealer-supplied and untrusted.
+      sanitizeCell(r.finding),
+    ]);
+  }
 }

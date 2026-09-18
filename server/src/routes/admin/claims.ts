@@ -7,7 +7,7 @@ import {
   parseObservationWorkbook,
   ObservationParseError,
 } from '../../services/observationImportService.js';
-import { buildObservationWorkbook } from '../../services/claimReportService.js';
+import { addFindingsSheet, buildObservationWorkbook } from '../../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../../lib/routeHelpers.js';
 import { recordClaimAudit, CHECK_KEYS } from '../../lib/bulkClaims.js';
 
@@ -162,13 +162,18 @@ router.get(
   validate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const rows = await getService(req).observationExportRows({
+      const filters = {
         subCategoryId: req.query.subCategoryId as string | undefined,
         search: req.query.search as string | undefined,
-        scope: 'ALL',
+        scope: 'ALL' as const,
         callerId: req.session!.userId,
-      });
-      const wb = buildObservationWorkbook(rows);
+      };
+      const wb = buildObservationWorkbook(await getService(req).observationExportRows(filters));
+      // Same claims as the observation rows, one row per finding.
+      addFindingsSheet(
+        wb,
+        await getService(req).findingsExportRows(filters, { observationsOnly: true })
+      );
       const buf = await wb.xlsx.writeBuffer();
       const date = new Date().toISOString().slice(0, 10);
       res.setHeader(

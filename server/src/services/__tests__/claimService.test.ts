@@ -37,6 +37,41 @@ describe('ClaimService', () => {
     return statusService.create({ name, isDefault: true }, adminId);
   }
 
+  it('findings export lists only the latest completed run, red flags and advisories only', async () => {
+    await seedDefaultStatus();
+    const c = await service.create({ subCategoryId, claimId: 'C-EXP' }, adminId);
+    const at = (min: number) => new Date(Date.now() - min * 60_000);
+    const run = async (status: 'COMPLETED' | 'QUEUED', createdAt: Date) =>
+      prisma.validationRun.create({ data: { claimId: c.id, trigger: 'MANUAL', status, createdAt } });
+    const finding = async (
+      runId: string,
+      validatorKey: string,
+      severity: 'ERROR' | 'WARNING' | 'INFO',
+      message: string
+    ) => {
+      const r = await prisma.validationResult.create({
+        data: { runId, claimId: c.id, validatorKey, status: 'FAILED' },
+      });
+      await prisma.validationFinding.create({
+        data: { resultId: r.id, claimId: c.id, validatorKey, severity, code: 'X', message, page: 2 },
+      });
+    };
+    const old = await run('COMPLETED', at(60));
+    await finding(old.id, 'SPELL', 'ERROR', 'stale finding from an older run');
+    const latest = await run('COMPLETED', at(10));
+    await finding(latest.id, 'SPELL', 'WARNING', 'Doubtful "enquire"');
+    await finding(latest.id, 'REDFLAG', 'ERROR', 'Impossible date');
+    await finding(latest.id, 'QR', 'INFO', 'QR code read from doc.pdf page 2.');
+    await finding(latest.id, 'META', 'ERROR', 'extraction note');
+    await run('QUEUED', at(1)); // not finished: must not replace the completed run
+
+    const rows = await service.findingsExportRows({ scope: 'ALL', callerId: adminId });
+    expect(rows).toEqual([
+      { claimId: 'C-EXP', check: 'Spell', severity: 'Advisory', document: '', page: 2, finding: 'Doubtful "enquire"' },
+      { claimId: 'C-EXP', check: 'Red Flags', severity: 'Red flag', document: '', page: 2, finding: 'Impossible date' },
+    ]);
+  });
+
   it('creates a claim and uses the SubCategory default status', async () => {
     const def = await seedDefaultStatus();
     const c = await service.create({ subCategoryId, claimId: 'C-1' }, adminId);

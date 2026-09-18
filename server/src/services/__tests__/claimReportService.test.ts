@@ -1,4 +1,5 @@
-import { buildClaimsWorkbook, buildObservationWorkbook } from '../claimReportService.js';
+import ExcelJS from 'exceljs';
+import { addFindingsSheet, buildClaimsWorkbook, buildObservationWorkbook } from '../claimReportService.js';
 import { ExportRow } from '../claimService.js';
 import { ObservationExportRow } from '../observationSheet.js';
 
@@ -71,8 +72,8 @@ describe('buildObservationWorkbook', () => {
     const ws = buildObservationWorkbook([obsRow]).getWorksheet('Observations')!;
     expect(ws.getRow(1).getCell(11).value).toBe('Failed Checks');
     expect(ws.getRow(1).getCell(12).value).toBe('Spell Check');
-    expect(ws.getRow(1).getCell(16).value).toBe('Full Scan');
-    expect(ws.getRow(2).getCell(11).value).toBe('Spell Check, Full Scan');
+    expect(ws.getRow(1).getCell(16).value).toBe('Missing Docs');
+    expect(ws.getRow(2).getCell(11).value).toBe('Spell Check, Missing Docs');
     expect(ws.getRow(2).getCell(12).value).toBe('FAILED');
     expect(ws.getRow(2).getCell(13).value).toBe('PASSED');
     expect(ws.getRow(2).getCell(16).value).toBe('FAILED');
@@ -123,5 +124,20 @@ describe('buildObservationWorkbook', () => {
     const ws = buildObservationWorkbook([malicious]).getWorksheet('Observations')!;
     expect(ws.getRow(2).getCell(3).value).toBe(`'=cmd|"/c calc"!A1`);
     expect(ws.getRow(2).getCell(10).value).toBe(`'+SUM(1,2)`);
+  });
+});
+
+describe('addFindingsSheet', () => {
+  it('writes one row per finding under a frozen header, neutralising formula text', () => {
+    const wb = new ExcelJS.Workbook();
+    addFindingsSheet(wb, [
+      { claimId: 'MZB1', check: 'Spell', severity: 'Red flag', document: 'slip.pdf', page: 5, finding: 'Misspelled "dayes"' },
+      { claimId: 'MZB1', check: 'Duplicate', severity: 'Red flag', document: 'slip.pdf', page: null, finding: '=HYPERLINK("x")' },
+    ]);
+    const ws = wb.getWorksheet('Findings')!;
+    expect(ws.getRow(1).values).toEqual([undefined, 'Claim ID', 'Check', 'Severity', 'Document', 'Page', 'Finding']);
+    expect(ws.getRow(2).getCell(6).value).toBe('Misspelled "dayes"');
+    expect(ws.getRow(3).getCell(5).value).toBe('');
+    expect(ws.getRow(3).getCell(6).value).toBe(`'=HYPERLINK("x")`);
   });
 });

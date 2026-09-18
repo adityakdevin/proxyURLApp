@@ -11,7 +11,7 @@ import { AppendRemarkInput, ClaimService, ClaimServiceError } from '../services/
 import claimDocumentsRoutes from './claimDocuments.js';
 import claimValidationRoutes from './claimValidation.js';
 import { ClaimRuleService } from '../services/claimRuleService.js';
-import { buildClaimsWorkbook } from '../services/claimReportService.js';
+import { addFindingsSheet, buildClaimsWorkbook } from '../services/claimReportService.js';
 import { validate, prismaOf, makeErrorHandler } from '../lib/routeHelpers.js';
 import { CHECK_KEYS } from '../lib/bulkClaims.js';
 import { ValidationStatus } from '@prisma/client';
@@ -116,7 +116,7 @@ router.get(
   validate,
   async (req: ScopedRequest, res: Response, next: NextFunction) => {
     try {
-      const rows = await getService(req).exportRows({
+      const filters = {
         // The export must describe the rows the reviewer is looking at, filters included.
         ...checkFilters(req.query),
         subCategoryId: req.query.subCategoryId as string | undefined,
@@ -129,8 +129,9 @@ router.get(
         search: req.query.search as string | undefined,
         scope: req.scope!,
         callerId: req.session!.userId,
-      });
-      const wb = buildClaimsWorkbook(rows);
+      };
+      const wb = buildClaimsWorkbook(await getService(req).exportRows(filters));
+      addFindingsSheet(wb, await getService(req).findingsExportRows(filters));
       const buf = await wb.xlsx.writeBuffer();
       const date = new Date().toISOString().slice(0, 10);
       res.setHeader(

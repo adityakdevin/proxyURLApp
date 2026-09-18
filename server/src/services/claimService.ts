@@ -84,6 +84,26 @@ export interface ListClaimsFilters {
   limit?: number;
 }
 
+/** One finding in the export's "Findings" sheet. */
+export interface FindingExportRow {
+  claimId: string;
+  check: string;
+  severity: string;
+  document: string;
+  page: number | null;
+  finding: string;
+}
+
+/** The check names reviewers see on screen. */
+const FINDING_CHECK_LABEL: Record<string, string> = {
+  SPELL: 'Spell',
+  QR: 'QR',
+  INTRA: 'Intra-Claim',
+  FULL: 'Missing Docs',
+  REDFLAG: 'Red Flags',
+  DUP: 'Duplicate',
+};
+
 export interface ExportRow {
   claimId: string;
   subCategory: string;
@@ -720,10 +740,10 @@ export class ClaimService {
    * the original 10-column layout, with S.No regenerated, the uploaded remarks
    * verbatim, and Status derived from the latest validation results.
    */
-  async observationExportRows(filters: ListClaimsFilters): Promise<ObservationExportRow[]> {
-    // Restrict to claims that actually carry observation data, so scan-discovered
-    // claims (which never went through an upload) don't pad the export with blanks.
-    const where: Prisma.ClaimWhereInput = {
+  /** Claims that actually carry observation data, so scan-discovered claims (which never
+   *  went through an upload) don't pad the observation export with blanks. */
+  private observationWhere(filters: ListClaimsFilters): Prisma.ClaimWhereInput {
+    return {
       ...this.buildWhere(filters),
       OR: [
         { observationRemarks: { not: null } },
@@ -735,6 +755,76 @@ export class ClaimService {
         { schemeType: { not: null } },
       ],
     };
+  }
+
+  /**
+   * One row per finding, for the "Findings" sheet of both exports (Master sheet item 11:
+   * "Dump of the Findings").
+   *
+   * Only each claim's LATEST COMPLETED run: older runs describe documents or rules that
+   * have since changed, and mixing them in would list findings the screen no longer shows.
+   * Red flags and advisories only — INFO notes ("QR code read from ... page 6") are not
+   * findings of a problem, and one per decoded code would bury the ones that are. META is
+   * the hidden text-extraction step and never reported.
+   */
+  async findingsExportRows(
+    filters: ListClaimsFilters,
+    opts: { observationsOnly?: boolean } = {}
+  ): Promise<FindingExportRow[]> {
+    const where = opts.observationsOnly ? this.observationWhere(filters) : this.buildWhere(filters);
+    const claims = await this.prisma.claim.findMany({
+      where,
+      select: { id: true, claimId: true },
+      orderBy: { claimId: 'asc' },
+      take: EXPORT_MAX,
+    });
+    if (claims.length === 0) return [];
+    const label = new Map(claims.map((c) => [c.id, c.claimId]));
+
+    const runs = await this.prisma.validationRun.findMany({
+      where: { claimId: { in: claims.map((c) => c.id) }, status: 'COMPLETED' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, claimId: true },
+    });
+    const latest = new Map<string, string>();
+    for (const r of runs) if (!latest.has(r.claimId)) latest.set(r.claimId, r.id);
+    if (latest.size === 0) return [];
+
+    const findings = await this.prisma.validationFinding.findMany({
+      where: {
+        result: { runId: { in: [...latest.values()] } },
+        severity: { in: ['ERROR', 'WARNING'] },
+        validatorKey: { not: 'META' },
+      },
+      select: {
+        claimId: true,
+        validatorKey: true,
+        severity: true,
+        message: true,
+        page: true,
+        document: { select: { fileName: true } },
+      },
+    });
+    const order = ['SPELL', 'QR', 'INTRA', 'FULL', 'REDFLAG', 'DUP'];
+    return findings
+      .map((f) => ({
+        claimId: label.get(f.claimId) ?? '',
+        check: FINDING_CHECK_LABEL[f.validatorKey] ?? f.validatorKey,
+        severity: f.severity === 'ERROR' ? 'Red flag' : 'Advisory',
+        document: f.document?.fileName ?? '',
+        page: f.page ?? null,
+        finding: f.message,
+        rank: order.indexOf(f.validatorKey),
+      }))
+      .sort(
+        (a, b) =>
+          a.claimId.localeCompare(b.claimId) || a.rank - b.rank || (a.page ?? 0) - (b.page ?? 0)
+      )
+      .map(({ rank: _rank, ...row }) => row);
+  }
+
+  async observationExportRows(filters: ListClaimsFilters): Promise<ObservationExportRow[]> {
+    const where = this.observationWhere(filters);
     const claims = await this.prisma.claim.findMany({
       where,
       select: {
