@@ -16,6 +16,7 @@ const row: ExportRow = {
   full: 'PASSED',
   redFlag: 'OK',
   duplicate: 'OK',
+  dataCompare: 'OK',
   qrOutcome: 'OK',
   documents: 2,
   created: '2026-05-31',
@@ -61,6 +62,7 @@ const obsRow: ObservationExportRow = {
     fullScanStatus: 'FAILED',
     redFlagStatus: 'PASSED',
     duplicateStatus: 'PASSED',
+    dataCompareStatus: 'PASSED',
   },
 };
 
@@ -91,6 +93,7 @@ describe('buildObservationWorkbook', () => {
         fullScanStatus: 'PASSED',
         redFlagStatus: 'PASSED',
         duplicateStatus: 'PASSED',
+        dataCompareStatus: 'PASSED',
       },
     };
     const ws = buildObservationWorkbook([clean]).getWorksheet('Observations')!;

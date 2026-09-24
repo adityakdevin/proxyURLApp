@@ -47,6 +47,7 @@ interface ClaimRow {
   fullScanStatus: string;
   redFlagStatus: string;
   duplicateStatus: string;
+  dataCompareStatus: string;
   /** Outstanding validation work, which the status columns above cannot express: they keep
    *  their previous values until a validator starts writing. Null when nothing is pending. */
   validationState: 'QUEUED' | 'RUNNING' | null;
@@ -376,6 +377,11 @@ export default function ClaimDashboard() {
       id: 'duplicate',
       header: 'Duplicate',
       cell: ({ row }) => <ValidationBadge status={row.original.duplicateStatus} />,
+    },
+    {
+      id: 'dataCompare',
+      header: 'Data Compare',
+      cell: ({ row }) => <ValidationBadge status={row.original.dataCompareStatus} />,
     },
     {
       id: 'created',

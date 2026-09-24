@@ -467,6 +467,7 @@ model Claim {
   fullScanStatus       ValidationStatus @default(PENDING) @map("full_scan_status")
   redFlagStatus        ValidationStatus @default(PENDING) @map("red_flag_status")
   duplicateStatus      ValidationStatus @default(PENDING) @map("duplicate_status")
+  dataCompareStatus    ValidationStatus @default(PENDING) @map("data_compare_status")
 
   // WHY the QR check landed where it did, not just pass/fail (reviewer request: "QR Code
   // verification - to be bifurcated as per outcome"). NO_QR | UNREADABLE | MISMATCH | OK.

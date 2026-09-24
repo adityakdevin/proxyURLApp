@@ -15,6 +15,7 @@ export const SELECTABLE_CHECKS = [
   { key: 'QR', label: 'QR' },
   { key: 'INTRA', label: 'Intra-Claim' },
   { key: 'FULL', label: 'Missing Docs' },
+  { key: 'COMPARE', label: 'Data Compare' },
   { key: 'REDFLAG', label: 'Red Flags' },
   { key: 'DUP', label: 'Duplicate' },
 ] as const;

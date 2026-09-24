@@ -52,6 +52,7 @@ export interface ValidationStatuses {
   fullScanStatus: string;
   redFlagStatus: string;
   duplicateStatus: string;
+  dataCompareStatus: string;
 }
 
 /** The per-claim checks, in export-column order: the sheet header and the
@@ -67,6 +68,7 @@ export const OBSERVATION_CHECK_COLUMNS: { header: string; field: keyof Validatio
   // most; Duplicate is new. Appended, so the existing column positions do not move.
   { header: 'Red Flags', field: 'redFlagStatus' },
   { header: 'Duplicate', field: 'duplicateStatus' },
+  { header: 'Data Compare', field: 'dataCompareStatus' },
 ];
 
 /** Header for the summary column: the failing checks, comma-joined. */
@@ -126,6 +128,7 @@ export function deriveForgeryStatus(v: ValidationStatuses): ForgeryStatus {
     v.fullScanStatus,
     v.redFlagStatus,
     v.duplicateStatus,
+    v.dataCompareStatus,
   ];
   return checks.some((s) => s === 'FAILED') ? 'Forged' : 'OK';
 }

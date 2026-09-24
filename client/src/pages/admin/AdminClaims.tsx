@@ -38,6 +38,7 @@ interface ClaimRow {
   spellCheckStatus: string;
   redFlagStatus: string;
   duplicateStatus: string;
+  dataCompareStatus: string;
   qrStatus: string;
   qrOutcome?: string | null;
   metaExtractionStatus: string;
@@ -317,6 +318,12 @@ export default function AdminClaims() {
       header: 'Duplicate',
       meta: { sortField: 'duplicateStatus' },
       cell: ({ row }) => <ValidationBadge status={row.original.duplicateStatus} />,
+    },
+    {
+      id: 'dataCompare',
+      header: 'Data Compare',
+      meta: { sortField: 'dataCompareStatus' },
+      cell: ({ row }) => <ValidationBadge status={row.original.dataCompareStatus} />,
     },
     {
       id: 'actions',

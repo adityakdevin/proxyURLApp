@@ -71,7 +71,7 @@ export function makeErrorHandler<E extends CodedError>(
  * other check reads. An empty result means "all", which is what every run did before the
  * tick-boxes existed.
  */
-export const SELECTABLE_CHECKS = ['SPELL', 'QR', 'INTRA', 'FULL', 'REDFLAG', 'DUP'] as const;
+export const SELECTABLE_CHECKS = ['SPELL', 'QR', 'INTRA', 'FULL', 'REDFLAG', 'DUP', 'COMPARE'] as const;
 
 export function pickChecks(raw: unknown): string[] | undefined {
   const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];

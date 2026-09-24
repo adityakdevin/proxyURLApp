@@ -6,9 +6,11 @@ import { qrValidator } from './qrValidator.js';
 import { redFlagValidator } from './redFlagValidator.js';
 import { fullValidator } from './fullValidator.js';
 import { dupValidator } from './dupValidator.js';
+import { compareValidator } from './compareValidator.js';
 
 // Order matters: META extracts text + per-page text first; SPELL + INTRA consume it;
-// QR is independent; REDFLAG classifies pages and runs format rules; FULL aggregates.
+// QR is independent; REDFLAG classifies pages and runs format rules; FULL aggregates;
+// COMPARE checks values between the documents.
 export const registry: Validator[] = [
   metaValidator,
   spellValidator,
@@ -16,5 +18,6 @@ export const registry: Validator[] = [
   qrValidator,
   redFlagValidator,
   fullValidator,
+  compareValidator,
   dupValidator,
 ];

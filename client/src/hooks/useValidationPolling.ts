@@ -39,6 +39,7 @@ export function hasRunningChecks(
     fullScanStatus?: string;
     redFlagStatus?: string;
     duplicateStatus?: string;
+    dataCompareStatus?: string;
   }[]
 ): boolean {
   return rows.some(
@@ -51,7 +52,8 @@ export function hasRunningChecks(
       r.intraClaimStatus === IN_FLIGHT ||
       r.fullScanStatus === IN_FLIGHT ||
       r.redFlagStatus === IN_FLIGHT ||
-      r.duplicateStatus === IN_FLIGHT
+      r.duplicateStatus === IN_FLIGHT ||
+      r.dataCompareStatus === IN_FLIGHT
   );
 }
 

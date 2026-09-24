@@ -40,11 +40,12 @@ const CHECK_LABEL: Record<string, string> = {
   FULL: 'Missing Docs',
   REDFLAG: 'Red Flags',
   DUP: 'Duplicate',
+  COMPARE: 'Data Compare',
 };
 
 // Switcher order, matching the cards on the claim page. 'ALL' drops the ?v= filter.
 // META is not here: it is the extraction step, not a verdict. It still runs.
-const CHECK_TABS = ['ALL', 'SPELL', 'QR', 'INTRA', 'FULL', 'REDFLAG', 'DUP'] as const;
+const CHECK_TABS = ['ALL', 'SPELL', 'QR', 'INTRA', 'FULL', 'COMPARE', 'REDFLAG', 'DUP'] as const;
 
 /**
  * Standalone document tab, opened by the claim page with window.open so a reviewer can keep

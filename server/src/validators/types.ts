@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { BBox } from '../lib/bbox.js';
 
-export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG' | 'DUP';
+export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG' | 'DUP' | 'COMPARE';
 export type ClaimColumn =
   | 'metaExtractionStatus'
   | 'spellCheckStatus'
@@ -9,7 +9,8 @@ export type ClaimColumn =
   | 'intraClaimStatus'
   | 'duplicateStatus'
   | 'fullScanStatus'
-  | 'redFlagStatus';
+  | 'redFlagStatus'
+  | 'dataCompareStatus';
 
 /** A normalized ([0..1], top-left origin) bounding box for a recognized word. */
 export interface WordBox {

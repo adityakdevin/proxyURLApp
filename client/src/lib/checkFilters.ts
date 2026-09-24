@@ -14,6 +14,7 @@ export const CHECK_FILTERS = [
   { key: 'qrStatus', label: 'QR' },
   { key: 'intraClaimStatus', label: 'Intra' },
   { key: 'fullScanStatus', label: 'Missing Docs' },
+  { key: 'dataCompareStatus', label: 'Data Compare' },
   { key: 'redFlagStatus', label: 'Red Flag' },
   { key: 'duplicateStatus', label: 'Duplicate' },
 ] as const;

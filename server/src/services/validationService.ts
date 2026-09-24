@@ -101,7 +101,7 @@ function disabledChecks(): Set<string> {
  * only the text comparison; REDFLAG reads PDF metadata and loses only its highlight boxes.
  * Both degrade with META off — neither is blinded by it.
  */
-const META_DEPENDENT = new Set(['SPELL', 'INTRA', 'FULL', 'DUP']);
+const META_DEPENDENT = new Set(['SPELL', 'INTRA', 'FULL', 'DUP', 'COMPARE']);
 
 const COLUMNS = [
   'metaExtractionStatus',
@@ -111,6 +111,7 @@ const COLUMNS = [
   'fullScanStatus',
   'redFlagStatus',
   'duplicateStatus',
+  'dataCompareStatus',
 ] as const;
 
 /**

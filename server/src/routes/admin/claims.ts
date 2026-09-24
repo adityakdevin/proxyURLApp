@@ -99,6 +99,7 @@ router.get(
         fullScanStatus: q.fullScanStatus as ValidationStatus | undefined,
         redFlagStatus: q.redFlagStatus as ValidationStatus | undefined,
         duplicateStatus: q.duplicateStatus as ValidationStatus | undefined,
+        dataCompareStatus: q.dataCompareStatus as ValidationStatus | undefined,
         sortBy: q.sortBy,
         sortOrder: q.sortOrder as 'asc' | 'desc' | undefined,
         scope: 'ALL',

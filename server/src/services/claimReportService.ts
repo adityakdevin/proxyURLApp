@@ -26,6 +26,7 @@ const HEADERS = [
   'Red Flags',
   'Duplicate',
   'QR Outcome',
+  'Data Compare',
 ];
 
 /**
@@ -60,6 +61,7 @@ export function buildClaimsWorkbook(rows: ExportRow[]): ExcelJS.Workbook {
       r.redFlag,
       r.duplicate,
       r.qrOutcome,
+      r.dataCompare,
     ]);
   }
   ws.columns.forEach((col) => {

@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { fullValidator } from '../fullValidator.js';
 import { intraValidator } from '../intraValidator.js';
+import { compareValidator } from '../compareValidator.js';
 import { ValidatorContext, ValidatorDoc } from '../types.js';
 import {
   getTestPrisma,
@@ -92,10 +93,7 @@ describe('FULL + INTRA validators', () => {
     expect((await fullValidator.run(ctxFor(prisma, claim, both, new Map()))).status).toBe('PASSED');
   });
 
-  it('reports a cross-document mismatch, and fails on it even when the documents are all there', async () => {
-    // The comparison used to run under REDFLAG, so the tab named after comparing documents
-    // did not compare them. Red Flags keeps the format rules; a value that disagrees
-    // BETWEEN documents belongs here, next to the question of which documents are present.
+  it('Missing Docs no longer carries the cross-document comparison', async () => {
     const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
     const docs = [doc({ id: 'd1', documentTypeId: typeAId }), doc({ id: 'd2', documentTypeId: typeBId })];
     const shared = new Map([
@@ -103,15 +101,26 @@ describe('FULL + INTRA validators', () => {
       ['d2', 'Policy No 9 Insured X Premium 1 Sum Insured 2\nChassis Number: MAT9999999999'],
     ]);
     const out = await fullValidator.run(ctxFor(prisma, claim, docs, shared));
+    expect(out.status).toBe('PASSED');
+    expect(out.findings!.some((f) => f.code.startsWith('CROSS_'))).toBe(false);
+  });
+
+  it('Data Compare fails on a value that disagrees between documents', async () => {
+    // It lived under FULL, so it rendered on the "Missing Docs" card where the reviewers
+    // could not find it (22 Sep review). Now its own check.
+    const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
+    const docs = [doc({ id: 'd1' }), doc({ id: 'd2' })];
+    const shared = new Map([
+      ['d1', 'TAX INVOICE Invoice No 1\nChassis No: MAT1234567890'],
+      ['d2', 'Policy No 9 Insured X Premium 1 Sum Insured 2\nChassis Number: MAT9999999999'],
+    ]);
+    const out = await compareValidator.run(ctxFor(prisma, claim, docs, shared));
 
     expect(out.status).toBe('FAILED');
-    expect(out.summary).toContain('cross-document mismatch');
+    expect(out.summary).toContain('mismatch');
     const mm = out.findings!.find((f) => f.code === 'CROSS_CHASSIS_MISMATCH');
     expect(mm).toBeDefined();
-    // The finding names the document it came from, unlike a missing-type finding which is
-    // claim-level and carries no document at all.
     expect(mm!.documentId).toBeTruthy();
-    expect(out.findings!.some((f) => f.code === 'FULL_MISSING_TYPE')).toBe(false);
   });
 
   it('INTRA passes when claimId appears in document text', async () => {
