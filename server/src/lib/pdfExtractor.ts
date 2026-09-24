@@ -431,7 +431,10 @@ export async function pdfPageTextStats(
   try {
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
-    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false }).promise;
+    // verbosity 0: the operator list makes pdf.js try to load every font, and each one it
+    // cannot ("standardFontDataUrl") logs a warning — six per PDF in production. Only paint
+    // and text operators are read here, never glyphs, so the fonts are irrelevant.
+    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false, verbosity: 0 }).promise;
     // Every way a page paints a raster — a monochrome scan arrives as an image MASK — and
     // every text-show operator, including the ' and " shorthands.
     const IMAGE_OPS = new Set([
