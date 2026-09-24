@@ -2,6 +2,8 @@ import {
   checkPan,
   checkGst,
   checkDl,
+  checkNominee,
+  checkEditableText,
   checkUdyam,
   checkPassportNumber,
   checkPassportFileNo,
@@ -334,5 +336,37 @@ describe('checkTimestamps (created vs modified)', () => {
     expect(checkTimestamps(CREATED, undefined)).toEqual([]);
     expect(checkTimestamps(CREATED, '')).toEqual([]);
     expect(checkTimestamps(CREATED, 'not a date')).toEqual([]);
+  });
+});
+
+describe('Nominee', () => {
+  const RELIANCE = 'Nominee Details\nName of Nominee Age Relationship with Insured Name of Appointee Relationship with Nominee\n';
+  const TATA = 'Name of the Nominee Nominee Age Name of Appointee (If Nominee is Minor) Relationship with Nominee ';
+  it('passes a named nominee in both layouts', () => {
+    expect(checkNominee(RELIANCE + 'BIKASH AGARWAL Eo SPOUSE NA NA')).toEqual([]);
+    expect(checkNominee(TATA + 'Mahendrabhai Patel 66 NA Father Registered office')).toEqual([]);
+  });
+  it('flags a nominee with only a prefix but age and relation filled', () => {
+    expect(codes(checkNominee(RELIANCE + 'Mrs. 42 SPOUSE NA NA'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
+    expect(codes(checkNominee(TATA + '66 NA Father Registered office'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
+    expect(codes(checkNominee(RELIANCE + 'NA 42 SPOUSE NA NA'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
+  });
+  it('stays silent when the whole nominee row is empty', () => {
+    expect(checkNominee(RELIANCE + 'NA NA NA NA')).toEqual([]);
+  });
+});
+
+describe('Editable text in a scanned PDF', () => {
+  const scan = { image: true, visibleText: false };
+  const typed = { image: true, visibleText: true };
+  it('notes pages with real text inside an otherwise-scanned bundle', () => {
+    const f = checkEditableText([scan, typed, typed], 'claim.pdf');
+    expect(codes(f)).toEqual(['REDFLAG_EDITABLE_TEXT']);
+    expect(f[0].severity).toBe('WARNING');
+    expect(f[0].message).toBe('Editable doc - Text insertable in "claim.pdf" (pages 2, 3)');
+  });
+  it('ignores a wholly digital PDF and a wholly scanned one', () => {
+    expect(checkEditableText([typed, typed], 'a.pdf')).toEqual([]);
+    expect(checkEditableText([scan, scan], 'a.pdf')).toEqual([]);
   });
 });
