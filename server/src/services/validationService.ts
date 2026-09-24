@@ -280,7 +280,12 @@ export class ValidationService {
       }));
 
       const ctx: ValidatorContext = {
-        claim: { id: claim.id, claimId: claim.claimId, subCategoryId: claim.subCategoryId },
+        claim: {
+          id: claim.id,
+          claimId: claim.claimId,
+          subCategoryId: claim.subCategoryId,
+          customerName: claim.customerName,
+        },
         documents,
         prisma: this.prisma,
         ocr,

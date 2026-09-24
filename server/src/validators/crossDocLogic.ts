@@ -383,8 +383,10 @@ const NON_PERSON_NAME_LABEL = new Set([
 // The `(?:'?s)?` after the label word catches the possessive form — without it
 // "Nominee's Name: X" captured a bare "s" as the label, which is in no blocklist, so
 // the nominee leaked through as the customer's name.
+// "Bill To" is how Kia dealer invoices label the customer ("Bill To : JAGJEET SINGH"); without
+// it no name was read off those invoices, so the DMS-vs-invoice check had nothing to compare.
 const NAME_RE =
-  /(?:([A-Za-z]+)(?:'?s)?\s+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
+  /(?:(?:([A-Za-z]+)(?:'?s)?\s+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?|\bbill(?:ed)?\s+to)\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
 
 /** Customer/employee names, with non-person "X Name" labels and relation names removed. */
 export function extractNames(text: string): string[] {
@@ -631,4 +633,54 @@ export function crossDocFieldFindings(pages: CrossPage[]): FindingInput[] {
   }
 
   return findings;
+}
+
+/** Customer names read off the claim's pages of one document type. */
+function namesOn(pages: CrossPage[], type: DocTypeCode): { value: string; documentId: string; page: number | null }[] {
+  return pages
+    .filter((p) => pageType(p) === type)
+    .flatMap((p) => extractField('NAME', p.text).map((value) => ({ value, documentId: p.documentId, page: p.page })));
+}
+
+/**
+ * Data Compare row 1, "1st Chk to apply": the customer name in the DMS upload (the imported
+ * observation sheet) against the invoice. Nothing to say when either side is absent.
+ */
+export function dmsNameFindings(dmsName: string | null | undefined, pages: CrossPage[]): FindingInput[] {
+  if (!dmsName?.trim()) return [];
+  return namesOn(pages, 'INVOICE')
+    .filter((n) => !nameMatches(dmsName, n.value))
+    .slice(0, 1)
+    .map((n) => ({
+      documentId: n.documentId,
+      code: 'CROSS_DMS_NAME_MISMATCH',
+      severity: 'ERROR' as const,
+      message: `Customer name "${n.value}" on the invoice does not match "${dmsName.trim()}" in the DMS upload.`,
+      page: n.page,
+      data: { field: 'NAME', expected: dmsName.trim(), actual: n.value, expectedType: 'DMS', actualType: 'INVOICE' },
+    }));
+}
+
+/**
+ * Data Compare, Invoice vs Old car RC: the sheet asks for the outcome itself, "Same Name" or
+ * "Diff Name". A difference is already a red flag through the claim-wide name check, so this
+ * is a note stating the result either way.
+ */
+export function invoiceRcNameResult(pages: CrossPage[]): FindingInput[] {
+  const inv = namesOn(pages, 'INVOICE')[0];
+  const rc = namesOn(pages, 'RC')[0];
+  if (!inv || !rc) return [];
+  const same = nameMatches(inv.value, rc.value);
+  return [
+    {
+      documentId: rc.documentId,
+      code: same ? 'CROSS_INVOICE_RC_SAME_NAME' : 'CROSS_INVOICE_RC_DIFF_NAME',
+      severity: 'INFO',
+      message: same
+        ? `Invoice vs RC customer name: Same Name ("${inv.value}").`
+        : `Invoice vs RC customer name: Diff Name ("${inv.value}" vs "${rc.value}").`,
+      page: rc.page,
+      data: { invoice: inv.value, rc: rc.value },
+    },
+  ];
 }

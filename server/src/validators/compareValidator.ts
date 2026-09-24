@@ -1,6 +1,6 @@
 import { Validator } from './types.js';
 import { segment } from './segment.js';
-import { crossDocFieldFindings } from './crossDocLogic.js';
+import { crossDocFieldFindings, dmsNameFindings, invoiceRcNameResult } from './crossDocLogic.js';
 
 /**
  * Data Compare — the client sheet's "Data Compare" tab: a value that disagrees BETWEEN the
@@ -14,16 +14,21 @@ export const compareValidator: Validator = {
   key: 'COMPARE',
   column: 'dataCompareStatus',
   async run(ctx) {
-    const findings = crossDocFieldFindings(
-      segment(ctx).map((i) => ({
-        documentId: i.documentId,
-        page: i.page,
-        text: i.text,
-        govtCode: i.govtCode,
-      }))
-    );
+    const pages = segment(ctx).map((i) => ({
+      documentId: i.documentId,
+      page: i.page,
+      text: i.text,
+      govtCode: i.govtCode,
+    }));
+    const rcResult = invoiceRcNameResult(pages);
+    const findings = [
+      // Sheet row 1, "1st Chk to apply" — first in the list too.
+      ...dmsNameFindings(ctx.claim.customerName, pages),
+      ...crossDocFieldFindings(pages),
+      ...rcResult,
+    ];
     const mismatches = findings.filter((f) => f.severity === 'ERROR').length;
-    const advisories = findings.length - mismatches;
+    const advisories = findings.filter((f) => f.severity === 'WARNING').length;
 
     const summary =
       mismatches > 0
@@ -31,6 +36,9 @@ export const compareValidator: Validator = {
         : advisories > 0
         ? `No mismatches; ${advisories} advisory note(s).`
         : 'All compared values agree across documents.';
-    return { status: mismatches > 0 ? 'FAILED' : 'PASSED', summary, findings };
+    // The sheet wants the Invoice vs RC outcome stated ("Same Name" / "Diff Name"), so it sits
+    // on the card itself, not only in the findings.
+    const rcNote = rcResult[0] ? ` ${rcResult[0].message}` : '';
+    return { status: mismatches > 0 ? 'FAILED' : 'PASSED', summary: summary + rcNote, findings };
   },
 };
