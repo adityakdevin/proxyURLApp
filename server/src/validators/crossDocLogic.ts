@@ -377,6 +377,10 @@ const NON_PERSON_NAME_LABEL = new Set([
   // this the dealership was reported as the insured — the one name on the page that is
   // certainly NOT the customer.
   'misp',
+  // The broker's "Designated Person Name : GAURAV KUMAR" on Go Digit / Reliance schedules
+  // (also "Contact Person Name"): an intermediary's staff member, never the customer. It
+  // surfaced once "Bill To" made the invoice's name readable (MZBB1811LSN014084).
+  'person',
 ]);
 
 // Group 1 = the single word immediately before "Name" (if any); group 2 = the value.
@@ -662,9 +666,10 @@ export function dmsNameFindings(dmsName: string | null | undefined, pages: Cross
 }
 
 /**
- * Data Compare, Invoice vs Old car RC: the sheet asks for the outcome itself, "Same Name" or
- * "Diff Name". A difference is already a red flag through the claim-wide name check, so this
- * is a note stating the result either way.
+ * Data Compare, Invoice vs Old car RC: "If details are different with both documents - Red
+ * Flag — Same Name / Diff Name". Diff Name IS the red flag for this pair (compareValidator
+ * drops the claim-wide name check's line for it, so it is not reported twice); Same Name is
+ * a note stating the result.
  */
 export function invoiceRcNameResult(pages: CrossPage[]): FindingInput[] {
   const inv = namesOn(pages, 'INVOICE')[0];
@@ -675,7 +680,7 @@ export function invoiceRcNameResult(pages: CrossPage[]): FindingInput[] {
     {
       documentId: rc.documentId,
       code: same ? 'CROSS_INVOICE_RC_SAME_NAME' : 'CROSS_INVOICE_RC_DIFF_NAME',
-      severity: 'INFO',
+      severity: same ? 'INFO' : 'ERROR',
       message: same
         ? `Invoice vs RC customer name: Same Name ("${inv.value}").`
         : `Invoice vs RC customer name: Diff Name ("${inv.value}" vs "${rc.value}").`,
