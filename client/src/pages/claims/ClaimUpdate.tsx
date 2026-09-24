@@ -427,6 +427,10 @@ export default function ClaimUpdate() {
       `doc-${documentId}-${validatorKey ?? 'all'}`
     );
 
+  // Hidden (decision of 2026-09-24): six of its ten rows restate the check badges above, and it
+  // cannot express Red Flags / Duplicate / Data Compare. Evaluation, routes and the admin page
+  // stay in place. Flip this to true to show the panel again — nothing else needs changing.
+  const SHOW_CLAIM_RULES = false;
   const [rules, setRules] = useState<RuleEval[]>([]);
   const [rulesPassed, setRulesPassed] = useState({ passed: 0, total: 0 });
 
@@ -443,7 +447,7 @@ export default function ClaimUpdate() {
   };
 
   useEffect(() => {
-    if (claim) fetchRules();
+    if (claim && SHOW_CLAIM_RULES) fetchRules();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claim?.id, valRun?.status]);
 
@@ -753,6 +757,7 @@ export default function ClaimUpdate() {
         </div>
       </div>
 
+      {SHOW_CLAIM_RULES && (
       <div className="bg-white border rounded-md p-6 mb-6">
         <h2 className="text-lg font-semibold mb-4">
           Claim Rules{' '}
@@ -782,6 +787,7 @@ export default function ClaimUpdate() {
           </div>
         )}
       </div>
+      )}
 
       <div className="bg-white border rounded-md p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
