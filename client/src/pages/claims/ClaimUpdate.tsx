@@ -387,14 +387,13 @@ export default function ClaimUpdate() {
 
   const resultFor = (key: ValResult['validatorKey']) => valResults.find((r) => r.validatorKey === key);
 
-  // Badge click → toggle the matching validator card below (scroll into view on open).
+  // Badge click → bring the matching validator card below into view.
   const openCard = (key: ValResult['validatorKey']) => {
     const el = document.getElementById(`val-card-${key}`);
     if (!el) return;
-    if (el instanceof HTMLDetailsElement) {
-      el.open = !el.open;
-      if (!el.open) return;
-    }
+    // Cards start open, so a badge click brings its card into view (reopening it if the
+    // reviewer folded it) rather than toggling it shut.
+    if (el instanceof HTMLDetailsElement) el.open = true;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
@@ -632,6 +631,9 @@ export default function ClaimUpdate() {
                 // columns for its document list, which pushed the card after it into a row
                 // of its own — a full-width card, then a half-width one against empty space.
                 className={`group ${cardClass} border rounded-md`}
+                // Open by default (22 Sep review): reviewers want every result visible
+                // without clicking each card. The chevron still folds one away.
+                open
               >
                 <summary className="flex cursor-pointer select-none items-start justify-between gap-2 p-6 list-none [&::-webkit-details-marker]:hidden">
                   <div>{header}</div>
