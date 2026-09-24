@@ -61,7 +61,13 @@ export interface ValidatorDoc {
 }
 
 export interface ValidatorContext {
-  claim: { id: string; claimId: string; subCategoryId: string };
+  claim: {
+    id: string;
+    claimId: string;
+    subCategoryId: string;
+    /** Customer name from the DMS upload (the observation sheet), if imported. */
+    customerName?: string | null;
+  };
   documents: ValidatorDoc[];
   prisma: PrismaClient;
   ocr: OcrPort;
