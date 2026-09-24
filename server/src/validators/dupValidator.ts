@@ -26,9 +26,11 @@ const isIdentifier = (f: DupField): f is IdentifierField =>
 /** The "Unique Data Points" the requirement names, with how hard each one counts.
  *
  *  A shared reference number is near-conclusive: two claims quoting one receipt or account
- *  number is not a coincidence. A shared name, birth date or address is NOT — families
- *  share addresses, common names repeat, and a genuine repeat customer is not fraud. Those
- *  are reported for a reviewer's eye and cannot fail a claim on their own.
+ *  number is not a coincidence. A shared name or birth date is NOT — common names repeat,
+ *  and a genuine repeat customer is not fraud. Those are reported for a reviewer's eye and
+ *  cannot fail a claim on their own. Address is hard despite families sharing one: the
+ *  Duplicacy sheet says "If Address is Same in 2 different Case Ids, then Redflag"
+ *  (decision of 2026-09-24).
  */
 const DUP_FIELDS: { field: DupField; hard: boolean }[] = [
   { field: 'ACCOUNT_NO', hard: true },
@@ -39,7 +41,7 @@ const DUP_FIELDS: { field: DupField; hard: boolean }[] = [
   { field: 'NAME', hard: false },
   { field: 'RELATION_FATHER', hard: false },
   { field: 'DOB', hard: false },
-  { field: 'ADDRESS', hard: false },
+  { field: 'ADDRESS', hard: true },
   // The rest of the client's Duplicacy sheet (policy, PAN, Aadhaar, DL, passport, voter ID,
   // GSTIN, Udyam, FSSAI, PF, UAN, GPF, certificate and ration-card numbers). The reviewers
   // asked for every one to count as a red flag; dupIdentifiers only reads each where it can
@@ -212,13 +214,13 @@ export const dupValidator: Validator = {
       };
     }
     return {
-      // Only a shared reference number fails the claim. A shared name or address is
-      // reported and left to the reviewer — deriveCheckStatus turns warning-only into
-      // DOUBTFUL rather than a pass.
+      // Only a hard data point (a reference number, or an address) fails the claim. A shared
+      // name or birth date is reported and left to the reviewer — deriveCheckStatus turns
+      // warning-only into DOUBTFUL rather than a pass.
       status: hardHits > 0 ? ('FAILED' as const) : ('PASSED' as const),
       summary:
         `${findings.length} duplicate data point(s) shared with other claims` +
-        `${hardHits > 0 ? `, ${hardHits} of them a reference number` : ''}.`,
+        `${hardHits > 0 ? `, ${hardHits} of them a red flag` : ''}.`,
       findings,
     };
   },
