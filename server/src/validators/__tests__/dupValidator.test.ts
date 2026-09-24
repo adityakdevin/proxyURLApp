@@ -113,5 +113,6 @@ describe('dupValidator — Duplicacy sheet numbers', () => {
     });
     expect(outcome.status).toBe('FAILED');
     expect(outcome.findings!.find((x) => x.code === 'DUP_ADDRESS')!.severity).toBe('ERROR');
+    expect(outcome.summary).toContain('1 of them a red flag'); // not "a reference number"
   });
 });

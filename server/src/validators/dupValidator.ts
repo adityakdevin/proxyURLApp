@@ -214,13 +214,13 @@ export const dupValidator: Validator = {
       };
     }
     return {
-      // Only a shared reference number fails the claim. A shared name or address is
-      // reported and left to the reviewer — deriveCheckStatus turns warning-only into
-      // DOUBTFUL rather than a pass.
+      // Only a hard data point (a reference number, or an address) fails the claim. A shared
+      // name or birth date is reported and left to the reviewer — deriveCheckStatus turns
+      // warning-only into DOUBTFUL rather than a pass.
       status: hardHits > 0 ? ('FAILED' as const) : ('PASSED' as const),
       summary:
         `${findings.length} duplicate data point(s) shared with other claims` +
-        `${hardHits > 0 ? `, ${hardHits} of them a reference number` : ''}.`,
+        `${hardHits > 0 ? `, ${hardHits} of them a red flag` : ''}.`,
       findings,
     };
   },
