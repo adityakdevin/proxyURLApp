@@ -11,7 +11,7 @@ import {
   RotateCw,
 } from 'lucide-react';
 import { DocumentViewerPanel } from '@/components/claims/DocumentViewer';
-import { FieldPanes } from '@/components/claims/FieldPanes';
+import { FieldPanes, byPriority } from '@/components/claims/FieldPanes';
 import { QrEntry } from '@/components/claims/QrDataList';
 import { api } from '@/lib/api';
 import { Finding } from '@/lib/claimTypes';
@@ -125,7 +125,8 @@ export default function DocumentView() {
     () =>
       results
         .filter((r) => !check || r.validatorKey === check)
-        .flatMap((r) => (r.findings ?? []).filter((f) => f.documentId === documentId)),
+        .flatMap((r) => (r.findings ?? []).filter((f) => f.documentId === documentId))
+        .sort(byPriority),
     [results, check, documentId]
   );
 

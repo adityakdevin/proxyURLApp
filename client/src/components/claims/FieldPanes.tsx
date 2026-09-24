@@ -47,6 +47,20 @@ function CopyButton({ text, what }: { text: string; what: string }) {
   );
 }
 
+/** Red flags first (the client's ask, 22 Sep review), then advisories, then INFO notes that
+ *  only record a check ran — never shown as an advisory. */
+const severityRank = (f: Finding) => (f.severity === 'ERROR' ? 0 : f.severity === 'WARNING' ? 1 : 2);
+const SECTION = [
+  { label: 'Red flag', tone: 'text-red-600' },
+  { label: 'Advisory', tone: 'text-amber-600' },
+  { label: 'Note', tone: 'text-gray-500' },
+];
+
+/** Findings in the order the panel lists them: severity, then page, un-paged last. Sort once
+ *  at the source so the badge numbers, the finding opened first and the list all agree. */
+export const byPriority = (a: Finding, b: Finding) =>
+  severityRank(a) - severityRank(b) || (a.page ?? Infinity) - (b.page ?? Infinity);
+
 /** Severity buckets the filter offers. ERROR and WARNING are what the validators emit;
  *  INFO findings are notes that a check ran and sit under "All". */
 type SevFilter = 'ALL' | 'ERROR' | 'WARNING';
@@ -83,6 +97,8 @@ function FindingsCard({
   const errors = findings.filter((f) => f.severity === 'ERROR').length;
   const warnings = findings.filter((f) => f.severity === 'WARNING').length;
 
+  // `findings` arrive in priority order (byPriority): red flags, advisories, notes, page
+  // order within each. The stepper walks this same order.
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return findings.filter(
@@ -90,17 +106,19 @@ function FindingsCard({
     );
   }, [findings, sev, query]);
 
-  // Page groups, in page order, with un-paged findings last under "Document".
+  // Page groups, split by severity so a page with both appears once in each section.
   const byPage = useMemo(() => {
-    const m = new Map<number | null, Finding[]>();
+    const groups: { rank: number; page: number | null; list: Finding[] }[] = [];
     for (const f of visible) {
-      const k = f.page ?? null;
-      const list = m.get(k);
-      if (list) list.push(f);
-      else m.set(k, [f]);
+      const rank = severityRank(f);
+      const page = f.page ?? null;
+      const last = groups[groups.length - 1];
+      if (last && last.rank === rank && last.page === page) last.list.push(f);
+      else groups.push({ rank, page, list: [f] });
     }
-    return [...m.entries()].sort((a, b) => (a[0] ?? Infinity) - (b[0] ?? Infinity));
+    return groups;
   }, [visible]);
+  const mixed = new Set(byPage.map((g) => g.rank)).size > 1;
 
   // Stepper: walk the visible list in order, wrapping at both ends.
   const step = (delta: number) => {
@@ -203,8 +221,8 @@ function FindingsCard({
       ) : (
         // No horizontal padding: rows run edge to edge so a selected row fills the card.
         <div className={`overflow-auto pb-1 ${capHeight ? 'max-h-[26rem]' : ''}`}>
-          {byPage.map(([page, list]) => (
-            <div key={page ?? 'none'} className="group/page">
+          {byPage.map(({ rank, page, list }) => (
+            <div key={`${rank}:${page ?? 'none'}`} className="group/page">
               {/* Sticky, so the reviewer always knows which page the rows below are on.
                   Also the fastest way to get the document to that page. */}
               <button
@@ -218,6 +236,8 @@ function FindingsCard({
                     : 'cursor-default text-gray-400'
                 }`}
               >
+                {/* Only label the half when both halves are present; otherwise it is noise. */}
+                {mixed && <span className={SECTION[rank].tone}>{SECTION[rank].label} ·</span>}
                 {page ? `Page ${page}` : 'Document'}
                 <span className="text-gray-300">·</span>
                 <span className="tabular-nums">{list.length}</span>
