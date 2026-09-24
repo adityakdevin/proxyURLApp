@@ -145,9 +145,15 @@ export function checkDl(text: string, page: number | null = null): RedFlagFindin
   if (DL_RE.test(cand)) return [];
   if (ocrAdjacent(cand, DL_RE)) return [warn('REDFLAG_DL_UNREADABLE', `Possible DL number "${cand}" too OCR-garbled to verify`, page)];
   // The sheet's "16 digits" counts the space printed after the RTO code: "MH14 20110062821"
-  // (decision of 2026-09-24). Separators are stripped before the check, so both forms pass.
+  // (decision of 2026-09-24). `cand` has its separators stripped, so the message states the
+  // rule it is actually checked against and shows the printed 16-character form beside it.
   return [
-    err('REDFLAG_DL_FORMAT', `DL number "${cand}" is not 16 characters (e.g. "MH14 20110062821")`, page, { dl: cand }),
+    err(
+      'REDFLAG_DL_FORMAT',
+      `DL number "${cand}" is not 2 letters + 13 digits (printed as 16 with the space, e.g. "MH14 20110062821")`,
+      page,
+      { dl: cand }
+    ),
   ];
 }
 
