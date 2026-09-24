@@ -159,6 +159,7 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_EDITOR_WATERMARK: 'Editor watermark',
   REDFLAG_TIMESTAMP_ORDER: 'Modified before created',
   REDFLAG_MODIFIED_AFTER_CREATE: 'Modified after creation',
+  REDFLAG_NOMINEE_NO_NAME: 'Nominee without name',
   REDFLAG_BAD_DATE: 'Impossible date',
 };
 
