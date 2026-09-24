@@ -322,7 +322,8 @@ export function checkNominee(text: string, page: number | null = null): RedFlagF
       details = true;
       break;
     }
-    if (/^na$/i.test(w)) break;
+    // "NA" is a placeholder, not a name: "NA 42 SPOUSE" is still a nominee without one.
+    if (/^na$/i.test(w)) continue;
     if (!NAME_PREFIX_RE.test(w)) name.push(w);
   }
   if (!details || name.length > 0) return [];

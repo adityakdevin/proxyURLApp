@@ -346,6 +346,7 @@ describe('Nominee', () => {
   it('flags a nominee with only a prefix but age and relation filled', () => {
     expect(codes(checkNominee(RELIANCE + 'Mrs. 42 SPOUSE NA NA'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
     expect(codes(checkNominee(TATA + '66 NA Father Registered office'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
+    expect(codes(checkNominee(RELIANCE + 'NA 42 SPOUSE NA NA'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
   });
   it('stays silent when the whole nominee row is empty', () => {
     expect(checkNominee(RELIANCE + 'NA NA NA NA')).toEqual([]);

@@ -432,16 +432,38 @@ export async function pdfPageTextStats(
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
     const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false }).promise;
+    // Every way a page paints a raster — a monochrome scan arrives as an image MASK — and
+    // every text-show operator, including the ' and " shorthands.
+    const IMAGE_OPS = new Set([
+      OPS.paintImageXObject,
+      OPS.paintInlineImageXObject,
+      OPS.paintInlineImageXObjectGroup,
+      OPS.paintImageXObjectRepeat,
+      OPS.paintImageMaskXObject,
+      OPS.paintImageMaskXObjectGroup,
+      OPS.paintImageMaskXObjectRepeat,
+    ]);
+    const TEXT_OPS = new Set([
+      OPS.showText,
+      OPS.showSpacedText,
+      OPS.nextLineShowText,
+      OPS.nextLineSetSpacingShowText,
+    ]);
     try {
       for (let n = 1; n <= Math.min(doc.numPages, maxPages); n++) {
         const ops = await (await doc.getPage(n)).getOperatorList();
+        // The render mode is graphics state: an OCR layer set to invisible inside q/Q is
+        // visible again after the Q, so track it on the same save/restore stack.
         let mode = 0;
+        const saved: number[] = [];
         const stat = { image: false, visibleText: false };
         for (let i = 0; i < ops.fnArray.length; i++) {
           const fn = ops.fnArray[i];
-          if (fn === OPS.setTextRenderingMode) mode = ops.argsArray[i][0];
-          else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject) stat.image = true;
-          else if ((fn === OPS.showText || fn === OPS.showSpacedText) && mode !== 3) stat.visibleText = true;
+          if (fn === OPS.save) saved.push(mode);
+          else if (fn === OPS.restore) mode = saved.pop() ?? 0;
+          else if (fn === OPS.setTextRenderingMode) mode = ops.argsArray[i][0];
+          else if (IMAGE_OPS.has(fn)) stat.image = true;
+          else if (TEXT_OPS.has(fn) && mode !== 3) stat.visibleText = true;
         }
         out.push(stat);
       }
