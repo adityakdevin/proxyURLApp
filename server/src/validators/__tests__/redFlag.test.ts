@@ -210,3 +210,14 @@ describe('red flags no longer carry the cross-document comparison', () => {
     expect(out.findings!.some((f) => f.code.startsWith('CROSS_'))).toBe(false);
   });
 });
+
+describe('red flag summary', () => {
+  it('counts each rule, not just the total ("Red Flag and its Count")', async () => {
+    const c = ctx({
+      pageTexts: new Map([['d1', ['GSTIN 27ABCPD1234E1X5', 'Date: 31/04/2026 and 30/02/2026']]]),
+    });
+    const out = await redFlagValidator.run(c);
+    expect(out.status).toBe('FAILED');
+    expect(out.summary).toMatch(/^3 red flag\(s\) found: GST format ×1, Impossible date ×2/);
+  });
+});

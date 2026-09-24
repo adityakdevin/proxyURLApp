@@ -138,6 +138,28 @@ const makeToFinding =
     };
   };
 
+/** Reviewer-facing rule names for the per-rule counts in the card summary. */
+const RULE_LABEL: Record<string, string> = {
+  REDFLAG_PAN_FORMAT: 'PAN format',
+  REDFLAG_PAN_CATEGORY: 'PAN category',
+  REDFLAG_AADHAAR_FORMAT: 'Aadhaar format',
+  REDFLAG_AADHAAR_MISMATCH: 'Aadhaar front/back',
+  REDFLAG_VID_FORMAT: 'VID format',
+  REDFLAG_GST_FORMAT: 'GST format',
+  REDFLAG_DL_FORMAT: 'DL format',
+  REDFLAG_UDYAM_FORMAT: 'Udyam format',
+  REDFLAG_PASSPORT_FORMAT: 'Passport format',
+  REDFLAG_PASSPORT_FILENO: 'Passport file no.',
+  REDFLAG_PASSPORT_MISMATCH: 'Passport page mismatch',
+  REDFLAG_VOTER_MISMATCH: 'Voter ID front/back',
+  REDFLAG_SIGNATORY_TYPO: 'Signatory misspelt',
+  REDFLAG_AI_WATERMARK: 'AI watermark',
+  REDFLAG_EDITOR_WATERMARK: 'Editor watermark',
+  REDFLAG_TIMESTAMP_ORDER: 'Modified before created',
+  REDFLAG_MODIFIED_AFTER_CREATE: 'Modified after creation',
+  REDFLAG_BAD_DATE: 'Impossible date',
+};
+
 export const redFlagValidator: Validator = {
   key: 'REDFLAG',
   column: 'redFlagStatus',
@@ -190,23 +212,25 @@ export const redFlagValidator: Validator = {
       }
     }
 
-    // Cross-document field consistency moved to FULL. Red Flags is the format rules — a
-    // malformed PAN, a 14-digit VID, an editor watermark. A value that disagrees BETWEEN
-    // documents is a comparison, and Missing Docs (formerly Full Scan) is the tab named after doing that.
+    // Cross-document field consistency lives in Data Compare. Red Flags is the format rules —
+    // a malformed PAN, a short VID, an editor watermark.
 
     const errors = findings.filter((f) => f.severity === 'ERROR').length;
     const warnings = findings.filter((f) => f.severity === 'WARNING').length;
-    // Spec asks for "Red Flag and its Count" on most rules. Counting per rule code here
-    // keeps the number next to the rule that produced it; the summary only has a total.
+    // Spec asks for "Red Flag and its Count" on most rules, so the summary carries a count
+    // per rule, not just the total.
     const counts: Record<string, number> = {};
     for (const f of findings) if (f.severity === 'ERROR') counts[f.code] = (counts[f.code] ?? 0) + 1;
+    const perRule = Object.entries(counts)
+      .map(([code, n]) => `${RULE_LABEL[code] ?? code.replace(/^REDFLAG_/, '')} ×${n}`)
+      .join(', ');
     // INFO findings record checks that PASSED (e.g. a valid PAN and its holder category);
     // they are never a red flag, but they are what tells a reviewer the check ran.
     const notes = findings.length - errors - warnings;
     if (errors > 0) {
       return {
         status: 'FAILED',
-        summary: `${errors} red flag(s) found${warnings ? `, ${warnings} advisory` : ''}.`,
+        summary: `${errors} red flag(s) found: ${perRule}${warnings ? `; ${warnings} advisory` : ''}.`,
         findings,
         details: { counts },
       };
