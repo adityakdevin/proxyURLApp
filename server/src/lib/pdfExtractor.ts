@@ -416,3 +416,40 @@ export async function largestImageWidthPerPage(
   }
   return out;
 }
+
+/**
+ * Per page (index 0 = page 1): does it paint an image, and does it draw text a viewer SHOWS?
+ * An OCR text layer is drawn invisible (render mode 3) and does not count; real text does,
+ * and real text is what an editor can change. Feeds the "text insertable" red-flag rule.
+ * Returns [] on any failure — a nicety, never a reason to break a validation run.
+ */
+export async function pdfPageTextStats(
+  absolutePath: string,
+  maxPages = MAX_PDF_PAGES
+): Promise<{ image: boolean; visibleText: boolean }[]> {
+  const out: { image: boolean; visibleText: boolean }[] = [];
+  try {
+    const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const data = new Uint8Array(await fs.readFile(absolutePath));
+    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false }).promise;
+    try {
+      for (let n = 1; n <= Math.min(doc.numPages, maxPages); n++) {
+        const ops = await (await doc.getPage(n)).getOperatorList();
+        let mode = 0;
+        const stat = { image: false, visibleText: false };
+        for (let i = 0; i < ops.fnArray.length; i++) {
+          const fn = ops.fnArray[i];
+          if (fn === OPS.setTextRenderingMode) mode = ops.argsArray[i][0];
+          else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject) stat.image = true;
+          else if ((fn === OPS.showText || fn === OPS.showSpacedText) && mode !== 3) stat.visibleText = true;
+        }
+        out.push(stat);
+      }
+    } finally {
+      await doc.destroy();
+    }
+  } catch {
+    return [];
+  }
+  return out;
+}

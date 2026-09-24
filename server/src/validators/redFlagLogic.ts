@@ -299,6 +299,52 @@ export function checkVoterId(pages: { page: number; text: string }[]): RedFlagFi
   return [err('REDFLAG_VOTER_MISMATCH', `Voter ID differs across sides (${[...epics].join(', ')})`, firstPage, { values: [...epics] })];
 }
 
+// ── Insurance nominee (Data Pattern sheet, Phase 1) ──────────────────────────────
+// "Nominee name is missing but other nominee details are present. Name prefix to be
+// ignored": a policy whose nominee row reads "Mrs. 42 SPOUSE" has a nominee with no name.
+// Two layouts in the samples: TATA AIG prints header and values on one line; Reliance
+// prints the header row, then the values row. Either way the values follow the LAST
+// "Relationship with Insured/Nominee" of the header.
+const NOMINEE_HEADER_RE =
+  /(?:name\s+of\s+(?:the\s+)?nominee|nominee'?s?\s+name)[\s\S]{0,160}relationship\s+with\s+(?:insured|nominee)/i;
+const NAME_PREFIX_RE = /^(?:mr|mrs|ms|miss|smt|shri|sri|dr|kum|kumari|m\/s)\.?$/i;
+const RELATION_RE = /^(?:spouse|wife|husband|father|mother|son|daughter|brother|sister)$/i;
+
+export function checkNominee(text: string, page: number | null = null): RedFlagFinding[] {
+  const m = NOMINEE_HEADER_RE.exec(text);
+  if (!m) return [];
+  const tokens = text.slice(m.index + m[0].length).trim().split(/\s+/).slice(0, 8);
+  const name: string[] = [];
+  let details = false;
+  for (const t of tokens) {
+    const w = t.replace(/[,:;|]/g, '');
+    if (/^\d{1,3}$/.test(w) || RELATION_RE.test(w)) {
+      details = true;
+      break;
+    }
+    if (/^na$/i.test(w)) break;
+    if (!NAME_PREFIX_RE.test(w)) name.push(w);
+  }
+  if (!details || name.length > 0) return [];
+  return [err('REDFLAG_NOMINEE_NO_NAME', 'No name in Nominee but other details available', page)];
+}
+
+// ── Editable text in a scanned PDF (Data Pattern sheet, Phase 1) ─────────────────
+// "If any text is editable in any pdf file — in case we can add any text on scanned pdf,
+// it is edited." In a bundle that is otherwise scanned (image pages with no visible text),
+// a page carrying real text was typed or pasted in, not scanned. Advisory, not a red flag
+// (decision of 2026-09-24): genuine digital insurer policies merged into a scan trip it too.
+export function checkEditableText(
+  stats: { image: boolean; visibleText: boolean }[],
+  fileName: string
+): RedFlagFinding[] {
+  if (!stats.some((s) => s.image && !s.visibleText)) return [];
+  const pages = stats.flatMap((s, i) => (s.visibleText ? [i + 1] : []));
+  if (pages.length === 0) return [];
+  const where = pages.length === 1 ? `p.${pages[0]}` : `pages ${pages.join(', ')}`;
+  return [warn('REDFLAG_EDITABLE_TEXT', `Editable doc - Text insertable in "${fileName}" (${where})`, pages[0])];
+}
+
 // ── Every-doc rules (run at FILE level, spec decision 3) ─────────────────────────
 export function checkSignature(fileText: string): RedFlagFinding[] {
   // `\bsign(ed)?\b` accepts the abbreviated stamp ("Auth. Sign") that Indian dealer and

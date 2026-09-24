@@ -14,7 +14,7 @@
 import { Validator, ValidatorContext, FindingInput, WordBox } from './types.js';
 import { BBox, unionBBox } from '../lib/bbox.js';
 import { segment, DocInstance } from './segment.js';
-import { readPdfInfo } from '../lib/pdfExtractor.js';
+import { readPdfInfo, pdfPageTextStats } from '../lib/pdfExtractor.js';
 import {
   checkPan,
   checkGst,
@@ -32,6 +32,8 @@ import {
   checkEditorWatermark,
   checkTimestamps,
   checkDates,
+  checkNominee,
+  checkEditableText,
   RedFlagFinding,
 } from './redFlagLogic.js';
 
@@ -164,6 +166,8 @@ export const redFlagValidator: Validator = {
 
       // Per-page format rules, only on pages classified to that type.
       for (const inst of pages) {
+        // Nominee rows sit on insurance pages, which carry no govt code — check every page.
+        for (const f of checkNominee(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
         const rules = inst.govtCode ? PAGE_RULES[inst.govtCode] : undefined;
         if (!rules) continue;
         for (const rule of rules) for (const f of rule(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
@@ -187,6 +191,8 @@ export const redFlagValidator: Validator = {
         for (const f of checkEditorWatermark(info.Producer, info.Creator)) findings.push(toFinding(doc.id, f));
         // Created vs Modified: the same Info dictionary, so no extra read.
         for (const f of checkTimestamps(info.Created, info.Modified)) findings.push(toFinding(doc.id, f));
+        const stats = await pdfPageTextStats(doc.readablePath);
+        for (const f of checkEditableText(stats, doc.fileName)) findings.push(toFinding(doc.id, f));
       }
     }
 
