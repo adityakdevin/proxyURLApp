@@ -598,15 +598,13 @@ export function crossDocFieldFindings(pages: CrossPage[]): FindingInput[] {
       const key = `${check.field}:${o.documentId}:${o.value}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      // A KYC doc's own name is often a relation/nominee's, so a KYC-vs-customer name
-      // disagreement is ambiguous — surface it as WARNING, not a hard red flag. Name
-      // agreement across the other doc types (Invoice/RC/Insurance/Payslip/Staff-ID/DMS)
-      // stays ERROR. Same soft treatment for unclassifiable (UNKNOWN) pages.
-      const kycInvolved = check.field === 'NAME' && (o.docType === 'KYC' || expType === 'KYC');
-        // Address is always soft: the matcher is deliberately loose, and a reviewer reading a
-      // reformatted-but-correct address as a hard red flag is the failure that matters here.
-      const soft =
-        o.docType === 'UNKNOWN' || expType === 'UNKNOWN' || kycInvolved || check.field === 'ADDRESS';
+      // A KYC-vs-customer name mismatch is a hard red flag: the client's Data Compare sheet
+      // lists every KYC row as "Red Flag" (decision of 2026-09-24). It was a WARNING because
+      // a KYC card is often a relative's; relation names are compared separately, so a
+      // relative's KYC still disagrees here and the reviewer judges it.
+      // Unclassifiable (UNKNOWN) pages stay soft. Address is always soft: the matcher is
+      // deliberately loose, and the sheet does not compare addresses within a claim.
+      const soft = o.docType === 'UNKNOWN' || expType === 'UNKNOWN' || check.field === 'ADDRESS';
       findings.push({
         documentId: o.documentId,
         code: `CROSS_${check.field}_MISMATCH`,

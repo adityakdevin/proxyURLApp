@@ -141,14 +141,14 @@ describe('crossDocFieldFindings (consistency engine)', () => {
     expect(f).toHaveLength(0);
   });
 
-  it('downgrades a KYC-vs-customer name mismatch to WARNING (relation/nominee KYC)', () => {
+  it('flags a KYC-vs-customer name mismatch as a hard ERROR (client sheet, 2026-09-24)', () => {
     const f = crossDocFieldFindings([
       page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Rajesh Kumar'),
       page('d2', 'KYC self-attested\nName: Mohan Kumar\nFather Name: Hariram Kumar'),
     ]);
     const mm = f.find((x) => x.code === 'CROSS_NAME_MISMATCH');
     expect(mm).toBeDefined();
-    expect(mm!.severity).toBe('WARNING'); // not a hard red flag — KYC may be a relation's
+    expect(mm!.severity).toBe('ERROR');
   });
 
   it('keeps a name mismatch between two NON-KYC docs as a hard ERROR', () => {

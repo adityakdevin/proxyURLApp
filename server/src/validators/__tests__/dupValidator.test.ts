@@ -88,4 +88,30 @@ describe('dupValidator — Duplicacy sheet numbers', () => {
     expect(f.severity).toBe('ERROR');
     expect(f.message).toBe('Policy number "251589936500" also appears on claim MZBEP812LSN709192.');
   });
+
+  // Duplicacy sheet: "If Address is Same in 2 different Case Ids, then Redflag".
+  it('fails a claim whose address appears on another claim', async () => {
+    const prisma = {
+      claimFieldValue: {
+        deleteMany: async () => ({}),
+        createMany: async () => ({}),
+        findMany: async ({ where }: { where: { field: string; norm: { in: string[] } } }) =>
+          where.field === 'ADDRESS'
+            ? where.norm.in.map((norm) => ({ norm, claim: { claimId: 'OTHER-1' } }))
+            : [],
+      },
+    };
+    const text = 'Address: VILLAGE BIJAURI, DISTRICT JABALPUR, PIN 482003';
+    const outcome = await dupValidator.run({
+      claim: { id: 'c1', claimId: 'CLM-1', subCategoryId: 's1' },
+      documents: [],
+      prisma: prisma as never,
+      ocr: {} as never,
+      shared: new Map([['d1', text]]),
+      pageTexts: new Map([['d1', [text]]]),
+      wordBoxes: new Map(),
+    });
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.findings!.find((x) => x.code === 'DUP_ADDRESS')!.severity).toBe('ERROR');
+  });
 });
