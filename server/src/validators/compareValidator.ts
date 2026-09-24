@@ -1,4 +1,4 @@
-import { Validator } from './types.js';
+import { Validator, FindingInput } from './types.js';
 import { segment } from './segment.js';
 import { crossDocFieldFindings, dmsNameFindings, invoiceRcNameResult } from './crossDocLogic.js';
 
@@ -21,10 +21,18 @@ export const compareValidator: Validator = {
       govtCode: i.govtCode,
     }));
     const rcResult = invoiceRcNameResult(pages);
+    // When the Invoice vs RC result is "Diff Name", that line is the red flag for the pair;
+    // the claim-wide name check reporting the same invoice/RC disagreement again is dropped.
+    const rcDiff = rcResult[0]?.severity === 'ERROR';
+    const isInvoiceRcName = (f: FindingInput) => {
+      const d = f.data as { expectedType?: string; actualType?: string } | undefined;
+      const pair = [d?.expectedType, d?.actualType].sort().join('/');
+      return f.code === 'CROSS_NAME_MISMATCH' && pair === 'INVOICE/RC';
+    };
     const findings = [
       // Sheet row 1, "1st Chk to apply" — first in the list too.
       ...dmsNameFindings(ctx.claim.customerName, pages),
-      ...crossDocFieldFindings(pages),
+      ...crossDocFieldFindings(pages).filter((f) => !(rcDiff && isInvoiceRcName(f))),
       ...rcResult,
     ];
     const mismatches = findings.filter((f) => f.severity === 'ERROR').length;

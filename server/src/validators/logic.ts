@@ -151,15 +151,36 @@ export function typePresent(name: string, govtCode: string | null, texts: string
  *  inside — this content fallback is what marks them present. Recall-favoring
  *  pre-filter like SPELL; word boundaries keep "Bill" from matching "billing". */
 export function typeInText(name: string, texts: string[]): boolean {
+  return texts.some((t) => typeMentionIndex(name, t) >= 0);
+}
+
+/** Where a document-type name is first mentioned in `text`, or -1. */
+export function typeMentionIndex(name: string, text: string): number {
   const pattern = name
     .trim()
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     .replace(/licence/i, 'licen[cs]e')
     .replace(/aadhar/i, 'aad?haa?r')
     .replace(/\s+/g, '\\s+');
-  if (!pattern) return false;
-  const re = new RegExp(`(^|[^A-Za-z])${pattern}([^A-Za-z]|$)`, 'i');
-  return texts.some((t) => re.test(t));
+  if (!pattern) return -1;
+  const m = new RegExp(`(^|[^A-Za-z])${pattern}([^A-Za-z]|$)`, 'i').exec(text);
+  return m ? m.index : -1;
+}
+
+/**
+ * Which of the text-named document types (Bill, Invoice, Bank Statement…) a page IS. A page
+ * names several in passing — a Kia invoice says "Bill To" — but is one document, so it counts
+ * toward one type: the one it classifies as (`classified`, e.g. "INVOICE"), else the type it
+ * names first. Without this, one invoice page marked both Bill and Invoice present.
+ */
+export function customTypeOfPage(names: string[], text: string, classified: string | null): string | null {
+  const hits = names
+    .map((name) => ({ name, at: typeMentionIndex(name, text) }))
+    .filter((h) => h.at >= 0);
+  if (hits.length === 0) return null;
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
+  const byClass = classified ? hits.find((h) => key(h.name) === key(classified)) : undefined;
+  return (byClass ?? hits.reduce((a, b) => (b.at < a.at ? b : a))).name;
 }
 
 export function normalizeText(s: string): string {

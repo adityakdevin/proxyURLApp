@@ -123,6 +123,37 @@ describe('FULL + INTRA validators', () => {
     expect(mm!.documentId).toBeTruthy();
   });
 
+  it('Data Compare reports a different Invoice/RC name once, as Diff Name', async () => {
+    const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
+    const docs = [doc({ id: 'd1' }), doc({ id: 'd2' })];
+    const shared = new Map([
+      ['d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Rajesh Kumar'],
+      ['d2', 'CERTIFICATE OF REGISTRATION Registering Authority\nOwner Name: Mohan Lal'],
+    ]);
+    const out = await compareValidator.run(ctxFor(prisma, claim, docs, shared));
+    expect(out.status).toBe('FAILED');
+    expect(out.findings!.map((f) => f.code)).toEqual(['CROSS_INVOICE_RC_DIFF_NAME']);
+  });
+
+  it('Missing Docs counts an invoice page that says "Bill To" as an Invoice only', async () => {
+    const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
+    const billType = await prisma.documentTypeMaster.create({
+      data: { name: 'Bill', category: 'CUSTOM', isRequired: true, displayOrder: 3, createdBy: adminId, updatedBy: adminId },
+    });
+    const invType = await prisma.documentTypeMaster.create({
+      data: { name: 'Invoice', category: 'CUSTOM', isRequired: true, displayOrder: 4, createdBy: adminId, updatedBy: adminId },
+    });
+    try {
+      const shared = new Map([['d1', 'Vehicle Tax Invoice Bill To : JAGJEET SINGH Invoice No : UK401']]);
+      const out = await fullValidator.run(ctxFor(prisma, claim, [doc({ id: 'd1' })], shared));
+      const present = (out.details as { present: string[] }).present;
+      expect(present).toContain('Invoice');
+      expect(present).not.toContain('Bill');
+    } finally {
+      await prisma.documentTypeMaster.deleteMany({ where: { id: { in: [billType.id, invType.id] } } });
+    }
+  });
+
   it('INTRA passes when claimId appears in document text', async () => {
     const claim = { id: 'c', claimId: 'CLM-00001', subCategoryId };
     const shared = new Map<string, string>([

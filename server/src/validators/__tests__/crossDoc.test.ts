@@ -395,6 +395,9 @@ describe('extracted values stop at the next label', () => {
 });
 
 describe('DMS upload name vs invoice (Data Compare row 1)', () => {
+  it('does not read the broker\'s "Designated Person Name" as the customer', () => {
+    expect(extractNames('MISP Code : 191000368 Designated Person Name : GAURAV KUMAR')).toEqual([]);
+  });
   it('reads the customer off a Kia dealer invoice\'s "Bill To" label', () => {
     // Real text of MZBB1811LSN014084 p.1: without the label no invoice name was read at all.
     expect(extractNames('Customer GST No. : Bill To : JAGJEET SINGH Customer Id : C2025060410')).toEqual(['JAGJEET SINGH']);
@@ -414,10 +417,11 @@ describe('DMS upload name vs invoice (Data Compare row 1)', () => {
 describe('Invoice vs RC: Same Name / Diff Name', () => {
   const inv = page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Rajesh Kumar');
   const rc = (name: string) => page('d2', `CERTIFICATE OF REGISTRATION Registering Authority\nOwner Name: ${name}`);
-  it('states the outcome either way', () => {
+  it('states the outcome either way; Diff Name is a red flag', () => {
     expect(invoiceRcNameResult([inv, rc('RAJESH KUMAR')])[0].code).toBe('CROSS_INVOICE_RC_SAME_NAME');
     const diff = invoiceRcNameResult([inv, rc('Mohan Lal')])[0];
     expect(diff.code).toBe('CROSS_INVOICE_RC_DIFF_NAME');
+    expect(diff.severity).toBe('ERROR'); // Diff Name is the red flag for this pair
     expect(diff.message).toBe('Invoice vs RC customer name: Diff Name ("Rajesh Kumar" vs "Mohan Lal").');
   });
   it('says nothing when the claim has no RC', () => {

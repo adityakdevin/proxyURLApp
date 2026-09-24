@@ -4,6 +4,7 @@ import {
   intraOutcome,
   completenessOutcome,
   typeInText,
+  customTypeOfPage,
   typePresent,
   normalizeText,
   matchesClaimId,
@@ -177,5 +178,19 @@ describe('findTermMisspellings — plurals are not misspellings', () => {
   it('still reports a genuine misspelling of the same term', () => {
     const [hit] = findTermMisspellings(['maruthi'], dictionaryless, ['maruti']);
     expect(hit.term).toBe('maruti');
+  });
+});
+
+describe('customTypeOfPage — one page is one document', () => {
+  const names = ['Bill', 'Invoice', 'Bank Statement'];
+  it('an invoice page that says "Bill To" is an Invoice, not also a Bill', () => {
+    const text = 'Vehicle Tax Invoice Bill To : JAGJEET SINGH Invoice No : UK401K202500204';
+    expect(customTypeOfPage(names, text, 'INVOICE')).toBe('Invoice');
+  });
+  it('an unclassified page counts as the type it names first', () => {
+    expect(customTypeOfPage(names, 'Electricity Bill for invoice period', null)).toBe('Bill');
+  });
+  it('a page naming none of them is none of them', () => {
+    expect(customTypeOfPage(names, 'Salary slip', 'PAYSLIP')).toBeNull();
   });
 });
