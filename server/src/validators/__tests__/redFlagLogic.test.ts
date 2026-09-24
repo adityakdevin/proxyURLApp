@@ -97,6 +97,9 @@ describe('DL', () => {
   it('passes a valid DL (2 letters + 13 digits)', () => {
     expect(checkDl('DL No: MH0120200001234')).toEqual([]);
   });
+  it('passes the printed 16-character form, with the space after the RTO code', () => {
+    expect(checkDl('DL No: MH14 20110062821')).toEqual([]);
+  });
   it('flags a malformed DL', () => {
     expect(codes(checkDl('Driving Licence MH01202'))).toEqual(['REDFLAG_DL_FORMAT']);
   });
