@@ -1,5 +1,6 @@
 import { Validator, FindingInput } from './types.js';
 import { segment } from './segment.js';
+import { locate } from './redFlagValidator.js';
 import { crossDocFieldFindings, dmsNameFindings, invoiceRcNameResult } from './crossDocLogic.js';
 
 /**
@@ -35,6 +36,16 @@ export const compareValidator: Validator = {
       ...crossDocFieldFindings(pages).filter((f) => !(rcDiff && isInvoiceRcName(f))),
       ...rcResult,
     ];
+    // Box the value each finding names, so its row zooms to it on the document the way Red
+    // Flags and Duplicate rows do. Null (page-jump only) when the page has no word
+    // coordinates or the value is not found — never a box somewhere wrong.
+    for (const f of findings) {
+      const d = f.data as { actual?: string; rc?: string } | undefined;
+      const value = d?.actual ?? d?.rc;
+      if (!f.bbox && value && f.documentId && f.page != null) {
+        f.bbox = locate(ctx.wordBoxes.get(f.documentId) ?? [], f.page, value);
+      }
+    }
     const mismatches = findings.filter((f) => f.severity === 'ERROR').length;
     const advisories = findings.filter((f) => f.severity === 'WARNING').length;
 
