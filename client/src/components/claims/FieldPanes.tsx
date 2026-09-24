@@ -47,6 +47,20 @@ function CopyButton({ text, what }: { text: string; what: string }) {
   );
 }
 
+/** Red flags first (the client's ask, 22 Sep review), then advisories, then INFO notes that
+ *  only record a check ran — never shown as an advisory. */
+const severityRank = (f: Finding) => (f.severity === 'ERROR' ? 0 : f.severity === 'WARNING' ? 1 : 2);
+const SECTION = [
+  { label: 'Red flag', tone: 'text-red-600' },
+  { label: 'Advisory', tone: 'text-amber-600' },
+  { label: 'Note', tone: 'text-gray-500' },
+];
+
+/** Findings in the order the panel lists them: severity, then page, un-paged last. Sort once
+ *  at the source so the badge numbers, the finding opened first and the list all agree. */
+export const byPriority = (a: Finding, b: Finding) =>
+  severityRank(a) - severityRank(b) || (a.page ?? Infinity) - (b.page ?? Infinity);
+
 /** Severity buckets the filter offers. ERROR and WARNING are what the validators emit;
  *  INFO findings are notes that a check ran and sit under "All". */
 type SevFilter = 'ALL' | 'ERROR' | 'WARNING';
@@ -83,29 +97,28 @@ function FindingsCard({
   const errors = findings.filter((f) => f.severity === 'ERROR').length;
   const warnings = findings.filter((f) => f.severity === 'WARNING').length;
 
-  // Red flags first (the client's ask, 22 Sep review), then page order within each, with
-  // un-paged findings last. The stepper walks this same order.
+  // `findings` arrive in priority order (byPriority): red flags, advisories, notes, page
+  // order within each. The stepper walks this same order.
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const rank = (f: Finding) => (f.severity === 'ERROR' ? 0 : 1);
-    return findings
-      .filter((f) => (sev === 'ALL' || f.severity === sev) && (!q || f.message.toLowerCase().includes(q)))
-      .sort((a, b) => rank(a) - rank(b) || (a.page ?? Infinity) - (b.page ?? Infinity));
+    return findings.filter(
+      (f) => (sev === 'ALL' || f.severity === sev) && (!q || f.message.toLowerCase().includes(q))
+    );
   }, [findings, sev, query]);
 
-  // Page groups, split by red/not-red so a page with both appears once in each half.
+  // Page groups, split by severity so a page with both appears once in each section.
   const byPage = useMemo(() => {
-    const groups: { red: boolean; page: number | null; list: Finding[] }[] = [];
+    const groups: { rank: number; page: number | null; list: Finding[] }[] = [];
     for (const f of visible) {
-      const red = f.severity === 'ERROR';
+      const rank = severityRank(f);
       const page = f.page ?? null;
       const last = groups[groups.length - 1];
-      if (last && last.red === red && last.page === page) last.list.push(f);
-      else groups.push({ red, page, list: [f] });
+      if (last && last.rank === rank && last.page === page) last.list.push(f);
+      else groups.push({ rank, page, list: [f] });
     }
     return groups;
   }, [visible]);
-  const mixed = byPage.some((g) => g.red) && byPage.some((g) => !g.red);
+  const mixed = new Set(byPage.map((g) => g.rank)).size > 1;
 
   // Stepper: walk the visible list in order, wrapping at both ends.
   const step = (delta: number) => {
@@ -208,8 +221,8 @@ function FindingsCard({
       ) : (
         // No horizontal padding: rows run edge to edge so a selected row fills the card.
         <div className={`overflow-auto pb-1 ${capHeight ? 'max-h-[26rem]' : ''}`}>
-          {byPage.map(({ red, page, list }) => (
-            <div key={`${red}:${page ?? 'none'}`} className="group/page">
+          {byPage.map(({ rank, page, list }) => (
+            <div key={`${rank}:${page ?? 'none'}`} className="group/page">
               {/* Sticky, so the reviewer always knows which page the rows below are on.
                   Also the fastest way to get the document to that page. */}
               <button
@@ -224,9 +237,7 @@ function FindingsCard({
                 }`}
               >
                 {/* Only label the half when both halves are present; otherwise it is noise. */}
-                {mixed && (
-                  <span className={red ? 'text-red-600' : 'text-amber-600'}>{red ? 'Red flag' : 'Advisory'} ·</span>
-                )}
+                {mixed && <span className={SECTION[rank].tone}>{SECTION[rank].label} ·</span>}
                 {page ? `Page ${page}` : 'Document'}
                 <span className="text-gray-300">·</span>
                 <span className="tabular-nums">{list.length}</span>
