@@ -73,6 +73,7 @@ export interface ListClaimsFilters {
   qrStatus?: ValidationStatus;
   redFlagStatus?: ValidationStatus;
   duplicateStatus?: ValidationStatus;
+  dataCompareStatus?: ValidationStatus;
   metaExtractionStatus?: ValidationStatus;
   intraClaimStatus?: ValidationStatus;
   fullScanStatus?: ValidationStatus;
@@ -102,6 +103,7 @@ const FINDING_CHECK_LABEL: Record<string, string> = {
   FULL: 'Missing Docs',
   REDFLAG: 'Red Flags',
   DUP: 'Duplicate',
+  COMPARE: 'Data Compare',
 };
 
 export interface ExportRow {
@@ -117,6 +119,7 @@ export interface ExportRow {
   full: string;
   redFlag: string;
   duplicate: string;
+  dataCompare: string;
   /** The bifurcated QR result (NO_QR / UNREADABLE / MISMATCH / OK). Empty for claims
    *  validated before the column existed — `qr` still carries the pass/fail status. */
   qrOutcome: string;
@@ -553,6 +556,7 @@ export class ClaimService {
     'fullScanStatus',
     'redFlagStatus',
     'duplicateStatus',
+    'dataCompareStatus',
   ]);
 
   async list(filters: ListClaimsFilters) {
@@ -685,6 +689,7 @@ export class ClaimService {
     if (filters.fullScanStatus) where.fullScanStatus = filters.fullScanStatus;
     if (filters.redFlagStatus) where.redFlagStatus = filters.redFlagStatus;
     if (filters.duplicateStatus) where.duplicateStatus = filters.duplicateStatus;
+    if (filters.dataCompareStatus) where.dataCompareStatus = filters.dataCompareStatus;
     if (filters.scope && filters.scope !== 'ALL') {
       // Intersect, never overwrite. Overwriting silently discarded a scoped caller's own
       // sub-category filter — harmless while this only fed a list, but bulk MUTATES through
@@ -729,6 +734,7 @@ export class ClaimService {
       full: collapseValidationStatus(c.fullScanStatus),
       redFlag: collapseValidationStatus(c.redFlagStatus),
       duplicate: collapseValidationStatus(c.duplicateStatus),
+      dataCompare: collapseValidationStatus(c.dataCompareStatus),
       qrOutcome: c.qrOutcome ?? '',
       documents: c._count.documents,
       created: c.createdAt.toISOString().slice(0, 10),
@@ -805,7 +811,7 @@ export class ClaimService {
         document: { select: { fileName: true } },
       },
     });
-    const order = ['SPELL', 'QR', 'INTRA', 'FULL', 'REDFLAG', 'DUP'];
+    const order = ['SPELL', 'QR', 'INTRA', 'FULL', 'REDFLAG', 'DUP', 'COMPARE'];
     return findings
       .map((f) => ({
         claimId: label.get(f.claimId) ?? '',
@@ -843,6 +849,7 @@ export class ClaimService {
         fullScanStatus: true,
         redFlagStatus: true,
         duplicateStatus: true,
+        dataCompareStatus: true,
       },
       // Ascending mirrors the source sheet's S.No ordering (oldest = row 1).
       orderBy: { createdAt: 'asc' },
@@ -874,6 +881,7 @@ export class ClaimService {
         fullScanStatus: c.fullScanStatus,
         redFlagStatus: c.redFlagStatus,
         duplicateStatus: c.duplicateStatus,
+        dataCompareStatus: c.dataCompareStatus,
       },
     }));
   }

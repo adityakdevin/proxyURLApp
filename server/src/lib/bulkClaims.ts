@@ -31,6 +31,7 @@ export const CHECK_KEYS = [
   // set than the reviewer was shown. Every claim status column belongs in this list.
   'redFlagStatus',
   'duplicateStatus',
+  'dataCompareStatus',
 ] as const;
 
 export interface BulkBody {

@@ -8,6 +8,7 @@ const base: ValidationStatuses = {
   fullScanStatus: 'PASSED',
   redFlagStatus: 'PASSED',
   duplicateStatus: 'PASSED',
+  dataCompareStatus: 'PASSED',
 };
 
 describe('deriveForgeryStatus', () => {
