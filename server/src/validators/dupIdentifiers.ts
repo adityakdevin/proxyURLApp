@@ -29,12 +29,15 @@ export type IdentifierField =
   | 'PF_NO'
   | 'UAN'
   | 'GPF_NO'
+  | 'PRAN'
+  | 'ESI_NO'
+  | 'PENSION_NO'
   | 'CERT_REG_NO'
   | 'RATION_CARD_NO';
 
 export const IDENTIFIER_FIELDS: IdentifierField[] = [
   'POLICY_NO', 'PAN', 'AADHAAR', 'DL_NO', 'PASSPORT_NO', 'VOTER_ID', 'GSTIN', 'UDYAM_NO',
-  'FSSAI_NO', 'PF_NO', 'UAN', 'GPF_NO', 'CERT_REG_NO', 'RATION_CARD_NO',
+  'FSSAI_NO', 'PF_NO', 'UAN', 'GPF_NO', 'PRAN', 'ESI_NO', 'PENSION_NO', 'CERT_REG_NO', 'RATION_CARD_NO',
 ];
 
 export const IDENTIFIER_LABEL: Record<IdentifierField, string> = {
@@ -50,6 +53,9 @@ export const IDENTIFIER_LABEL: Record<IdentifierField, string> = {
   PF_NO: 'PF number',
   UAN: 'UAN',
   GPF_NO: 'GPF number',
+  PRAN: 'PRAN',
+  ESI_NO: 'ESI number',
+  PENSION_NO: 'Pension number',
   CERT_REG_NO: 'Certificate registration number',
   RATION_CARD_NO: 'Ration / family card number',
 };
@@ -150,6 +156,19 @@ export function extractIdentifiers(text: string): { field: IdentifierField; valu
   add('UAN', labelled(text, /\bUAN\s*(?:No|Number)?\.?\s*[:\-]?\s*(\d{12})\b/gi));
 
   add('GPF_NO', labelled(text, /\bGPF\s*(?:A\/?c\.?\s*)?(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{3,25})/gi));
+
+  // NPS PRAN is 12 digits.
+  add('PRAN', labelled(text, /\bPRAN\s*(?:No|Number)?\.?\s*[:\-]?\s*(\d{12})\b/gi));
+
+  // ESI / ESIC insurance number. Must start with a digit: a payslip's empty "ESIC No" field is
+  // followed by the next label ("PAN : ...") and must not capture it.
+  add('ESI_NO', labelled(text, /\bESIC?\s*(?:IP\s*)?(?:No|Number)\.?\s*[:\-]?\s*(\d[\d\/\-]{8,20})/gi));
+
+  // Pension / PPO (Pension Payment Order) number.
+  add(
+    'PENSION_NO',
+    labelled(text, /\b(?:pension(?:\s+payment\s+order)?|PPO)\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{5,25})/gi)
+  );
 
   // "Registration No" alone is also a vehicle's — only a civil certificate's counts here.
   if (CIVIL_CERT_RE.test(text)) {

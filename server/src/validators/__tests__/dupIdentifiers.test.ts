@@ -54,13 +54,18 @@ describe('extractIdentifiers — the Duplicacy sheet numbers', () => {
     expect(pick('Invoice ref M1234567 and ABC1234567', 'VOTER_ID')).toEqual([]);
   });
 
-  it('reads Udyam, FSSAI, PF, UAN and GPF numbers by their labels', () => {
+  it('reads Udyam, FSSAI, PF, UAN, GPF, PRAN, ESI and pension numbers by their labels', () => {
     expect(pick('Udyam Registration Number: UDYAM-MH-18-0012345', 'UDYAM_NO')).toEqual(['UDYAM-MH-18-0012345']);
     expect(pick('FSSAI Lic. No. 10019022009876', 'FSSAI_NO')).toEqual(['10019022009876']);
     expect(pick('PF No. : DL/CPM/0026293/000/0010160', 'PF_NO')).toEqual(['DL/CPM/0026293/000/0010160']);
     expect(pick('PF No. ESIC No', 'PF_NO')).toEqual([]); // empty PF field on a payslip
     expect(pick('UAN : 101230048751', 'UAN')).toEqual(['101230048751']);
     expect(pick('GPF A/c No: HR/12345', 'GPF_NO')).toEqual(['HR/12345']);
+    expect(pick('PRAN : 110012345678', 'PRAN')).toEqual(['110012345678']);
+    expect(pick('ESIC No : 3112345678', 'ESI_NO')).toEqual(['3112345678']);
+    expect(pick('PF No. ESIC No PAN : AEAPS3424C', 'ESI_NO')).toEqual([]); // empty ESIC field
+    expect(pick('PPO No: 123456789012', 'PENSION_NO')).toEqual(['123456789012']);
+    expect(pick('Pension No. : DL/1234/567', 'PENSION_NO')).toEqual(['DL/1234/567']);
   });
 
   it('reads certificate registration numbers only on birth / death / marriage certificates', () => {
