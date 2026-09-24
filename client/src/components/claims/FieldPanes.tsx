@@ -83,24 +83,29 @@ function FindingsCard({
   const errors = findings.filter((f) => f.severity === 'ERROR').length;
   const warnings = findings.filter((f) => f.severity === 'WARNING').length;
 
+  // Red flags first (the client's ask, 22 Sep review), then page order within each, with
+  // un-paged findings last. The stepper walks this same order.
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return findings.filter(
-      (f) => (sev === 'ALL' || f.severity === sev) && (!q || f.message.toLowerCase().includes(q))
-    );
+    const rank = (f: Finding) => (f.severity === 'ERROR' ? 0 : 1);
+    return findings
+      .filter((f) => (sev === 'ALL' || f.severity === sev) && (!q || f.message.toLowerCase().includes(q)))
+      .sort((a, b) => rank(a) - rank(b) || (a.page ?? Infinity) - (b.page ?? Infinity));
   }, [findings, sev, query]);
 
-  // Page groups, in page order, with un-paged findings last under "Document".
+  // Page groups, split by red/not-red so a page with both appears once in each half.
   const byPage = useMemo(() => {
-    const m = new Map<number | null, Finding[]>();
+    const groups: { red: boolean; page: number | null; list: Finding[] }[] = [];
     for (const f of visible) {
-      const k = f.page ?? null;
-      const list = m.get(k);
-      if (list) list.push(f);
-      else m.set(k, [f]);
+      const red = f.severity === 'ERROR';
+      const page = f.page ?? null;
+      const last = groups[groups.length - 1];
+      if (last && last.red === red && last.page === page) last.list.push(f);
+      else groups.push({ red, page, list: [f] });
     }
-    return [...m.entries()].sort((a, b) => (a[0] ?? Infinity) - (b[0] ?? Infinity));
+    return groups;
   }, [visible]);
+  const mixed = byPage.some((g) => g.red) && byPage.some((g) => !g.red);
 
   // Stepper: walk the visible list in order, wrapping at both ends.
   const step = (delta: number) => {
@@ -203,8 +208,8 @@ function FindingsCard({
       ) : (
         // No horizontal padding: rows run edge to edge so a selected row fills the card.
         <div className={`overflow-auto pb-1 ${capHeight ? 'max-h-[26rem]' : ''}`}>
-          {byPage.map(([page, list]) => (
-            <div key={page ?? 'none'} className="group/page">
+          {byPage.map(({ red, page, list }) => (
+            <div key={`${red}:${page ?? 'none'}`} className="group/page">
               {/* Sticky, so the reviewer always knows which page the rows below are on.
                   Also the fastest way to get the document to that page. */}
               <button
@@ -218,6 +223,10 @@ function FindingsCard({
                     : 'cursor-default text-gray-400'
                 }`}
               >
+                {/* Only label the half when both halves are present; otherwise it is noise. */}
+                {mixed && (
+                  <span className={red ? 'text-red-600' : 'text-amber-600'}>{red ? 'Red flag' : 'Advisory'} ·</span>
+                )}
                 {page ? `Page ${page}` : 'Document'}
                 <span className="text-gray-300">·</span>
                 <span className="tabular-nums">{list.length}</span>
