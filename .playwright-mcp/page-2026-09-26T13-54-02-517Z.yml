@@ -1,0 +1,175 @@
+- generic [ref=f5e1]:
+  - generic [ref=f5e2]:
+    - generic [ref=f5e3]:
+      - banner [ref=f5e4]:
+        - generic [ref=f5e5]:
+          - generic [ref=f5e6]:
+            - heading "Proxy URL App" [level=1] [ref=f5e7]
+            - generic [ref=f5e32]: FY2025
+          - generic [ref=f5e8]:
+            - generic [ref=f5e9]: Administrator
+            - button "Logout" [ref=f5e10] [cursor=pointer]
+      - generic [ref=f5e14]:
+        - complementary [ref=f5e15]:
+          - navigation [ref=f5e16]:
+            - link "Dashboard" [ref=f5e17] [cursor=pointer]:
+              - /url: /dashboard
+            - generic [ref=f5e21]:
+              - text: Claims
+              - link "Claim Dashboard" [ref=f5e23] [cursor=pointer]:
+                - /url: /claims
+            - generic [ref=f5e33]: No URLs available for your account
+        - main [ref=f5e30]:
+          - generic [ref=f5e31]:
+            - generic [ref=f5e34]:
+              - button "Back to Claims" [ref=f5e35] [cursor=pointer]
+              - generic [ref=f5e39]:
+                - combobox "Go to claim ID" [ref=f5e40]
+                - button "Go to this claim" [disabled] [ref=f5e41]
+            - generic [ref=f5e46]:
+              - generic [ref=f5e47]:
+                - generic [ref=f5e48]:
+                  - heading "Testingsupport003" [level=1] [ref=f5e49]
+                  - paragraph [ref=f5e50]: ISL - DVS - Test / ISL - DVS - Test V1
+                - generic [ref=f5e51]: In Progress
+              - generic [ref=f5e52]:
+                - generic [ref=f5e53]: "Folder Path: -"
+                - generic [ref=f5e54]: "Assigned To: Unassigned"
+              - generic [ref=f5e55]:
+                - generic [ref=f5e56]:
+                  - 'generic "1 expected-term misspelling(s): toal→total. 4 doubtful (possible scan misread): invoi→invoice, onder→gender, umver→number, requis→require" [ref=f5e57] [cursor=pointer]': "Spell: FAILED"
+                  - generic "1 QR code(s) found across 1 document(s)." [ref=f5e58] [cursor=pointer]: "QR: UNREADABLE"
+                  - generic "Claim ID not found in any of 1 document(s)." [ref=f5e59] [cursor=pointer]: "Intra-Claim: FAILED"
+                  - 'generic "2 red flag(s) found: Impossible date ×1, Editor watermark ×1." [ref=f5e60] [cursor=pointer]': "Red Flags: FAILED"
+                  - generic "1 of 2 required document types present." [ref=f5e61] [cursor=pointer]: "Missing Docs: FAILED"
+                  - generic "No mismatches; 1 advisory note(s)." [ref=f5e62] [cursor=pointer]: "Data Compare: DOUBTFUL"
+                  - generic "No duplicates found across 4 unique data point(s)." [ref=f5e63] [cursor=pointer]: "Duplicate: PASSED"
+                - button "Re-validate" [ref=f5e65] [cursor=pointer]
+            - generic [ref=f5e66]:
+              - group [ref=f5e67]:
+                - 'generic "Spell 1 expected-term misspelling(s): toal→total. 4 doubtful (possible scan misread): invoi→invoice, onder→gender, umver→number, requis→require" [ref=f5e68] [cursor=pointer]':
+                  - generic [ref=f5e69]:
+                    - heading "Spell" [level=2] [ref=f5e70]
+                    - generic [ref=f5e71]: "1 expected-term misspelling(s): toal→total. 4 doubtful (possible scan misread): invoi→invoice, onder→gender, umver→number, requis→require"
+                - list [ref=f5e74]:
+                  - listitem [ref=f5e75]:
+                    - button "Testingsupport003.pdf" [ref=f5e76] [cursor=pointer]
+                    - text: "— 5 findings:"
+                    - list [ref=f5e77]:
+                      - listitem [ref=f5e78]: Doubtful "onder" (expected "gender") — the scan quality can account for this, please confirm visually
+                      - listitem [ref=f5e79]: Doubtful "requis" (expected "require") — the scan quality can account for this, please confirm visually
+                      - listitem [ref=f5e80]: Misspelled "toal" (expected "total")
+                      - listitem [ref=f5e81]: Doubtful "invoi" (expected "invoice") — the scan quality can account for this, please confirm visually
+                      - listitem [ref=f5e82]: Doubtful "umver" (expected "number") — the scan quality can account for this, please confirm visually
+              - group [ref=f5e83]:
+                - generic "QR 1 QR code(s) found across 1 document(s)." [ref=f5e84] [cursor=pointer]:
+                  - generic [ref=f5e85]:
+                    - heading "QR" [level=2] [ref=f5e86]
+                    - generic [ref=f5e87]: 1 QR code(s) found across 1 document(s).
+                - list [ref=f5e90]:
+                  - listitem [ref=f5e91]:
+                    - button "Testingsupport003.pdf" [ref=f5e92] [cursor=pointer]
+                    - text: "— 2 findings:"
+                    - list [ref=f5e93]:
+                      - listitem [ref=f5e94]: "No QR code could be read on page 5 of Testingsupport003.pdf, which reads as a PAN card. The card image in this file is only 747x531 pixels (about 222 DPI), which puts the QR below the detail any reader needs — its squares are under ~2 pixels each, so they blur together in the scan itself. This is not a fault in the document: rescan the card at 400 DPI or higher and it will read."
+                      - listitem [ref=f5e95]: QR code read from Testingsupport003.pdf page 1.
+                - button "View QR Data" [ref=f5e97] [cursor=pointer]
+              - group [ref=f5e98]:
+                - generic "Intra-Claim Claim ID not found in any of 1 document(s)." [ref=f5e99] [cursor=pointer]:
+                  - generic [ref=f5e100]:
+                    - heading "Intra-Claim" [level=2] [ref=f5e101]
+                    - generic [ref=f5e102]: Claim ID not found in any of 1 document(s).
+                - list [ref=f5e105]:
+                  - listitem [ref=f5e106]:
+                    - button "Testingsupport003.pdf" [ref=f5e107] [cursor=pointer]
+                    - text: "— 1 finding:"
+                    - list [ref=f5e108]:
+                      - listitem [ref=f5e109]: Claim ID Testingsupport003 not found in Testingsupport003.pdf.
+              - group [ref=f5e110]:
+                - 'generic "Red Flags 2 red flag(s) found: Impossible date ×1, Editor watermark ×1." [ref=f5e111] [cursor=pointer]':
+                  - generic [ref=f5e112]:
+                    - heading "Red Flags" [level=2] [ref=f5e113]
+                    - generic [ref=f5e114]: "2 red flag(s) found: Impossible date ×1, Editor watermark ×1."
+                - list [ref=f5e117]:
+                  - listitem [ref=f5e118]:
+                    - button "Testingsupport003.pdf" [ref=f5e119] [cursor=pointer]
+                    - text: "— 2 findings:"
+                    - list [ref=f5e120]:
+                      - listitem [ref=f5e121]: Impossible date "17.22.28"
+                      - listitem [ref=f5e122]: Document produced/edited by "iLovePDF"
+              - group [ref=f5e123]:
+                - generic "Missing Docs 1 of 2 required document types present. PAN Card (Testingsupport003.pdf p.5)" [ref=f5e124] [cursor=pointer]:
+                  - generic [ref=f5e125]:
+                    - heading "Missing Docs" [level=2] [ref=f5e126]
+                    - generic [ref=f5e127]: 1 of 2 required document types present.
+                    - generic [ref=f5e128]: PAN Card (Testingsupport003.pdf p.5)
+                - list [ref=f5e131]:
+                  - listitem [ref=f5e132]:
+                    - button "Testingsupport003.pdf" [ref=f5e133] [cursor=pointer]
+                - list [ref=f5e134]:
+                  - listitem [ref=f5e135]:
+                    - text: "Claim-level — 1 finding:"
+                    - list [ref=f5e136]:
+                      - listitem [ref=f5e137]: Missing docs - Aadhar Card
+              - group [ref=f5e138]:
+                - generic "Data Compare No mismatches; 1 advisory note(s)." [ref=f5e139] [cursor=pointer]:
+                  - generic [ref=f5e140]:
+                    - heading "Data Compare" [level=2] [ref=f5e141]
+                    - generic [ref=f5e142]: No mismatches; 1 advisory note(s).
+                - list [ref=f5e145]:
+                  - listitem [ref=f5e146]:
+                    - button "Testingsupport003.pdf" [ref=f5e147] [cursor=pointer]
+                    - text: "— 1 finding:"
+                    - list [ref=f5e148]:
+                      - listitem [ref=f5e149]: Could not classify this document type; cross-document checks ran without type scoping.
+              - group [ref=f5e150]:
+                - generic "Duplicate No duplicates found across 4 unique data point(s)." [ref=f5e151] [cursor=pointer]:
+                  - generic [ref=f5e152]:
+                    - heading "Duplicate" [level=2] [ref=f5e153]
+                    - generic [ref=f5e154]: No duplicates found across 4 unique data point(s).
+                - list [ref=f5e157]:
+                  - listitem [ref=f5e158]:
+                    - button "Testingsupport003.pdf" [ref=f5e159] [cursor=pointer]
+            - generic [ref=f5e160]:
+              - heading "Update Claim" [level=2] [ref=f5e161]
+              - generic [ref=f5e162]:
+                - generic [ref=f5e163]:
+                  - text: Change Status (optional)
+                  - combobox [ref=f5e164] [cursor=pointer]:
+                    - generic: Keep current status
+                - generic [ref=f5e167]:
+                  - text: Reassign (optional)
+                  - combobox [ref=f5e168] [cursor=pointer]:
+                    - generic: Keep assignment
+              - generic [ref=f5e171]:
+                - text: Remark
+                - textbox "Required" [ref=f5e172]
+              - generic [ref=f5e173]:
+                - button "Save" [disabled]
+            - generic [ref=f5e174]:
+              - generic [ref=f5e175]:
+                - heading "Documents" [level=2] [ref=f5e176]
+                - generic [ref=f5e177]: Upload
+              - generic [ref=f5e180]:
+                - generic [ref=f5e181]:
+                  - link "Testingsupport003.pdf" [ref=f5e182] [cursor=pointer]:
+                    - /url: /api/claims/be25df54-ca3b-4e23-beb6-9669f5896ddb/documents/29fb8c54-c6e8-4f4d-8ca8-d61d29cf8395/content
+                  - generic [ref=f5e183]: Unclassified
+                  - generic [ref=f5e184]: Uploaded
+                - generic [ref=f5e185]:
+                  - generic [ref=f5e186]: 2.5 MB
+                  - generic [ref=f5e187]: 17/09/2026
+                  - button "Delete" [ref=f5e188] [cursor=pointer]
+            - generic [ref=f5e189]:
+              - heading "Remarks Timeline (1)" [level=2] [ref=f5e190]:
+                - text: Remarks Timeline
+                - generic [ref=f5e191]: (1)
+              - generic [ref=f5e193]:
+                - generic [ref=f5e194]:
+                  - generic [ref=f5e195]: Administrator
+                  - generic [ref=f5e196]: 17/09/2026, 12:49:20
+                  - generic [ref=f5e197]: New → In Progress
+                - paragraph [ref=f5e198]: Validation completed, so this claim moved off the default status and now shows as picked up. This says the checks have run — it does not say they passed.
+    - region "Notifications (F8)":
+      - list
+  - button "Choose File" [active] [ref=f5e199]

@@ -1,0 +1,85 @@
+- generic [ref=f4e2]:
+  - generic [ref=f4e3]:
+    - banner [ref=f4e4]:
+      - generic [ref=f4e5]:
+        - heading "Proxy URL App" [level=1] [ref=f4e7]
+        - generic [ref=f4e8]:
+          - generic [ref=f4e9]: Administrator
+          - button "Logout" [ref=f4e10] [cursor=pointer]
+    - generic [ref=f4e14]:
+      - complementary [ref=f4e15]:
+        - navigation [ref=f4e16]:
+          - link "Dashboard" [ref=f4e17] [cursor=pointer]:
+            - /url: /dashboard
+          - generic [ref=f4e21]:
+            - text: Claims
+            - link "Claim Dashboard" [ref=f4e23] [cursor=pointer]:
+              - /url: /claims
+          - generic [ref=f4e27]: Loading menu...
+      - main [ref=f4e30]:
+        - generic [ref=f4e31]:
+          - generic [ref=f4e32]:
+            - heading "Claim Dashboard" [level=1] [ref=f4e33]
+            - button "Add Claim" [ref=f4e34] [cursor=pointer]
+          - generic [ref=f4e36]:
+            - textbox "Search claim id…" [ref=f4e37]
+            - combobox [ref=f4e38] [cursor=pointer]:
+              - generic: "Sub-Category: All"
+            - combobox [ref=f4e41] [cursor=pointer]:
+              - generic: "Status: All"
+            - combobox [ref=f4e44] [cursor=pointer]:
+              - generic: "Assigned: All"
+            - combobox [ref=f4e47] [cursor=pointer]:
+              - generic: "Spell: All"
+            - combobox [ref=f4e50] [cursor=pointer]:
+              - generic: "QR: All"
+            - combobox [ref=f4e53] [cursor=pointer]:
+              - generic: "Intra: All"
+            - combobox [ref=f4e56] [cursor=pointer]:
+              - generic: "Missing Docs: All"
+            - combobox [ref=f4e59] [cursor=pointer]:
+              - generic: "Data Compare: All"
+            - combobox [ref=f4e62] [cursor=pointer]:
+              - generic: "Red Flag: All"
+            - combobox [ref=f4e65] [cursor=pointer]:
+              - generic: "Duplicate: All"
+            - generic [ref=f4e68]:
+              - button "Export" [ref=f4e69] [cursor=pointer]
+              - button "Apply filters" [ref=f4e70] [cursor=pointer]
+          - generic [ref=f4e71]:
+            - table [ref=f4e74]:
+              - rowgroup [ref=f4e75]:
+                - row [ref=f4e76]:
+                  - columnheader [ref=f4e77]:
+                    - checkbox "Select all rows on this page" [ref=f4e108] [cursor=pointer]
+                  - columnheader "Claim ID" [ref=f4e79]
+                  - columnheader "Sub-Category" [ref=f4e80]
+                  - columnheader "Workflow" [ref=f4e81]
+                  - columnheader "Assigned To" [ref=f4e82]
+                  - columnheader "Spell" [ref=f4e83]
+                  - columnheader "QR" [ref=f4e84]
+                  - columnheader "Intra-Claim" [ref=f4e85]
+                  - columnheader "Missing Docs" [ref=f4e86]
+                  - columnheader "Red Flags" [ref=f4e87]
+                  - columnheader "Duplicate" [ref=f4e88]
+                  - columnheader "Data Compare" [ref=f4e89]
+                  - columnheader "Created" [ref=f4e90]
+                  - columnheader "Actions" [ref=f4e91]
+              - rowgroup [ref=f4e92]:
+                - row [ref=f4e93]:
+                  - cell "Loading..." [ref=f4e94]
+            - generic [ref=f4e98]:
+              - generic [ref=f4e99]:
+                - paragraph [ref=f4e100]: Rows per page
+                - combobox [ref=f4e101] [cursor=pointer]:
+                  - generic: "10"
+              - generic [ref=f4e104]: Showing 1 to 0 of 0 entries
+              - generic [ref=f4e105]:
+                - generic [ref=f4e106]: Page 1 of 0
+                - generic [ref=f4e107]:
+                  - button "Go to first page" [disabled]
+                  - button "Go to previous page" [disabled]
+                  - button "Go to next page" [disabled]
+                  - button "Go to last page" [disabled]
+  - region "Notifications (F8)":
+    - list

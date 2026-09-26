@@ -1,0 +1,226 @@
+- generic [ref=f3e2]:
+  - generic [ref=f3e3]:
+    - banner [ref=f3e4]:
+      - heading "MZBB1811LSN014084" [level=1] [ref=f3e49]
+      - navigation [ref=f3e6]:
+        - button "All" [ref=f3e7] [cursor=pointer]
+        - button "Spell 4" [ref=f3e50] [cursor=pointer]:
+          - text: Spell
+          - generic [ref=f3e51]: "4"
+        - button "QR 2" [ref=f3e52] [cursor=pointer]:
+          - text: QR
+          - generic [ref=f3e53]: "2"
+        - button "Intra-Claim" [ref=f3e10] [cursor=pointer]
+        - button "Missing Docs" [ref=f3e11] [cursor=pointer]
+        - button "Data Compare" [ref=f3e12] [cursor=pointer]
+        - button "Red Flags 4" [ref=f3e54] [cursor=pointer]:
+          - text: Red Flags
+          - generic [ref=f3e55]: "4"
+        - button "Duplicate 2" [ref=f3e56] [cursor=pointer]:
+          - text: Duplicate
+          - generic [ref=f3e57]: "2"
+      - generic [ref=f3e15]:
+        - generic [ref=f3e58]: 3 red flags
+        - generic [ref=f3e61]: 6 advisory
+        - generic [ref=f3e16]:
+          - button "Previous claim" [ref=f3e17] [cursor=pointer]
+          - button "Next claim" [ref=f3e20] [cursor=pointer]
+        - button "Go to claim ID" [ref=f3e23] [cursor=pointer]
+        - button "Re-validate this claim" [ref=f3e28] [cursor=pointer]:
+          - generic [ref=f3e32]: Re-validate
+        - link "Open claim" [ref=f3e33] [cursor=pointer]:
+          - /url: /admin/claims/b483fa68-f3bb-47e1-b8af-bc3fee7ef55f
+        - button "Hide panel" [ref=f3e40] [cursor=pointer]
+    - status [ref=f3e45]: Claim MZBB1811LSN014084
+    - main [ref=f3e46]:
+      - generic [ref=f3e63]:
+        - generic [ref=f3e64]:
+          - generic [ref=f3e65]:
+            - button "Zoom out" [ref=f3e66] [cursor=pointer]: −
+            - generic [ref=f3e67]: 100%
+            - button "Zoom in" [ref=f3e68] [cursor=pointer]: +
+          - generic [ref=f3e69]:
+            - button "Rotate anticlockwise" [ref=f3e70] [cursor=pointer]
+            - button "Rotate clockwise" [ref=f3e74] [cursor=pointer]
+          - button "Reset" [ref=f3e78] [cursor=pointer]
+          - generic [ref=f3e79]: 8 pages
+          - generic [ref=f3e80]: Ctrl/⌘ + scroll to zoom
+        - generic [ref=f3e82]:
+          - generic "Doubtful \"mothro\" (expected \"motors\") — the scan quality can account for this, please confirm visually" [ref=f3e86] [cursor=pointer]: "2"
+          - generic "PAN \"GROPS2837G\" format is valid; 4th letter 'P' = Individual" [ref=f3e94] [cursor=pointer]: "7"
+          - generic [ref=f3e96]:
+            - generic "Doubtful \"yealber\" (expected \"dealer\") — the scan quality can account for this, please confirm visually" [ref=f3e99] [cursor=pointer]: "3"
+            - generic "QR code read from MZBB1811LSN014084.pdf page 4." [ref=f3e101] [cursor=pointer]: "8"
+          - generic "Father's name \"Gurveer Singh\" also appears on claim MZBB1811LSN, MZBB1811LS." [ref=f3e106] [cursor=pointer]: "4"
+          - generic "Doubtful \"enquire\" (expected \"require\") — the scan quality can account for this, please confirm visually" [ref=f3e111] [cursor=pointer]: "5"
+          - generic [ref=f3e113]:
+            - generic "Doubtful \"uttarkhand\" (expected \"uttarakhand\") — the scan quality can account for this, please confirm visually" [ref=f3e116] [cursor=pointer]: "6"
+            - generic "QR code read from MZBB1811LSN014084.pdf page 7." [ref=f3e118] [cursor=pointer]: "9"
+          - generic "Account number \"7088007037\" also appears on claim MZBB1811LSN, MZBB6814LS, MZBB6814LSN, MZBB1811LS, MZBFB812LT and 1 more." [ref=f3e123] [cursor=pointer]: "1"
+      - generic [ref=f3e125]:
+        - heading "Findings" [level=2] [ref=f3e130]
+        - generic [ref=f3e132]:
+          - generic [ref=f3e133]:
+            - generic [ref=f3e137]: Findings
+            - generic [ref=f3e138]: "14"
+            - generic [ref=f3e139]:
+              - generic [ref=f3e140]: 1/9
+              - button "Previous finding" [ref=f3e141] [cursor=pointer]
+              - button "Next finding" [ref=f3e144] [cursor=pointer]
+              - button "Collapse findings" [expanded] [ref=f3e147] [cursor=pointer]
+          - generic [ref=f3e152]:
+            - button "All 14" [ref=f3e153] [cursor=pointer]
+            - button "Red flags 3" [ref=f3e154] [cursor=pointer]
+            - button "Advisory 6" [ref=f3e155] [cursor=pointer]
+            - textbox "Filter findings" [ref=f3e157]:
+              - /placeholder: Filter…
+          - generic [ref=f3e158]:
+            - generic [ref=f3e159]:
+              - button "Red flag · Page 8 · 1" [ref=f3e160] [cursor=pointer]:
+                - generic [ref=f3e161]: Red flag ·
+                - text: Page 8
+                - generic [ref=f3e162]: ·
+                - generic [ref=f3e163]: "1"
+              - list [ref=f3e167]:
+                - listitem [ref=f3e168]:
+                  - button "1 Account number \"7088007037\" also appears on claim MZBB1811LSN, MZBB6814LS, MZBB6814LSN, MZBB1811LS, MZBFB812LT and 1 more." [ref=f3e169] [cursor=pointer]:
+                    - generic [ref=f3e170]: "1"
+                    - generic [ref=f3e171]: Account number "7088007037" also appears on claim MZBB1811LSN, MZBB6814LS, MZBB6814LSN, MZBB1811LS, MZBFB812LT and 1 more.
+                  - button "Copy this finding" [ref=f3e173] [cursor=pointer]
+            - generic [ref=f3e177]:
+              - button "Red flag · Document · 2" [disabled] [ref=f3e178]:
+                - generic [ref=f3e179]: Red flag ·
+                - text: Document
+                - generic [ref=f3e180]: ·
+                - generic [ref=f3e181]: "2"
+              - list [ref=f3e182]:
+                - listitem [ref=f3e183]:
+                  - button "— Document produced/edited by \"iLovePDF; modified using iText® 5.5.9 ©2000-2015 iText Group NV (AGPL-version)\"" [disabled] [ref=f3e184]:
+                    - generic [ref=f3e185]: —
+                    - generic [ref=f3e186]: Document produced/edited by "iLovePDF; modified using iText® 5.5.9 ©2000-2015 iText Group NV (AGPL-version)"
+                  - button "Copy this finding" [ref=f3e188] [cursor=pointer]
+                - listitem [ref=f3e192]:
+                  - button "— Signature block reads \"Auth. Sing\" — \"Sing\" is not \"sign\"" [disabled] [ref=f3e193]:
+                    - generic [ref=f3e194]: —
+                    - generic [ref=f3e195]: Signature block reads "Auth. Sing" — "Sing" is not "sign"
+                  - button "Copy this finding" [ref=f3e197] [cursor=pointer]
+            - generic [ref=f3e201]:
+              - button "Advisory · Page 1 · 2" [ref=f3e202] [cursor=pointer]:
+                - generic [ref=f3e203]: Advisory ·
+                - text: Page 1
+                - generic [ref=f3e204]: ·
+                - generic [ref=f3e205]: "2"
+              - list [ref=f3e209]:
+                - listitem [ref=f3e210]:
+                  - button "2 Doubtful \"mothro\" (expected \"motors\") — the scan quality can account for this, please confirm visually" [ref=f3e211] [cursor=pointer]:
+                    - generic [ref=f3e212]: "2"
+                    - generic [ref=f3e213]: Doubtful "mothro" (expected "motors") — the scan quality can account for this, please confirm visually
+                  - button "Copy this finding" [ref=f3e215] [cursor=pointer]
+                - listitem [ref=f3e219]:
+                  - button "— Editable doc - Text insertable in \"MZBB1811LSN014084.pdf\" (pages 1, 2, 6, 7, 8)" [ref=f3e220] [cursor=pointer]:
+                    - generic [ref=f3e221]: —
+                    - generic [ref=f3e222]: Editable doc - Text insertable in "MZBB1811LSN014084.pdf" (pages 1, 2, 6, 7, 8)
+                  - button "Copy this finding" [ref=f3e224] [cursor=pointer]
+            - generic [ref=f3e228]:
+              - button "Advisory · Page 4 · 1" [ref=f3e229] [cursor=pointer]:
+                - generic [ref=f3e230]: Advisory ·
+                - text: Page 4
+                - generic [ref=f3e231]: ·
+                - generic [ref=f3e232]: "1"
+              - list [ref=f3e236]:
+                - listitem [ref=f3e237]:
+                  - button "3 Doubtful \"yealber\" (expected \"dealer\") — the scan quality can account for this, please confirm visually" [ref=f3e238] [cursor=pointer]:
+                    - generic [ref=f3e239]: "3"
+                    - generic [ref=f3e240]: Doubtful "yealber" (expected "dealer") — the scan quality can account for this, please confirm visually
+                  - button "Copy this finding" [ref=f3e242] [cursor=pointer]
+            - generic [ref=f3e246]:
+              - button "Advisory · Page 5 · 1" [ref=f3e247] [cursor=pointer]:
+                - generic [ref=f3e248]: Advisory ·
+                - text: Page 5
+                - generic [ref=f3e249]: ·
+                - generic [ref=f3e250]: "1"
+              - list [ref=f3e254]:
+                - listitem [ref=f3e255]:
+                  - button "4 Father's name \"Gurveer Singh\" also appears on claim MZBB1811LSN, MZBB1811LS." [ref=f3e256] [cursor=pointer]:
+                    - generic [ref=f3e257]: "4"
+                    - generic [ref=f3e258]: Father's name "Gurveer Singh" also appears on claim MZBB1811LSN, MZBB1811LS.
+                  - button "Copy this finding" [ref=f3e260] [cursor=pointer]
+            - generic [ref=f3e264]:
+              - button "Advisory · Page 6 · 1" [ref=f3e265] [cursor=pointer]:
+                - generic [ref=f3e266]: Advisory ·
+                - text: Page 6
+                - generic [ref=f3e267]: ·
+                - generic [ref=f3e268]: "1"
+              - list [ref=f3e272]:
+                - listitem [ref=f3e273]:
+                  - button "5 Doubtful \"enquire\" (expected \"require\") — the scan quality can account for this, please confirm visually" [ref=f3e274] [cursor=pointer]:
+                    - generic [ref=f3e275]: "5"
+                    - generic [ref=f3e276]: Doubtful "enquire" (expected "require") — the scan quality can account for this, please confirm visually
+                  - button "Copy this finding" [ref=f3e278] [cursor=pointer]
+            - generic [ref=f3e282]:
+              - button "Advisory · Page 7 · 1" [ref=f3e283] [cursor=pointer]:
+                - generic [ref=f3e284]: Advisory ·
+                - text: Page 7
+                - generic [ref=f3e285]: ·
+                - generic [ref=f3e286]: "1"
+              - list [ref=f3e290]:
+                - listitem [ref=f3e291]:
+                  - button "6 Doubtful \"uttarkhand\" (expected \"uttarakhand\") — the scan quality can account for this, please confirm visually" [ref=f3e292] [cursor=pointer]:
+                    - generic [ref=f3e293]: "6"
+                    - generic [ref=f3e294]: Doubtful "uttarkhand" (expected "uttarakhand") — the scan quality can account for this, please confirm visually
+                  - button "Copy this finding" [ref=f3e296] [cursor=pointer]
+            - generic [ref=f3e300]:
+              - button "Note · Page 3 · 2" [ref=f3e301] [cursor=pointer]:
+                - generic [ref=f3e302]: Note ·
+                - text: Page 3
+                - generic [ref=f3e303]: ·
+                - generic [ref=f3e304]: "2"
+              - list [ref=f3e308]:
+                - listitem [ref=f3e309]:
+                  - button "— No QR code was found on page 3 of MZBB1811LSN014084.pdf, which reads as a PAN card. Many older card designs carry no QR code at all; if this one does, the scan may be too small or blurred to read it." [ref=f3e310] [cursor=pointer]:
+                    - generic [ref=f3e311]: —
+                    - generic [ref=f3e312]: No QR code was found on page 3 of MZBB1811LSN014084.pdf, which reads as a PAN card. Many older card designs carry no QR code at all; if this one does, the scan may be too small or blurred to read it.
+                  - button "Copy this finding" [ref=f3e314] [cursor=pointer]
+                - listitem [ref=f3e318]:
+                  - button "7 PAN \"GROPS2837G\" format is valid; 4th letter 'P' = Individual" [ref=f3e319] [cursor=pointer]:
+                    - generic [ref=f3e320]: "7"
+                    - generic [ref=f3e321]: PAN "GROPS2837G" format is valid; 4th letter 'P' = Individual
+                  - button "Copy this finding" [ref=f3e323] [cursor=pointer]
+            - generic [ref=f3e327]:
+              - button "Note · Page 4 · 1" [ref=f3e328] [cursor=pointer]:
+                - generic [ref=f3e329]: Note ·
+                - text: Page 4
+                - generic [ref=f3e330]: ·
+                - generic [ref=f3e331]: "1"
+              - list [ref=f3e335]:
+                - listitem [ref=f3e336]:
+                  - button "8 QR code read from MZBB1811LSN014084.pdf page 4." [ref=f3e337] [cursor=pointer]:
+                    - generic [ref=f3e338]: "8"
+                    - generic [ref=f3e339]: QR code read from MZBB1811LSN014084.pdf page 4.
+                  - button "Copy this finding" [ref=f3e341] [cursor=pointer]
+            - generic [ref=f3e345]:
+              - button "Note · Page 5 · 1" [ref=f3e346] [cursor=pointer]:
+                - generic [ref=f3e347]: Note ·
+                - text: Page 5
+                - generic [ref=f3e348]: ·
+                - generic [ref=f3e349]: "1"
+              - list [ref=f3e353]:
+                - listitem [ref=f3e354]:
+                  - button "— No QR code was found on page 5 of MZBB1811LSN014084.pdf, which reads as an Aadhaar card. Many older card designs carry no QR code at all; if this one does, the scan may be too small or blurred to read it." [ref=f3e355] [cursor=pointer]:
+                    - generic [ref=f3e356]: —
+                    - generic [ref=f3e357]: No QR code was found on page 5 of MZBB1811LSN014084.pdf, which reads as an Aadhaar card. Many older card designs carry no QR code at all; if this one does, the scan may be too small or blurred to read it.
+                  - button "Copy this finding" [ref=f3e359] [cursor=pointer]
+            - generic [ref=f3e363]:
+              - button "Note · Page 7 · 1" [ref=f3e364] [cursor=pointer]:
+                - generic [ref=f3e365]: Note ·
+                - text: Page 7
+                - generic [ref=f3e366]: ·
+                - generic [ref=f3e367]: "1"
+              - list [ref=f3e371]:
+                - listitem [ref=f3e372]:
+                  - button "9 QR code read from MZBB1811LSN014084.pdf page 7." [ref=f3e373] [cursor=pointer]:
+                    - generic [ref=f3e374]: "9"
+                    - generic [ref=f3e375]: QR code read from MZBB1811LSN014084.pdf page 7.
+                  - button "Copy this finding" [ref=f3e377] [cursor=pointer]
+  - region "Notifications (F8)":
+    - list

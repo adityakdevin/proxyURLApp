@@ -1,0 +1,69 @@
+- generic [ref=f7e2]:
+  - generic [ref=f7e3]:
+    - banner [ref=f7e4]:
+      - heading "TEST-DMS-01" [level=1] [ref=f7e49]
+      - navigation [ref=f7e6]:
+        - button "All" [ref=f7e7] [cursor=pointer]
+        - button "Spell" [ref=f7e8] [cursor=pointer]
+        - button "QR" [ref=f7e9] [cursor=pointer]
+        - button "Intra-Claim 1" [ref=f7e50] [cursor=pointer]:
+          - text: Intra-Claim
+          - generic [ref=f7e51]: "1"
+        - button "Missing Docs" [ref=f7e11] [cursor=pointer]
+        - button "Data Compare 1" [ref=f7e52] [cursor=pointer]:
+          - text: Data Compare
+          - generic [ref=f7e53]: "1"
+        - button "Red Flags 2" [ref=f7e54] [cursor=pointer]:
+          - text: Red Flags
+          - generic [ref=f7e55]: "2"
+        - button "Duplicate" [ref=f7e14] [cursor=pointer]
+      - generic [ref=f7e15]:
+        - generic [ref=f7e56]: 1 red flag
+        - generic [ref=f7e16]:
+          - button "Previous claim" [ref=f7e17] [cursor=pointer]
+          - button "Next claim" [ref=f7e20] [cursor=pointer]
+        - button "Go to claim ID" [ref=f7e23] [cursor=pointer]
+        - button "Re-validate this claim" [ref=f7e28] [cursor=pointer]:
+          - generic [ref=f7e32]: Re-validate
+        - link "Open claim" [ref=f7e33] [cursor=pointer]:
+          - /url: /admin/claims/9f9dfd3e-4f12-47f9-a985-83cd34617668
+        - button "Hide panel" [ref=f7e40] [cursor=pointer]
+    - status [ref=f7e45]: Claim TEST-DMS-01
+    - main [ref=f7e46]:
+      - generic [ref=f7e60]:
+        - generic [ref=f7e61]:
+          - generic [ref=f7e62]:
+            - button "Zoom out" [ref=f7e63] [cursor=pointer]: −
+            - generic [ref=f7e64]: 100%
+            - button "Zoom in" [ref=f7e65] [cursor=pointer]: +
+          - generic [ref=f7e66]:
+            - button "Rotate anticlockwise" [ref=f7e67] [cursor=pointer]
+            - button "Rotate clockwise" [ref=f7e71] [cursor=pointer]
+          - button "Reset" [ref=f7e75] [cursor=pointer]
+          - generic [ref=f7e126]: 1 page
+          - generic [ref=f7e76]: Ctrl/⌘ + scroll to zoom
+        - generic "Customer name \"RAHUL VERMA\" on the invoice does not match \"SURESH KUMAR\" in the DMS upload." [ref=f7e130] [cursor=pointer]: "1"
+      - generic [ref=f7e81]:
+        - heading "Findings" [level=2] [ref=f7e86]
+        - generic [ref=f7e88]:
+          - generic [ref=f7e89]:
+            - generic [ref=f7e93]: Findings
+            - generic [ref=f7e94]: "1"
+            - generic [ref=f7e95]:
+              - generic [ref=f7e96]: 1/1
+              - button "Previous finding" [ref=f7e97] [cursor=pointer]
+              - button "Next finding" [ref=f7e100] [cursor=pointer]
+              - button "Collapse findings" [expanded] [ref=f7e103] [cursor=pointer]
+          - generic [ref=f7e109]:
+            - button "Page 1 · 1" [ref=f7e110] [cursor=pointer]:
+              - text: Page 1
+              - generic [ref=f7e111]: ·
+              - generic [ref=f7e112]: "1"
+            - list [ref=f7e116]:
+              - listitem [ref=f7e117]:
+                - button "1 Customer name \"RAHUL VERMA\" on the invoice does not match \"SURESH KUMAR\" in the DMS upload." [ref=f7e118] [cursor=pointer]:
+                  - generic [ref=f7e119]: "1"
+                  - generic [ref=f7e120]: Customer name "RAHUL VERMA" on the invoice does not match "SURESH KUMAR" in the DMS upload.
+                - button "Copy this finding" [ref=f7e122] [cursor=pointer]
+  - region "Notifications (F8)":
+    - list

@@ -1,0 +1,171 @@
+- generic [ref=f2e2]:
+  - generic [ref=f2e3]:
+    - banner [ref=f2e4]:
+      - generic [ref=f2e5]:
+        - generic [ref=f2e6]:
+          - heading "Proxy URL App" [level=1] [ref=f2e7]
+          - generic [ref=f2e32]: FY2025
+        - generic [ref=f2e8]:
+          - generic [ref=f2e9]: Administrator
+          - button "Logout" [ref=f2e10] [cursor=pointer]
+    - generic [ref=f2e14]:
+      - complementary [ref=f2e15]:
+        - navigation [ref=f2e16]:
+          - link "Dashboard" [ref=f2e17] [cursor=pointer]:
+            - /url: /dashboard
+          - generic [ref=f2e21]:
+            - text: Claims
+            - link "Claim Dashboard" [ref=f2e23] [cursor=pointer]:
+              - /url: /claims
+          - generic [ref=f2e33]: No URLs available for your account
+      - main [ref=f2e30]:
+        - generic [ref=f2e31]:
+          - generic [ref=f2e34]:
+            - button "Back to Claims" [ref=f2e35] [cursor=pointer]
+            - generic [ref=f2e39]:
+              - combobox "Go to claim ID" [ref=f2e40]
+              - button "Go to this claim" [disabled] [ref=f2e41]
+          - generic [ref=f2e46]:
+            - generic [ref=f2e47]:
+              - generic [ref=f2e48]:
+                - heading "MZBB1811LSN014084" [level=1] [ref=f2e49]
+                - paragraph [ref=f2e50]: ISL - DVS - Test / ISL - DVS - Test V1
+              - generic [ref=f2e51]: In Progress
+            - generic [ref=f2e52]:
+              - generic [ref=f2e53]: "Folder Path: D:\\Details_for_sw_testing_3rd_Jul26\\MZBB1811LSN014084.pdf"
+              - generic [ref=f2e54]: "Assigned To: Unassigned"
+            - generic [ref=f2e55]:
+              - generic [ref=f2e56]:
+                - 'generic "4 doubtful (possible scan misread): mothro→motors, enquire→require, uttarkhand→uttarakhand, yealber→dealer" [ref=f2e57] [cursor=pointer]': "Spell: DOUBTFUL"
+                - generic "2 QR code(s) found across 1 document(s)." [ref=f2e58] [cursor=pointer]: "QR: OK"
+                - generic "Claim ID found in 1 of 1 document(s)." [ref=f2e59] [cursor=pointer]: "Intra-Claim: PASSED"
+                - 'generic "2 red flag(s) found: Signatory misspelt ×1, Editor watermark ×1; 1 advisory." [ref=f2e60] [cursor=pointer]': "Red Flags: FAILED"
+                - generic "All 2 required document types present." [ref=f2e61] [cursor=pointer]: "Missing Docs: PASSED"
+                - generic "All compared values agree across documents." [ref=f2e62] [cursor=pointer]: "Data Compare: PASSED"
+                - generic "2 duplicate data point(s) shared with other claims, 1 of them a red flag." [ref=f2e63] [cursor=pointer]: "Duplicate: FAILED"
+              - button "Re-validate" [ref=f2e65] [cursor=pointer]
+          - generic [ref=f2e66]:
+            - group [ref=f2e67]:
+              - 'generic "Spell 4 doubtful (possible scan misread): mothro→motors, enquire→require, uttarkhand→uttarakhand, yealber→dealer" [ref=f2e68] [cursor=pointer]':
+                - generic [ref=f2e69]:
+                  - heading "Spell" [level=2] [ref=f2e70]
+                  - generic [ref=f2e71]: "4 doubtful (possible scan misread): mothro→motors, enquire→require, uttarkhand→uttarakhand, yealber→dealer"
+              - list [ref=f2e74]:
+                - listitem [ref=f2e75]:
+                  - button "MZBB1811LSN014084.pdf" [ref=f2e76] [cursor=pointer]
+                  - text: "— 4 findings:"
+                  - list [ref=f2e77]:
+                    - listitem [ref=f2e78]: Doubtful "enquire" (expected "require") — the scan quality can account for this, please confirm visually
+                    - listitem [ref=f2e79]: Doubtful "yealber" (expected "dealer") — the scan quality can account for this, please confirm visually
+                    - listitem [ref=f2e80]: Doubtful "mothro" (expected "motors") — the scan quality can account for this, please confirm visually
+                    - listitem [ref=f2e81]: Doubtful "uttarkhand" (expected "uttarakhand") — the scan quality can account for this, please confirm visually
+            - group [ref=f2e82]:
+              - generic "QR 2 QR code(s) found across 1 document(s)." [ref=f2e83] [cursor=pointer]:
+                - generic [ref=f2e84]:
+                  - heading "QR" [level=2] [ref=f2e85]
+                  - generic [ref=f2e86]: 2 QR code(s) found across 1 document(s).
+              - list [ref=f2e89]:
+                - listitem [ref=f2e90]:
+                  - button "MZBB1811LSN014084.pdf" [ref=f2e91] [cursor=pointer]
+                  - text: "— 4 findings:"
+                  - list [ref=f2e92]:
+                    - listitem [ref=f2e93]: QR code read from MZBB1811LSN014084.pdf page 4.
+                    - listitem [ref=f2e94]: No QR code was found on page 3 of MZBB1811LSN014084.pdf, which reads as a PAN card. Many older card designs carry no QR code at all; if this one does, the scan may be too small or blurred to read it.
+                    - listitem [ref=f2e95]: No QR code was found on page 5 of MZBB1811LSN014084.pdf, which reads as an Aadhaar card. Many older card designs carry no QR code at all; if this one does, the scan may be too small or blurred to read it.
+                    - listitem [ref=f2e96]: QR code read from MZBB1811LSN014084.pdf page 7.
+              - button "View QR Data" [ref=f2e98] [cursor=pointer]
+            - group [ref=f2e99]:
+              - generic "Intra-Claim Claim ID found in 1 of 1 document(s)." [ref=f2e100] [cursor=pointer]:
+                - generic [ref=f2e101]:
+                  - heading "Intra-Claim" [level=2] [ref=f2e102]
+                  - generic [ref=f2e103]: Claim ID found in 1 of 1 document(s).
+              - list [ref=f2e106]:
+                - listitem [ref=f2e107]:
+                  - button "MZBB1811LSN014084.pdf" [ref=f2e108] [cursor=pointer]
+            - group [ref=f2e109]:
+              - 'generic "Red Flags 2 red flag(s) found: Signatory misspelt ×1, Editor watermark ×1; 1 advisory." [ref=f2e110] [cursor=pointer]':
+                - generic [ref=f2e111]:
+                  - heading "Red Flags" [level=2] [ref=f2e112]
+                  - generic [ref=f2e113]: "2 red flag(s) found: Signatory misspelt ×1, Editor watermark ×1; 1 advisory."
+              - list [ref=f2e116]:
+                - listitem [ref=f2e117]:
+                  - button "MZBB1811LSN014084.pdf" [ref=f2e118] [cursor=pointer]
+                  - text: "— 4 findings:"
+                  - list [ref=f2e119]:
+                    - listitem [ref=f2e120]: Editable doc - Text insertable in "MZBB1811LSN014084.pdf" (pages 1, 2, 6, 7, 8)
+                    - listitem [ref=f2e121]: Document produced/edited by "iLovePDF; modified using iText® 5.5.9 ©2000-2015 iText Group NV (AGPL-version)"
+                    - listitem [ref=f2e122]: PAN "GROPS2837G" format is valid; 4th letter 'P' = Individual
+                    - listitem [ref=f2e123]: Signature block reads "Auth. Sing" — "Sing" is not "sign"
+            - group [ref=f2e124]:
+              - generic "Missing Docs All 2 required document types present. PAN Card (MZBB1811LSN014084.pdf p.3), Aadhar Card (MZBB1811LSN014084.pdf p.5)" [ref=f2e125] [cursor=pointer]:
+                - generic [ref=f2e126]:
+                  - heading "Missing Docs" [level=2] [ref=f2e127]
+                  - generic [ref=f2e128]: All 2 required document types present.
+                  - generic [ref=f2e129]: PAN Card (MZBB1811LSN014084.pdf p.3), Aadhar Card (MZBB1811LSN014084.pdf p.5)
+              - list [ref=f2e132]:
+                - listitem [ref=f2e133]:
+                  - button "MZBB1811LSN014084.pdf" [ref=f2e134] [cursor=pointer]
+            - group [ref=f2e135]:
+              - generic "Data Compare All compared values agree across documents." [ref=f2e136] [cursor=pointer]:
+                - generic [ref=f2e137]:
+                  - heading "Data Compare" [level=2] [ref=f2e138]
+                  - generic [ref=f2e139]: All compared values agree across documents.
+              - list [ref=f2e142]:
+                - listitem [ref=f2e143]:
+                  - button "MZBB1811LSN014084.pdf" [ref=f2e144] [cursor=pointer]
+            - group [ref=f2e145]:
+              - generic "Duplicate 2 duplicate data point(s) shared with other claims, 1 of them a red flag." [ref=f2e146] [cursor=pointer]:
+                - generic [ref=f2e147]:
+                  - heading "Duplicate" [level=2] [ref=f2e148]
+                  - generic [ref=f2e149]: 2 duplicate data point(s) shared with other claims, 1 of them a red flag.
+              - list [ref=f2e152]:
+                - listitem [ref=f2e153]:
+                  - button "MZBB1811LSN014084.pdf" [ref=f2e154] [cursor=pointer]
+                  - text: "— 2 findings:"
+                  - list [ref=f2e155]:
+                    - listitem [ref=f2e156]: Account number "7088007037" also appears on claim MZBB1811LSN, MZBB6814LS, MZBB6814LSN, MZBB1811LS, MZBFB812LT and 1 more.
+                    - listitem [ref=f2e157]: Father's name "Gurveer Singh" also appears on claim MZBB1811LSN, MZBB1811LS.
+          - generic [ref=f2e158]:
+            - heading "Update Claim" [level=2] [ref=f2e159]
+            - generic [ref=f2e160]:
+              - generic [ref=f2e161]:
+                - text: Change Status (optional)
+                - combobox [ref=f2e162] [cursor=pointer]:
+                  - generic: Keep current status
+              - generic [ref=f2e165]:
+                - text: Reassign (optional)
+                - combobox [ref=f2e166] [cursor=pointer]:
+                  - generic: Keep assignment
+            - generic [ref=f2e169]:
+              - text: Remark
+              - textbox "Required" [ref=f2e170]
+            - generic [ref=f2e171]:
+              - button "Save" [disabled]
+          - generic [ref=f2e172]:
+            - generic [ref=f2e173]:
+              - heading "Documents" [level=2] [ref=f2e174]
+              - generic [ref=f2e175]:
+                - button "Sync from folder" [ref=f2e176] [cursor=pointer]
+                - generic [ref=f2e177] [cursor=pointer]: Upload
+            - generic [ref=f2e179]:
+              - generic [ref=f2e180]:
+                - link "MZBB1811LSN014084.pdf" [ref=f2e181] [cursor=pointer]:
+                  - /url: /api/claims/b483fa68-f3bb-47e1-b8af-bc3fee7ef55f/documents/1e29085e-03d4-4efc-927a-ebc5a0610733/content
+                - generic [ref=f2e182]: Unclassified
+                - generic [ref=f2e183]: Scanned
+              - generic [ref=f2e184]:
+                - generic [ref=f2e185]: 1.1 MB
+                - generic [ref=f2e186]: 10/07/2026
+                - button "Delete" [ref=f2e187] [cursor=pointer]
+          - generic [ref=f2e188]:
+            - heading "Remarks Timeline (1)" [level=2] [ref=f2e189]:
+              - text: Remarks Timeline
+              - generic [ref=f2e190]: (1)
+            - generic [ref=f2e192]:
+              - generic [ref=f2e193]:
+                - generic [ref=f2e194]: Administrator
+                - generic [ref=f2e195]: 16/08/2026, 20:19:58
+                - generic [ref=f2e196]: New → In Progress
+              - paragraph [ref=f2e197]: Validation completed, so this claim moved off the default status and now shows as picked up. This says the checks have run — it does not say they passed.
+  - region "Notifications (F8)":
+    - list
