@@ -319,22 +319,23 @@ const NOMINEE_HEADER_RE =
   /(?:name\s+of\s+(?:the\s+)?nominee|nominee'?s?\s+name)[\s\S]{0,160}relationship\s+with\s+(?:insured|nominee)/i;
 const NAME_PREFIX_RE = /^(?:mr|mrs|ms|miss|smt|shri|sri|dr|kum|kumari|m\/s)\.?$/i;
 const RELATION_RE = /^(?:spouse|wife|husband|father|mother|son|daughter|brother|sister)$/i;
+const NOMINEE_ROW_END_RE = /^(?:vehicle|details|registration|previous|period|insured's|schedule|premium|registered)$/i;
 
 export function checkNominee(text: string, page: number | null = null): RedFlagFinding[] {
   const m = NOMINEE_HEADER_RE.exec(text);
   if (!m) return [];
-  const tokens = text.slice(m.index + m[0].length).trim().split(/\s+/).slice(0, 8);
+  // Read the whole row, in any order: a digital ICICI schedule stores it as "26 DAUGHTER NA NA
+  // NUSRATH JABEEN" (MZBFF813LTN), so stopping at the first number found no name that was
+  // there. The row ends at the next section heading.
+  const tokens = text.slice(m.index + m[0].length).trim().split(/\s+/).slice(0, 12);
   const name: string[] = [];
   let details = false;
   for (const t of tokens) {
     const w = t.replace(/[,:;|]/g, '');
-    if (/^\d{1,3}$/.test(w) || RELATION_RE.test(w)) {
-      details = true;
-      break;
-    }
-    // "NA" is a placeholder, not a name: "NA 42 SPOUSE" is still a nominee without one.
-    if (/^na$/i.test(w)) continue;
-    if (!NAME_PREFIX_RE.test(w)) name.push(w);
+    if (NOMINEE_ROW_END_RE.test(w)) break;
+    if (/^\d{1,3}$/.test(w) || RELATION_RE.test(w)) details = true;
+    else if (/^na$/i.test(w) || NAME_PREFIX_RE.test(w)) continue;
+    else if (/^[a-z][a-z.'-]*$/i.test(w)) name.push(w);
   }
   if (!details || name.length > 0) return [];
   return [err('REDFLAG_NOMINEE_NO_NAME', 'No name in Nominee but other details available', page)];
