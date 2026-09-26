@@ -428,3 +428,14 @@ describe('Invoice vs RC: Same Name / Diff Name', () => {
     expect(invoiceRcNameResult([inv])).toEqual([]);
   });
 });
+
+describe('account number', () => {
+  it('does not read a contact phone as an account number', () => {
+    expect(extractField('ACCOUNT_NO', 'MISP Contact No: 7088007037')).toEqual([]);
+  });
+  it('still reads real account labels', () => {
+    expect(extractField('ACCOUNT_NO', 'A/c No: 5012 3456 7890')).toHaveLength(1);
+    expect(extractField('ACCOUNT_NO', 'Account Number : 50123456789')).toHaveLength(1);
+    expect(extractField('ACCOUNT_NO', 'Acct No - 50123456789')).toHaveLength(1);
+  });
+});

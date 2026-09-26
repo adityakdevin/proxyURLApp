@@ -443,8 +443,11 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   // The label is required: a bare date on a page is an invoice/issue date far more often
   // than a birth date, and comparing those would flag every honest claim.
   DOB: /(?:date\s*of\s*birth|d\.?o\.?b\.?|birth\s*date)\s*[:\-]?\s*(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})/gi,
+  // Word-bounded, and no bare "act": that form matched the tail of "Contact No: 7088007037",
+  // so a dealer's phone on every policy was read as an account number and failed the
+  // Duplicate check on every claim from that dealer.
   ACCOUNT_NO:
-    /(?:a\/c|acc?(?:oun)?t)\.?\s*(?:no|number|#)?\s*[:\-]\s*([0-9][0-9\- ]{5,22}[0-9])/gi,
+    /\b(?:a\/c|acct|account)\.?\s*(?:no|number|#)?\s*[:\-]\s*([0-9][0-9\- ]{5,22}[0-9])/gi,
   RECEIPT_NO: /receipt\s*(?:no|number|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
   APPLICATION_NO:
     /(?:application|appl?n)\.?\s*(?:no|number|id|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
