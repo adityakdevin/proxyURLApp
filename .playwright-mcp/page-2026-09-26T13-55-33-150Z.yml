@@ -1,0 +1,27 @@
+- generic [ref=f7e2]:
+  - generic [ref=f7e3]:
+    - banner [ref=f7e4]:
+      - heading "Claim" [level=1] [ref=f7e5]
+      - navigation [ref=f7e6]:
+        - button "All" [ref=f7e7] [cursor=pointer]
+        - button "Spell" [ref=f7e8] [cursor=pointer]
+        - button "QR" [ref=f7e9] [cursor=pointer]
+        - button "Intra-Claim" [ref=f7e10] [cursor=pointer]
+        - button "Missing Docs" [ref=f7e11] [cursor=pointer]
+        - button "Data Compare" [ref=f7e12] [cursor=pointer]
+        - button "Red Flags" [ref=f7e13] [cursor=pointer]
+        - button "Duplicate" [ref=f7e14] [cursor=pointer]
+      - generic [ref=f7e15]:
+        - generic [ref=f7e16]:
+          - button "Previous claim" [disabled] [ref=f7e17]
+          - button "Next claim" [disabled] [ref=f7e20]
+        - button "Go to claim ID" [ref=f7e23] [cursor=pointer]
+        - button "Re-validate this claim" [ref=f7e28] [cursor=pointer]:
+          - generic [ref=f7e32]: Re-validate
+        - link "Open claim" [ref=f7e33] [cursor=pointer]:
+          - /url: /admin/claims/9f9dfd3e-4f12-47f9-a985-83cd34617668
+        - button "Hide panel" [ref=f7e40] [cursor=pointer]
+    - status [ref=f7e45]: Loading claim…
+    - main [ref=f7e46]: Loading document…
+  - region "Notifications (F8)":
+    - list

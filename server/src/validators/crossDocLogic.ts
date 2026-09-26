@@ -327,12 +327,29 @@ function cutAtNextLabel(v: string, forName: boolean): string {
  * ponytail: the lower-case rule would reject a name OCR'd entirely in lower case; documents
  * print names capitalised, so none has shown up.
  */
+/**
+ * Words that never occur in a person's name but do in the company, brand and helpline text
+ * OCR puts after a "Name" label. Each was read as a customer on a real production claim
+ * (2026-09-26): "TOYOTA KIRLOSKAR" (RC maker), "My TVS Toll Free" (helpline block).
+ */
+const NOT_A_PERSON_WORD = new Set([
+  'toll', 'free', 'helpline', 'care', 'www', 'com', 'ltd', 'limited', 'pvt', 'private',
+  'motor', 'motors', 'automobiles', 'auto', 'corporation', 'company', 'services', 'finance',
+  'insurance', 'general', 'bank', 'toyota', 'kirloskar', 'tvs', 'maruti', 'suzuki', 'hyundai',
+  'kia', 'honda', 'mahindra', 'tata', 'renault', 'nissan', 'skoda', 'volkswagen', 'mg',
+]);
+
 function cleanPersonName(raw: string): string | null {
   let v = cutAtNextLabel(raw, true);
   const words = v.split(' ');
   const last = words[words.length - 1];
   if (words.length > 1 && last.length <= 2 && last !== last.toUpperCase()) v = words.slice(0, -1).join(' ');
   if (!v || !/^[A-Z]/.test(v) || /\b(?:the|to|for|of|and|with|subject|from)\b/.test(v)) return null;
+  const tokens = v.toLowerCase().split(/[\s.]+/).filter(Boolean);
+  // A name has at least one word of 3+ letters: "Ch" is an OCR fragment of the RC's "Chassis",
+  // and it produced a false Invoice vs RC "Diff Name" on MZBEP812TSN.
+  if (!tokens.some((t) => /^[a-z]{3,}$/.test(t))) return null;
+  if (tokens.some((t) => NOT_A_PERSON_WORD.has(t))) return null;
   return v;
 }
 
@@ -377,6 +394,8 @@ const NON_PERSON_NAME_LABEL = new Set([
   // this the dealership was reported as the insured — the one name on the page that is
   // certainly NOT the customer.
   'misp',
+  // RC "Maker's Name : TOYOTA KIRLOSKAR MOTOR" — the manufacturer, not the owner.
+  'maker', 'manufacturer',
   // The broker's "Designated Person Name : GAURAV KUMAR" on Go Digit / Reliance schedules
   // (also "Contact Person Name"): an intermediary's staff member, never the customer. It
   // surfaced once "Bill To" made the invoice's name readable (MZBB1811LSN014084).

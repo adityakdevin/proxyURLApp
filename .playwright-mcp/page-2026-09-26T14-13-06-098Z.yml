@@ -1,0 +1,101 @@
+- generic [ref=f19e2]:
+  - generic [ref=f19e3]:
+    - banner [ref=f19e4]:
+      - heading "TEST-DL-01" [level=1] [ref=f19e5]
+      - navigation [ref=f19e6]:
+        - button "All" [ref=f19e7] [cursor=pointer]
+        - button "Spell 1" [ref=f19e8] [cursor=pointer]:
+          - text: Spell
+          - generic [ref=f19e9]: "1"
+        - button "QR" [ref=f19e10] [cursor=pointer]
+        - button "Intra-Claim 1" [ref=f19e11] [cursor=pointer]:
+          - text: Intra-Claim
+          - generic [ref=f19e12]: "1"
+        - button "Missing Docs" [ref=f19e13] [cursor=pointer]
+        - button "Data Compare" [ref=f19e14] [cursor=pointer]
+        - button "Red Flags 4" [ref=f19e15] [cursor=pointer]:
+          - text: Red Flags
+          - generic [ref=f19e16]: "4"
+        - button "Duplicate" [ref=f19e17] [cursor=pointer]
+      - generic [ref=f19e18]:
+        - generic [ref=f19e19]: 3 red flags
+        - generic [ref=f19e22]: 1 advisory
+        - generic [ref=f19e23]:
+          - button "Previous claim" [disabled] [ref=f19e24]
+          - button "Next claim" [ref=f19e27] [cursor=pointer]
+        - button "Go to claim ID" [ref=f19e30] [cursor=pointer]
+        - button "Re-validate this claim" [ref=f19e35] [cursor=pointer]:
+          - generic [ref=f19e39]: Re-validate
+        - link "Open claim" [ref=f19e40] [cursor=pointer]:
+          - /url: /admin/claims/edb1698a-99b6-4218-bcc6-74c26af1ca8b
+        - button "Hide panel" [ref=f19e47] [cursor=pointer]
+    - status [ref=f19e52]: Claim TEST-DL-01
+    - main [ref=f19e53]:
+      - generic [ref=f19e55]:
+        - generic [ref=f19e56]:
+          - generic [ref=f19e57]:
+            - button "Zoom out" [ref=f19e58] [cursor=pointer]: −
+            - generic [ref=f19e59]: 100%
+            - button "Zoom in" [ref=f19e60] [cursor=pointer]: +
+          - generic [ref=f19e61]:
+            - button "Rotate anticlockwise" [ref=f19e62] [cursor=pointer]
+            - button "Rotate clockwise" [ref=f19e66] [cursor=pointer]
+          - button "Reset" [ref=f19e70] [cursor=pointer]
+          - generic [ref=f19e71]: 1 page
+          - generic [ref=f19e72]: Ctrl/⌘ + scroll to zoom
+        - generic "DL number \"MH142011006\" is not 2 letters + 13 digits (printed as 16 with the space, e.g. \"MH14 20110062821\")" [ref=f19e78] [cursor=pointer]: "1"
+      - generic [ref=f19e80]:
+        - heading "Findings" [level=2] [ref=f19e85]
+        - generic [ref=f19e87]:
+          - generic [ref=f19e88]:
+            - generic [ref=f19e92]: Findings
+            - generic [ref=f19e93]: "4"
+            - generic [ref=f19e94]:
+              - generic [ref=f19e95]: 1/1
+              - button "Previous finding" [ref=f19e96] [cursor=pointer]
+              - button "Next finding" [ref=f19e99] [cursor=pointer]
+              - button "Collapse findings" [expanded] [ref=f19e102] [cursor=pointer]
+          - generic [ref=f19e107]:
+            - generic [ref=f19e108]:
+              - button "Red flag · Page 1 · 1" [ref=f19e109] [cursor=pointer]:
+                - generic [ref=f19e110]: Red flag ·
+                - text: Page 1
+                - generic [ref=f19e111]: ·
+                - generic [ref=f19e112]: "1"
+              - list [ref=f19e116]:
+                - listitem [ref=f19e117]:
+                  - button "1 DL number \"MH142011006\" is not 2 letters + 13 digits (printed as 16 with the space, e.g. \"MH14 20110062821\")" [ref=f19e118] [cursor=pointer]:
+                    - generic [ref=f19e119]: "1"
+                    - generic [ref=f19e120]: DL number "MH142011006" is not 2 letters + 13 digits (printed as 16 with the space, e.g. "MH14 20110062821")
+                  - button "Copy this finding" [ref=f19e122] [cursor=pointer]
+            - generic [ref=f19e126]:
+              - button "Red flag · Document · 2" [disabled] [ref=f19e127]:
+                - generic [ref=f19e128]: Red flag ·
+                - text: Document
+                - generic [ref=f19e129]: ·
+                - generic [ref=f19e130]: "2"
+              - list [ref=f19e131]:
+                - listitem [ref=f19e132]:
+                  - button "— Document produced/edited by \"ReportLab PDF Library - (opensource)\"" [disabled] [ref=f19e133]:
+                    - generic [ref=f19e134]: —
+                    - generic [ref=f19e135]: Document produced/edited by "ReportLab PDF Library - (opensource)"
+                  - button "Copy this finding" [ref=f19e137] [cursor=pointer]
+                - listitem [ref=f19e141]:
+                  - button "— Impossible date \"31/04/2020\" (31 > 30 for month 4)" [disabled] [ref=f19e142]:
+                    - generic [ref=f19e143]: —
+                    - generic [ref=f19e144]: Impossible date "31/04/2020" (31 > 30 for month 4)
+                  - button "Copy this finding" [ref=f19e146] [cursor=pointer]
+            - generic [ref=f19e150]:
+              - button "Advisory · Document · 1" [disabled] [ref=f19e151]:
+                - generic [ref=f19e152]: Advisory ·
+                - text: Document
+                - generic [ref=f19e153]: ·
+                - generic [ref=f19e154]: "1"
+              - list [ref=f19e155]:
+                - listitem [ref=f19e156]:
+                  - button "— No signature / authorised-signatory wording found in the document" [disabled] [ref=f19e157]:
+                    - generic [ref=f19e158]: —
+                    - generic [ref=f19e159]: No signature / authorised-signatory wording found in the document
+                  - button "Copy this finding" [ref=f19e161] [cursor=pointer]
+  - region "Notifications (F8)":
+    - list

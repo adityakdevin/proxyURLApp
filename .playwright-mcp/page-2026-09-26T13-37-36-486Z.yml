@@ -1,0 +1,299 @@
+- generic [ref=f4e2]:
+  - generic [ref=f4e3]:
+    - banner [ref=f4e4]:
+      - generic [ref=f4e5]:
+        - generic [ref=f4e6]:
+          - heading "Proxy URL App" [level=1] [ref=f4e7]
+          - generic [ref=f4e109]: FY2025
+        - generic [ref=f4e8]:
+          - generic [ref=f4e9]: Administrator
+          - button "Logout" [ref=f4e10] [cursor=pointer]
+    - generic [ref=f4e14]:
+      - complementary [ref=f4e15]:
+        - navigation [ref=f4e16]:
+          - link "Dashboard" [ref=f4e17] [cursor=pointer]:
+            - /url: /dashboard
+          - generic [ref=f4e21]:
+            - text: Claims
+            - link "Claim Dashboard" [ref=f4e23] [cursor=pointer]:
+              - /url: /claims
+          - generic [ref=f4e110]: No URLs available for your account
+      - main [ref=f4e30]:
+        - generic [ref=f4e31]:
+          - generic [ref=f4e32]:
+            - heading "Claim Dashboard" [level=1] [ref=f4e33]
+            - button "Add Claim" [ref=f4e34] [cursor=pointer]
+          - generic [ref=f4e36]:
+            - textbox "Search claim id…" [ref=f4e37]
+            - combobox [ref=f4e38] [cursor=pointer]:
+              - generic: "Sub-Category: All"
+            - combobox [ref=f4e41] [cursor=pointer]:
+              - generic: "Status: All"
+            - combobox [ref=f4e44] [cursor=pointer]:
+              - generic: "Assigned: All"
+            - combobox [ref=f4e47] [cursor=pointer]:
+              - generic: "Spell: All"
+            - combobox [ref=f4e50] [cursor=pointer]:
+              - generic: "QR: All"
+            - combobox [ref=f4e53] [cursor=pointer]:
+              - generic: "Intra: All"
+            - combobox [ref=f4e56] [cursor=pointer]:
+              - generic: "Missing Docs: All"
+            - combobox [ref=f4e59] [cursor=pointer]:
+              - generic: "Data Compare: All"
+            - combobox [ref=f4e62] [cursor=pointer]:
+              - generic: "Red Flag: All"
+            - combobox [ref=f4e65] [cursor=pointer]:
+              - generic: "Duplicate: All"
+            - generic [ref=f4e68]:
+              - button "Export" [ref=f4e69] [cursor=pointer]
+              - button "Apply filters" [ref=f4e70] [cursor=pointer]
+          - generic [ref=f4e111]: Validation running — this list refreshes itself until it finishes.
+          - generic [ref=f4e71]:
+            - table [ref=f4e74]:
+              - rowgroup [ref=f4e75]:
+                - row [ref=f4e76]:
+                  - columnheader [ref=f4e77]:
+                    - checkbox "Select all rows on this page" [ref=f4e757] [cursor=pointer]
+                  - columnheader "Claim ID" [ref=f4e79]
+                  - columnheader "Sub-Category" [ref=f4e80]
+                  - columnheader "Workflow" [ref=f4e81]
+                  - columnheader "Assigned To" [ref=f4e82]
+                  - columnheader "Spell" [ref=f4e83]
+                  - columnheader "QR" [ref=f4e84]
+                  - columnheader "Intra-Claim" [ref=f4e85]
+                  - columnheader "Missing Docs" [ref=f4e86]
+                  - columnheader "Red Flags" [ref=f4e87]
+                  - columnheader "Duplicate" [ref=f4e88]
+                  - columnheader "Data Compare" [ref=f4e89]
+                  - columnheader "Created" [ref=f4e90]
+                  - columnheader "Actions" [ref=f4e91]
+              - rowgroup [ref=f4e92]:
+                - row [ref=f4e115]:
+                  - cell [ref=f4e116]:
+                    - checkbox "Select Testingsupport004" [ref=f4e758] [cursor=pointer]
+                  - cell [ref=f4e118]:
+                    - button "Testingsupport004" [ref=f4e759] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e120]
+                  - cell "In Progress" [ref=f4e121]
+                  - cell "Unassigned" [ref=f4e123]
+                  - cell "DOCS N/A" [ref=f4e124]
+                  - cell "DOCS N/A" [ref=f4e126]
+                  - cell "DOCS N/A" [ref=f4e128]
+                  - cell "DOCS N/A" [ref=f4e130]
+                  - cell "DOCS N/A" [ref=f4e132]
+                  - cell "DOCS N/A" [ref=f4e134]
+                  - cell "PENDING" [ref=f4e136]
+                  - cell "10d ago" [ref=f4e138]
+                  - cell [ref=f4e139]:
+                    - generic [ref=f4e768]:
+                      - button "Open documents" [ref=f4e769] [cursor=pointer]
+                      - button "Re-validate" [ref=f4e773] [cursor=pointer]
+                      - button "More actions" [ref=f4e777] [cursor=pointer]
+                - row [ref=f4e782]:
+                  - cell [ref=f4e155]:
+                    - checkbox "Select Testingsupport003" [ref=f4e783] [cursor=pointer]
+                  - cell [ref=f4e157]:
+                    - button "Testingsupport003" [ref=f4e784] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e159]
+                  - cell "In Progress" [ref=f4e160]
+                  - cell "Unassigned" [ref=f4e162]
+                  - cell "FAILED" [ref=f4e541]:
+                    - 'generic "1 expected-term misspelling(s): toal→total. 4 doubtful (possible scan misread): invoi→invoice, onder→gender, umver→number, requis→require" [ref=f4e786]': FAILED
+                  - cell "UNREADABLE" [ref=f4e787]
+                  - cell "FAILED" [ref=f4e544]
+                  - cell "FAILED" [ref=f4e546]
+                  - cell "FAILED" [ref=f4e791]
+                  - cell "PASSED" [ref=f4e549]
+                  - cell "DOUBTFUL" [ref=f4e551]
+                  - cell "10d ago" [ref=f4e177]
+                  - cell [ref=f4e795]:
+                    - generic [ref=f4e796]:
+                      - button "Open documents" [ref=f4e797] [cursor=pointer]
+                      - button "Re-validate" [ref=f4e801] [cursor=pointer]
+                      - button "More actions" [ref=f4e805] [cursor=pointer]
+                - row [ref=f4e810]:
+                  - cell [ref=f4e193]:
+                    - checkbox "Select Testingsupport002" [ref=f4e811] [cursor=pointer]
+                  - cell [ref=f4e195]:
+                    - button "Testingsupport002" [ref=f4e812] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e197]
+                  - cell "In Progress" [ref=f4e198]
+                  - cell "Unassigned" [ref=f4e200]
+                  - cell "IN PROGRESS" [ref=f4e814]
+                  - cell "IN PROGRESS" [ref=f4e816]
+                  - cell "IN PROGRESS" [ref=f4e818]
+                  - cell "IN PROGRESS" [ref=f4e820]
+                  - cell "IN PROGRESS" [ref=f4e822]
+                  - cell "IN PROGRESS" [ref=f4e824]
+                  - cell "IN PROGRESS" [ref=f4e826]
+                  - cell "10d ago" [ref=f4e215]
+                  - cell [ref=f4e828]:
+                    - generic [ref=f4e829]:
+                      - button "Open documents" [ref=f4e830] [cursor=pointer]
+                      - button "Validation running" [ref=f4e834] [cursor=pointer]
+                      - button "More actions" [ref=f4e837] [cursor=pointer]
+                - row [ref=f4e230]:
+                  - cell [ref=f4e231]:
+                    - checkbox "Select Testingsupport001" [ref=f4e842] [cursor=pointer]
+                  - cell [ref=f4e233]:
+                    - button "Testingsupport001" [ref=f4e843] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e235]
+                  - cell "In Progress" [ref=f4e236]
+                  - cell "Unassigned" [ref=f4e238]
+                  - cell "FAILED" [ref=f4e239]:
+                    - 'generic "1 expected-term misspelling(s): palicy→policy. 3 doubtful (possible scan misread): privat→private, vebicle→vehicle, asnt→absent" [ref=f4e845]': FAILED
+                  - cell "UNREADABLE" [ref=f4e241]
+                  - cell "FAILED" [ref=f4e243]
+                  - cell "FAILED" [ref=f4e245]
+                  - cell "FAILED" [ref=f4e247]
+                  - cell "PASSED" [ref=f4e249]
+                  - cell "PENDING" [ref=f4e251]
+                  - cell "10d ago" [ref=f4e253]
+                  - cell [ref=f4e254]:
+                    - generic [ref=f4e852]:
+                      - button "Open documents" [ref=f4e853] [cursor=pointer]
+                      - button "Queued, waiting for the validator" [ref=f4e857] [cursor=pointer]
+                      - button "More actions" [ref=f4e860] [cursor=pointer]
+                - row [ref=f4e268]:
+                  - cell [ref=f4e269]:
+                    - checkbox "Select MZBNC81BMSN" [ref=f4e865] [cursor=pointer]
+                  - cell [ref=f4e271]:
+                    - button "MZBNC81BMSN" [ref=f4e866] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e273]
+                  - cell "Closed" [ref=f4e274]
+                  - cell "Unassigned" [ref=f4e276]
+                  - cell "DOUBTFUL" [ref=f4e277]
+                  - cell "OK" [ref=f4e279]
+                  - cell "PASSED" [ref=f4e281]
+                  - cell "FAILED" [ref=f4e283]
+                  - cell "FAILED" [ref=f4e285]
+                  - cell "FAILED" [ref=f4e287]
+                  - cell "PENDING" [ref=f4e289]
+                  - cell "11d ago" [ref=f4e291]
+                  - cell [ref=f4e292]:
+                    - generic [ref=f4e875]:
+                      - button "Open documents" [ref=f4e876] [cursor=pointer]
+                      - button "Re-validate" [ref=f4e880] [cursor=pointer]
+                      - button "More actions" [ref=f4e884] [cursor=pointer]
+                - row [ref=f4e307]:
+                  - cell [ref=f4e308]:
+                    - checkbox "Select MZBGE81BUSN" [ref=f4e889] [cursor=pointer]
+                  - cell [ref=f4e310]:
+                    - button "MZBGE81BUSN" [ref=f4e890] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e312]
+                  - cell "In Progress" [ref=f4e313]
+                  - cell "Unassigned" [ref=f4e315]
+                  - cell "PASSED" [ref=f4e316]
+                  - cell "NO QR" [ref=f4e318]
+                  - cell "FAILED" [ref=f4e320]
+                  - cell "FAILED" [ref=f4e322]
+                  - cell "FAILED" [ref=f4e324]
+                  - cell "PASSED" [ref=f4e326]
+                  - cell "PENDING" [ref=f4e328]
+                  - cell "11d ago" [ref=f4e330]
+                  - cell [ref=f4e331]:
+                    - generic [ref=f4e899]:
+                      - button "Open documents" [ref=f4e900] [cursor=pointer]
+                      - button "Re-validate" [ref=f4e904] [cursor=pointer]
+                      - button "More actions" [ref=f4e908] [cursor=pointer]
+                - row [ref=f4e346]:
+                  - cell [ref=f4e347]:
+                    - checkbox "Select MZBGE81AUSN" [ref=f4e913] [cursor=pointer]
+                  - cell [ref=f4e349]:
+                    - button "MZBGE81AUSN" [ref=f4e914] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e351]
+                  - cell "In Progress" [ref=f4e352]
+                  - cell "Unassigned" [ref=f4e354]
+                  - cell "DOUBTFUL" [ref=f4e355]
+                  - cell "OK" [ref=f4e357]
+                  - cell "FAILED" [ref=f4e359]
+                  - cell "FAILED" [ref=f4e361]
+                  - cell "FAILED" [ref=f4e363]
+                  - cell "FAILED" [ref=f4e365]
+                  - cell "PENDING" [ref=f4e367]
+                  - cell "11d ago" [ref=f4e369]
+                  - cell [ref=f4e370]:
+                    - generic [ref=f4e923]:
+                      - button "Open documents" [ref=f4e924] [cursor=pointer]
+                      - button "Re-validate" [ref=f4e928] [cursor=pointer]
+                      - button "More actions" [ref=f4e932] [cursor=pointer]
+                - row [ref=f4e385]:
+                  - cell [ref=f4e386]:
+                    - checkbox "Select MZBGE815VSN" [ref=f4e937] [cursor=pointer]
+                  - cell [ref=f4e388]:
+                    - button "MZBGE815VSN" [ref=f4e938] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e390]
+                  - cell "In Progress" [ref=f4e391]
+                  - cell "Unassigned" [ref=f4e393]
+                  - cell "DOUBTFUL" [ref=f4e394]
+                  - cell "NO QR" [ref=f4e396]
+                  - cell "FAILED" [ref=f4e398]
+                  - cell "FAILED" [ref=f4e400]
+                  - cell "DOUBTFUL" [ref=f4e402]
+                  - cell "PASSED" [ref=f4e404]
+                  - cell "PENDING" [ref=f4e406]
+                  - cell "11d ago" [ref=f4e408]
+                  - cell [ref=f4e409]:
+                    - generic [ref=f4e947]:
+                      - button "Open documents" [ref=f4e948] [cursor=pointer]
+                      - button "Re-validate" [ref=f4e952] [cursor=pointer]
+                      - button "More actions" [ref=f4e956] [cursor=pointer]
+                - row [ref=f4e424]:
+                  - cell [ref=f4e425]:
+                    - checkbox "Select MZBGE813LSN" [ref=f4e961] [cursor=pointer]
+                  - cell [ref=f4e427]:
+                    - button "MZBGE813LSN" [ref=f4e962] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e429]
+                  - cell "In Progress" [ref=f4e430]
+                  - cell "Unassigned" [ref=f4e432]
+                  - cell "FAILED" [ref=f4e433]:
+                    - 'generic "2 expected-term misspelling(s): nmae→name, maneger→manager. 5 doubtful (possible scan misread): enquire→require, pune→june, autharized→authorised, licence→science, wyehicle→vehicle" [ref=f4e964]': FAILED
+                  - cell "OK" [ref=f4e435]
+                  - cell "PASSED" [ref=f4e437]
+                  - cell "FAILED" [ref=f4e439]
+                  - cell "FAILED" [ref=f4e441]
+                  - cell "FAILED" [ref=f4e443]
+                  - cell "PENDING" [ref=f4e445]
+                  - cell "11d ago" [ref=f4e447]
+                  - cell [ref=f4e448]:
+                    - generic [ref=f4e971]:
+                      - button "Open documents" [ref=f4e972] [cursor=pointer]
+                      - button "Re-validate" [ref=f4e976] [cursor=pointer]
+                      - button "More actions" [ref=f4e980] [cursor=pointer]
+                - row [ref=f4e463]:
+                  - cell [ref=f4e464]:
+                    - checkbox "Select MZBGD815VSN" [ref=f4e985] [cursor=pointer]
+                  - cell [ref=f4e466]:
+                    - button "MZBGD815VSN" [ref=f4e986] [cursor=pointer]
+                  - cell "ISL - DVS - Test V1" [ref=f4e468]
+                  - cell "In Progress" [ref=f4e469]
+                  - cell "Unassigned" [ref=f4e471]
+                  - cell "PASSED" [ref=f4e472]
+                  - cell "NO QR" [ref=f4e474]
+                  - cell "FAILED" [ref=f4e476]
+                  - cell "FAILED" [ref=f4e478]
+                  - cell "PASSED" [ref=f4e480]
+                  - cell "PASSED" [ref=f4e482]
+                  - cell "PENDING" [ref=f4e484]
+                  - cell "11d ago" [ref=f4e486]
+                  - cell [ref=f4e487]:
+                    - generic [ref=f4e995]:
+                      - button "Open documents" [ref=f4e996] [cursor=pointer]
+                      - button "Re-validate" [ref=f4e1000] [cursor=pointer]
+                      - button "More actions" [ref=f4e1004] [cursor=pointer]
+            - generic [ref=f4e98]:
+              - generic [ref=f4e99]:
+                - paragraph [ref=f4e100]: Rows per page
+                - combobox [ref=f4e101] [cursor=pointer]:
+                  - generic: "10"
+              - generic [ref=f4e104]: Showing 1 to 10 of 414 entries
+              - generic [ref=f4e105]:
+                - generic [ref=f4e106]: Page 1 of 42
+                - generic [ref=f4e107]:
+                  - button "Go to first page" [disabled]
+                  - button "Go to previous page" [disabled]
+                  - button "Go to next page" [ref=f4e502] [cursor=pointer]
+                  - button "Go to last page" [ref=f4e506] [cursor=pointer]
+  - region "Notifications (F8)":
+    - list

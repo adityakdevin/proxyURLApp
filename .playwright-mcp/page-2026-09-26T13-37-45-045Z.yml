@@ -1,0 +1,22 @@
+- generic [ref=f5e2]:
+  - generic [ref=f5e3]:
+    - banner [ref=f5e4]:
+      - generic [ref=f5e5]:
+        - heading "Proxy URL App" [level=1] [ref=f5e7]
+        - generic [ref=f5e8]:
+          - generic [ref=f5e9]: Administrator
+          - button "Logout" [ref=f5e10] [cursor=pointer]
+    - generic [ref=f5e14]:
+      - complementary [ref=f5e15]:
+        - navigation [ref=f5e16]:
+          - link "Dashboard" [ref=f5e17] [cursor=pointer]:
+            - /url: /dashboard
+          - generic [ref=f5e21]:
+            - text: Claims
+            - link "Claim Dashboard" [ref=f5e23] [cursor=pointer]:
+              - /url: /claims
+          - generic [ref=f5e27]: Loading menu...
+      - main [ref=f5e30]:
+        - generic [ref=f5e31]: Loading...
+  - region "Notifications (F8)":
+    - list

@@ -1,0 +1,171 @@
+- generic [ref=f6e2]:
+  - generic [ref=f6e3]:
+    - banner [ref=f6e4]:
+      - generic [ref=f6e5]:
+        - generic [ref=f6e6]:
+          - heading "Proxy URL App" [level=1] [ref=f6e7]
+          - generic [ref=f6e32]: FY2025
+        - generic [ref=f6e8]:
+          - generic [ref=f6e9]: Administrator
+          - button "Logout" [ref=f6e10] [cursor=pointer]
+    - generic [ref=f6e14]:
+      - complementary [ref=f6e15]:
+        - navigation [ref=f6e16]:
+          - link "Dashboard" [ref=f6e17] [cursor=pointer]:
+            - /url: /dashboard
+          - generic [ref=f6e21]:
+            - text: Claims
+            - link "Claim Dashboard" [ref=f6e23] [cursor=pointer]:
+              - /url: /claims
+          - generic [ref=f6e33]: No URLs available for your account
+      - main [ref=f6e30]:
+        - generic [ref=f6e31]:
+          - generic [ref=f6e34]:
+            - button "Back to Claims" [ref=f6e35] [cursor=pointer]
+            - generic [ref=f6e39]:
+              - combobox "Go to claim ID" [ref=f6e40]
+              - button "Go to this claim" [disabled] [ref=f6e41]
+          - generic [ref=f6e46]:
+            - generic [ref=f6e47]:
+              - generic [ref=f6e48]:
+                - heading "TEST-DMS-01" [level=1] [ref=f6e49]
+                - paragraph [ref=f6e50]: ISL - DVS - Test / ISL - DVS - Test V1
+              - generic [ref=f6e51]: In Progress
+            - generic [ref=f6e52]:
+              - generic [ref=f6e53]: "Folder Path: -"
+              - generic [ref=f6e54]: "Assigned To: Unassigned"
+            - generic [ref=f6e55]:
+              - generic [ref=f6e56]:
+                - generic "No expected-term misspellings found." [ref=f6e57] [cursor=pointer]: "Spell: PASSED"
+                - generic "No QR code found across 1 document(s)." [ref=f6e58] [cursor=pointer]: "QR: NO QR"
+                - generic "Claim ID not found in any of 1 document(s)." [ref=f6e59] [cursor=pointer]: "Intra-Claim: FAILED"
+                - 'generic "1 red flag(s) found: Editor watermark ×1; 1 advisory." [ref=f6e60] [cursor=pointer]': "Red Flags: FAILED"
+                - generic "0 of 2 required document types present." [ref=f6e61] [cursor=pointer]: "Missing Docs: FAILED"
+                - generic "1 mismatch(es) between documents." [ref=f6e62] [cursor=pointer]: "Data Compare: FAILED"
+                - generic "No duplicates found across 1 unique data point(s)." [ref=f6e63] [cursor=pointer]: "Duplicate: PASSED"
+              - button "Re-validate" [ref=f6e65] [cursor=pointer]
+          - generic [ref=f6e66]:
+            - group [ref=f6e67]:
+              - generic "Spell No expected-term misspellings found." [ref=f6e68] [cursor=pointer]:
+                - generic [ref=f6e69]:
+                  - heading "Spell" [level=2] [ref=f6e70]
+                  - generic [ref=f6e71]: No expected-term misspellings found.
+              - list [ref=f6e74]:
+                - listitem [ref=f6e75]:
+                  - button "TEST-DMS-01.pdf" [ref=f6e76] [cursor=pointer]
+            - group [ref=f6e77]:
+              - generic "QR No QR code found across 1 document(s)." [ref=f6e78] [cursor=pointer]:
+                - generic [ref=f6e79]:
+                  - heading "QR" [level=2] [ref=f6e80]
+                  - generic [ref=f6e81]: No QR code found across 1 document(s).
+              - list [ref=f6e84]:
+                - listitem [ref=f6e85]:
+                  - button "TEST-DMS-01.pdf" [ref=f6e86] [cursor=pointer]
+                  - text: "— 1 finding:"
+                  - list [ref=f6e87]:
+                    - listitem [ref=f6e88]: No QR code found in TEST-DMS-01.pdf.
+              - button "View QR Data" [ref=f6e90] [cursor=pointer]
+            - group [ref=f6e91]:
+              - generic "Intra-Claim Claim ID not found in any of 1 document(s)." [ref=f6e92] [cursor=pointer]:
+                - generic [ref=f6e93]:
+                  - heading "Intra-Claim" [level=2] [ref=f6e94]
+                  - generic [ref=f6e95]: Claim ID not found in any of 1 document(s).
+              - list [ref=f6e98]:
+                - listitem [ref=f6e99]:
+                  - button "TEST-DMS-01.pdf" [ref=f6e100] [cursor=pointer]
+                  - text: "— 1 finding:"
+                  - list [ref=f6e101]:
+                    - listitem [ref=f6e102]: Claim ID TEST-DMS-01 not found in TEST-DMS-01.pdf.
+            - group [ref=f6e103]:
+              - 'generic "Red Flags 1 red flag(s) found: Editor watermark ×1; 1 advisory." [ref=f6e104] [cursor=pointer]':
+                - generic [ref=f6e105]:
+                  - heading "Red Flags" [level=2] [ref=f6e106]
+                  - generic [ref=f6e107]: "1 red flag(s) found: Editor watermark ×1; 1 advisory."
+              - list [ref=f6e110]:
+                - listitem [ref=f6e111]:
+                  - button "TEST-DMS-01.pdf" [ref=f6e112] [cursor=pointer]
+                  - text: "— 2 findings:"
+                  - list [ref=f6e113]:
+                    - listitem [ref=f6e114]: No signature / authorised-signatory wording found in the document
+                    - listitem [ref=f6e115]: Document produced/edited by "ReportLab PDF Library - (opensource)"
+            - group [ref=f6e116]:
+              - generic "Missing Docs 0 of 2 required document types present." [ref=f6e117] [cursor=pointer]:
+                - generic [ref=f6e118]:
+                  - heading "Missing Docs" [level=2] [ref=f6e119]
+                  - generic [ref=f6e120]: 0 of 2 required document types present.
+              - list [ref=f6e123]:
+                - listitem [ref=f6e124]:
+                  - button "TEST-DMS-01.pdf" [ref=f6e125] [cursor=pointer]
+              - list [ref=f6e126]:
+                - listitem [ref=f6e127]:
+                  - text: "Claim-level — 2 findings:"
+                  - list [ref=f6e128]:
+                    - listitem [ref=f6e129]: Missing docs - PAN Card
+                    - listitem [ref=f6e130]: Missing docs - Aadhar Card
+            - group [ref=f6e131]:
+              - generic "Data Compare 1 mismatch(es) between documents." [ref=f6e132] [cursor=pointer]:
+                - generic [ref=f6e133]:
+                  - heading "Data Compare" [level=2] [ref=f6e134]
+                  - generic [ref=f6e135]: 1 mismatch(es) between documents.
+              - list [ref=f6e138]:
+                - listitem [ref=f6e139]:
+                  - button "TEST-DMS-01.pdf" [ref=f6e140] [cursor=pointer]
+                  - text: "— 1 finding:"
+                  - list [ref=f6e141]:
+                    - listitem [ref=f6e142]: Customer name "RAHUL VERMA" on the invoice does not match "SURESH KUMAR" in the DMS upload.
+            - group [ref=f6e143]:
+              - generic "Duplicate No duplicates found across 1 unique data point(s)." [ref=f6e144] [cursor=pointer]:
+                - generic [ref=f6e145]:
+                  - heading "Duplicate" [level=2] [ref=f6e146]
+                  - generic [ref=f6e147]: No duplicates found across 1 unique data point(s).
+              - list [ref=f6e150]:
+                - listitem [ref=f6e151]:
+                  - button "TEST-DMS-01.pdf" [ref=f6e152] [cursor=pointer]
+          - generic [ref=f6e153]:
+            - heading "Update Claim" [level=2] [ref=f6e154]
+            - generic [ref=f6e155]:
+              - generic [ref=f6e156]:
+                - text: Change Status (optional)
+                - combobox [ref=f6e157] [cursor=pointer]:
+                  - generic: Keep current status
+              - generic [ref=f6e160]:
+                - text: Reassign (optional)
+                - combobox [ref=f6e161] [cursor=pointer]:
+                  - generic: Keep assignment
+            - generic [ref=f6e164]:
+              - text: Remark
+              - textbox "Required" [ref=f6e165]
+            - generic [ref=f6e166]:
+              - button "Save" [disabled]
+          - generic [ref=f6e167]:
+            - generic [ref=f6e168]:
+              - heading "Documents" [level=2] [ref=f6e169]
+              - generic [ref=f6e170]: Upload
+            - generic [ref=f6e173]:
+              - generic [ref=f6e174]:
+                - link "TEST-DMS-01.pdf" [ref=f6e175] [cursor=pointer]:
+                  - /url: /api/claims/9f9dfd3e-4f12-47f9-a985-83cd34617668/documents/c22076ec-3ce2-43cd-8eb4-f84b556371b3/content
+                - generic [ref=f6e176]: Unclassified
+                - generic [ref=f6e177]: Uploaded
+              - generic [ref=f6e178]:
+                - generic [ref=f6e179]: 1.7 KB
+                - generic [ref=f6e180]: 26/09/2026
+                - button "Delete" [ref=f6e181] [cursor=pointer]
+          - generic [ref=f6e182]:
+            - heading "Remarks Timeline (2)" [level=2] [ref=f6e183]:
+              - text: Remarks Timeline
+              - generic [ref=f6e184]: (2)
+            - generic [ref=f6e185]:
+              - generic [ref=f6e186]:
+                - generic [ref=f6e187]:
+                  - generic [ref=f6e188]: Administrator
+                  - generic [ref=f6e189]: 26/09/2026, 19:24:57
+                  - generic [ref=f6e190]: New → In Progress
+                - paragraph [ref=f6e191]: Validation completed, so this claim moved off the default status and now shows as picked up. This says the checks have run — it does not say they passed.
+              - generic [ref=f6e192]:
+                - generic [ref=f6e193]:
+                  - generic [ref=f6e194]: Administrator
+                  - generic [ref=f6e195]: 26/09/2026, 19:24:15
+                - paragraph [ref=f6e196]: Test claim for verification report
+  - region "Notifications (F8)":
+    - list
