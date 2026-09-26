@@ -428,3 +428,15 @@ describe('Invoice vs RC: Same Name / Diff Name', () => {
     expect(invoiceRcNameResult([inv])).toEqual([]);
   });
 });
+
+describe('names that are not people (production, 2026-09-26)', () => {
+  it('drops an OCR fragment, a maker and a helpline line', () => {
+    expect(extractNames('Owner Name : Ch')).toEqual([]);
+    expect(extractNames("Maker's Name : TOYOTA KIRLOSKAR MOTOR")).toEqual([]);
+    expect(extractNames('Customer Name : My TVS Toll Free')).toEqual([]);
+  });
+  it('keeps real names, including short surnames', () => {
+    expect(extractNames('Customer Name : RAKESH PRASAD UNIYAL')).toEqual(['RAKESH PRASAD UNIYAL']);
+    expect(extractNames('Owner Name : OM PRAKASH')).toEqual(['OM PRAKASH']);
+  });
+});
