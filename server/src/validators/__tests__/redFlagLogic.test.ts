@@ -351,6 +351,12 @@ describe('Nominee', () => {
     expect(codes(checkNominee(TATA + '66 NA Father Registered office'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
     expect(codes(checkNominee(RELIANCE + 'NA 42 SPOUSE NA NA'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
   });
+  it('finds the name when the row text comes out of order (MZBFF813LTN)', () => {
+    expect(checkNominee(RELIANCE + '26 DAUGHTER NA NA NUSRATH JABEEN\nVehicle Details')).toEqual([]);
+  });
+  it('stops at the next section, so its heading is not taken as a name', () => {
+    expect(codes(checkNominee(RELIANCE + 'Mrs. 42 SPOUSE NA NA Vehicle Details Registration No.'))).toEqual(['REDFLAG_NOMINEE_NO_NAME']);
+  });
   it('stays silent when the whole nominee row is empty', () => {
     expect(checkNominee(RELIANCE + 'NA NA NA NA')).toEqual([]);
   });
