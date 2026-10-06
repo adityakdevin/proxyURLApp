@@ -22,6 +22,7 @@
     "db:seed:demo": "npm run db:seed:demo --workspace=server",
     "db:seed:e2e": "npm run db:seed:e2e --workspace=server",
     "db:reset-admin": "npm run db:reset-admin --workspace=server",
+    "db:clear-claims": "npm run db:clear-claims --workspace=server --",
     "db:studio": "npm run db:studio --workspace=server",
     "db:backup": "npm run db:backup --workspace=server",
     "db:setup:samples": "npm run db:setup:samples --workspace=server",
