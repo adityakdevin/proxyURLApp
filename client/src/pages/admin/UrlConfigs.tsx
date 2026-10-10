@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ColumnDef } from '@tanstack/react-table';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, Copy } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
@@ -64,6 +65,7 @@ interface SubCategory { id: string; name: string; categoryId: string; }
 
 export default function UrlConfigs() {
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
   const [projects, setProjects] = useState<SelectOption[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [subCategories, setSubCategories] = useState<SubCategory[]>([]);
@@ -102,6 +104,12 @@ export default function UrlConfigs() {
     defaultSort: { field: 'label', order: 'asc' },
     filters: { projectId: filterProject, proxyMode: mode },
   });
+
+  // Header search lands here with ?q=<label>.
+  const q = searchParams.get('q');
+  useEffect(() => {
+    if (q !== null) setSearch(q);
+  }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [formData, setFormData] = useState({
     label: '',

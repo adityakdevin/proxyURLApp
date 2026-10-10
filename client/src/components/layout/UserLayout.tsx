@@ -21,6 +21,7 @@ import {
   ClipboardList,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import HeaderSearch from './HeaderSearch';
 
 interface UrlItem {
   id: string;
@@ -173,6 +174,24 @@ export default function UserLayout() {
               )}
             </div>
             <div className="flex items-center gap-4">
+              <HeaderSearch
+                find={(q) => {
+                  const needle = q.toLowerCase();
+                  return (menuData?.menu ?? [])
+                    .flatMap((c) =>
+                      c.subCategories.flatMap((s) =>
+                        s.urls.map((u) => ({
+                          key: u.opaqueId,
+                          label: u.label,
+                          hint: `${c.name} › ${s.name}`,
+                        }))
+                      )
+                    )
+                    .filter((h) => h.label.toLowerCase().includes(needle))
+                    .slice(0, 10);
+                }}
+                onPick={(h) => navigate(`/view/${h.key}`)}
+              />
               <span className="text-sm text-gray-600">{user?.fullName}</span>
               <Button variant="ghost" size="sm" onClick={handleLogout}>
                 <LogOut className="h-4 w-4 mr-2" />
