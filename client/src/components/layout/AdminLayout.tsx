@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { Button } from '@/components/ui/button';
+import { api } from '@/lib/api';
+import HeaderSearch from './HeaderSearch';
 import {
   FolderTree,
   Folder,
@@ -117,6 +119,19 @@ export default function AdminLayout() {
             <span className="text-sm text-gray-500">Admin Panel</span>
           </div>
           <div className="flex items-center gap-4">
+            <HeaderSearch
+              find={async (q) => {
+                const res = await api.get<{
+                  data: { id: string; label: string; category: { name: string }; subCategory: { name: string } }[];
+                }>(`/admin/url-configs?limit=10&search=${encodeURIComponent(q)}`);
+                return res.data.map((u) => ({
+                  key: u.id,
+                  label: u.label,
+                  hint: `${u.category.name} › ${u.subCategory.name}`,
+                }));
+              }}
+              onPick={(h) => navigate(`/admin/url-configs?q=${encodeURIComponent(h.label)}`)}
+            />
             <Link to="/admin/profile" className="text-sm text-gray-600 hover:text-gray-900">
               {user?.fullName}
             </Link>

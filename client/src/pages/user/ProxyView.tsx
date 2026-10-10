@@ -7,7 +7,9 @@ export default function ProxyView() {
   const navigate = useNavigate();
 
   const handleExit = () => {
-    navigate('/dashboard');
+    // Back to wherever the user came from (e.g. the sub-category list); a direct open has no history.
+    if (window.history.state?.idx > 0) navigate(-1);
+    else navigate('/dashboard');
   };
 
   return (
