@@ -115,6 +115,12 @@ function Highlights({
  * Rendered by the standalone /claims/:id/documents/:documentId window — a reviewer needs
  * the document open beside the claim form, which a modal cannot do.
  */
+/** Has react-pdf painted this page yet? Its canvas exists, with a height, once it has. */
+function pageRendered(pageEl: Element): boolean {
+  const canvas = pageEl.querySelector('canvas');
+  return !!canvas && canvas.getBoundingClientRect().height > 0;
+}
+
 export function DocumentViewerPanel({
   claimId,
   documentId,
@@ -185,12 +191,25 @@ export function DocumentViewerPanel({
     setZoom((z) => Math.max(z, CLICK_ZOOM));
   }, [selectNonce]);
 
+  // Scroll to the active finding ONCE per selection (and per zoom/rotation), as soon as its
+  // page has really rendered. It used to re-run on every page's onRenderSuccess — pages
+  // render eagerly, and again on every zoom — so while a reviewer scrolled to look at other
+  // red flags the view kept being yanked back to the selected one, which read as the
+  // viewer freezing (client QA 2026-10, #2).
+  const scrolledFor = useRef<string | null>(null);
   useEffect(() => {
     if (!activeId) return;
-    scrollRef.current
-      ?.querySelector(`[data-fid="${CSS.escape(activeId)}"]`)
-      ?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-  }, [activeId, zoom, rotation, numPages, imgLoaded, renderedPages]);
+    const key = `${documentId}|${activeId}|${selectNonce}|${zoom}|${rotation}`;
+    if (scrolledFor.current === key) return;
+    const el = scrollRef.current?.querySelector(`[data-fid="${CSS.escape(activeId)}"]`);
+    if (!el) return;
+    // Before its page renders, the page box has no height and the target sits in the wrong
+    // place; wait for the render that follows rather than scroll there.
+    const pageEl = el.closest('[data-page]');
+    if (pageEl && !pageRendered(pageEl)) return;
+    scrolledFor.current = key;
+    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+  }, [documentId, activeId, selectNonce, zoom, rotation, numPages, imgLoaded, renderedPages]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -204,12 +223,18 @@ export function DocumentViewerPanel({
 
   // Jump to a page on request (a field group's "Page 3" chip). Clearing the active finding
   // first stops the finding-scroll effect from yanking the view straight back to it.
+  // Same once-only rule as the finding scroll: a later page render must not undo the
+  // reviewer's own scrolling.
+  const jumpedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!gotoPage) return;
-    scrollRef.current
-      ?.querySelector(`[data-page="${gotoPage}"]`)
-      ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, [gotoPage, gotoNonce, renderedPages]);
+    const key = `${documentId}|${gotoPage}|${gotoNonce}`;
+    if (jumpedFor.current === key) return;
+    const el = scrollRef.current?.querySelector(`[data-page="${gotoPage}"]`);
+    if (!el) return;
+    jumpedFor.current = key;
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [documentId, gotoPage, gotoNonce, renderedPages]);
 
   // Keep the cursor's document point fixed while Ctrl/Cmd-wheel zooming.
   useLayoutEffect(() => {
