@@ -16,6 +16,7 @@
  * Invoice page and an RC page inside the same file must still be compared.
  */
 import type { FindingInput } from './types.js';
+import { editDistanceCapped } from './logic.js';
 
 export type DocTypeCode = 'INVOICE' | 'RC' | 'INSURANCE' | 'KYC' | 'PAYSLIP' | 'STAFF_ID' | 'DMS';
 /** Relation names are compared PER RELATION — a mother's name and a father's name are
@@ -307,13 +308,26 @@ const NAME_ONLY_LABEL_WORD = new Set([
   'aadhaar', 'aadhar', 'name',
 ]);
 
+/** A label word as the document misspelt it: "Desigantion", "Departmant". Only long labels,
+ *  where one or two slips cannot turn one into another real word. Without this the misspelt
+ *  label ran on into the person's name, and SPELL then treated it as a name word and only
+ *  ever called it "doubtful" (client QA 2026-10, #44-46). */
+function nearLabelWord(bare: string): boolean {
+  if (bare.length < 7) return false;
+  for (const label of NEXT_LABEL_WORD) {
+    if (label.length < 7 || label[0] !== bare[0]) continue;
+    if (editDistanceCapped(bare, label, 2) <= 2) return true;
+  }
+  return false;
+}
+
 /** Cut a value at the first word (after its first) that begins the next form label. */
 function cutAtNextLabel(v: string, forName: boolean): string {
   const words = v.split(' ');
   const i = words.findIndex((w, k) => {
     if (k === 0) return false;
     const bare = w.toLowerCase().replace(/[^a-z]/g, '');
-    return NEXT_LABEL_WORD.has(bare) || (forName && NAME_ONLY_LABEL_WORD.has(bare));
+    return NEXT_LABEL_WORD.has(bare) || (forName && NAME_ONLY_LABEL_WORD.has(bare)) || nearLabelWord(bare);
   });
   return (i === -1 ? words : words.slice(0, i)).join(' ').replace(/[\s,.:\-]+$/, '');
 }

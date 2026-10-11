@@ -292,6 +292,12 @@ export const EXPECTED_TERMS: string[] = [
   // containing a space can never match one. See MIN_TERM_LEN.
   'statement', 'assistant', 'security', 'guard', 'unique', 'consultant', 'remittance',
   'welfare', 'dearness', 'leadership',
+  // Employee-ID-card job titles. The client QA of 2026-10 cited misspelt "surgeon" and
+  // "associate", which had no term to be near. Reaches a populated SpellTerm table only via
+  // `npm run db:sync-spell-terms`.
+  'surgeon', 'associate', 'technician', 'operator', 'analyst', 'coordinator',
+  'representative', 'administrator', 'administration', 'marketing', 'trainee', 'senior',
+  'junior', 'physician', 'pharmacist', 'nurse',
   // pay-period vocabulary — "Quartarly" was cited by reviewers and had no term to miss
   'quarterly', 'monthly', 'weekly', 'annual', 'annually', 'yearly', 'period',
   // months
