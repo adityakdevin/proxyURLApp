@@ -182,14 +182,56 @@ export async function decodeAll(
   }
 }
 
-async function decodeQrImage(absolutePath: string): Promise<QrHit[]> {
+/** Largest edge a retry pass may upscale an image to — keeps one pass's bitmap under ~64 MB. */
+const IMAGE_RETRY_MAX_EDGE = 4000;
+
+/**
+ * A photographed card's QR is small and soft, and one decode at native resolution missed
+ * codes a phone reads at once (client QA 2026-10, #33/#34) — PDFs already got a second,
+ * higher-resolution pass; images got none. Retries, cheapest first, stopping at the first
+ * hit: upscaled; upscaled + greyscale + contrast; then each quadrant upscaled, for a QR that
+ * is a small corner of a large photo.
+ */
+export async function decodeQrImage(absolutePath: string): Promise<QrHit[]> {
   try {
     const img = await Jimp.read(absolutePath);
-    const { data, width, height } = img.bitmap;
-    return await decodeAll(new Uint8ClampedArray(data), width, height);
+    const decode = async (j: { bitmap: { data: Buffer | Uint8Array; width: number; height: number } }) =>
+      decodeAll(new Uint8ClampedArray(j.bitmap.data), j.bitmap.width, j.bitmap.height);
+    const first = await decode(img);
+    if (first.length > 0) return first;
+
+    const { width, height } = img.bitmap;
+    const factor = (w: number, h: number) => Math.min(3, IMAGE_RETRY_MAX_EDGE / Math.max(w, h));
+    const f = factor(width, height);
+    if (f > 1.2) {
+      const up = await decode(img.clone().scale(f));
+      if (up.length > 0) return up.map((h) => rescaleHit(h));
+      const enhanced = await decode(img.clone().scale(f).greyscale().contrast(0.4));
+      if (enhanced.length > 0) return enhanced.map((h) => rescaleHit(h));
+    } else {
+      const enhanced = await decode(img.clone().greyscale().contrast(0.4));
+      if (enhanced.length > 0) return enhanced;
+    }
+    // Quadrants, overlapping by a quarter so a QR on a seam is whole in one of them.
+    const qw = Math.ceil(width * 0.625);
+    const qh = Math.ceil(height * 0.625);
+    for (const [x, y] of [[0, 0], [width - qw, 0], [0, height - qh], [width - qw, height - qh]]) {
+      const tile = img.clone().crop({ x, y, w: qw, h: qh });
+      const tf = factor(qw, qh);
+      const hits = await decode(tf > 1.2 ? tile.scale(tf).greyscale() : tile.greyscale());
+      if (hits.length > 0) return hits.map((h) => rescaleHit(h));
+    }
+    return [];
   } catch {
     return [];
   }
+}
+
+/** A retry's box is in its own (scaled or cropped) frame, not the page's. Highlighting it
+ *  there would point at the wrong place, so drop the box and keep the value: the viewer
+ *  then falls back to the page, which is still right. */
+function rescaleHit(h: QrHit): QrHit {
+  return { ...h, bbox: undefined };
 }
 
 /** What a PDF scan found, plus what it did NOT look at. The skipped counts are returned
