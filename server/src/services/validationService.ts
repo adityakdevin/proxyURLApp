@@ -27,6 +27,8 @@ const MAX_FINDINGS_PER_RESULT = 200;
  * it the wait itself can exhaust the budget before any work starts.
  */
 const TX = { timeout: 30_000, maxWait: 15_000 };
+/** Cap on claims one run re-queues for a duplicate it found (see requeueDuplicatePartners). */
+const MAX_DUP_REQUEUE = 20;
 import { resolveScanRoot } from '../lib/directoryReader.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
 
@@ -481,6 +483,7 @@ export class ValidationService {
           data: { status: 'COMPLETED', finishedAt: new Date() },
         });
       }, TX);
+      await this.requeueDuplicatePartners(claim, results);
     } catch (e) {
       try {
         // The COMPLETED commit never ran, so columns are still IN_PROGRESS:
@@ -508,6 +511,50 @@ export class ValidationService {
     // Reached whether the run completed or was caught and marked FAILED above: either way
     // THIS call did the work, which is the only question the return value answers.
     return true;
+  }
+
+  /**
+   * Make a duplicate show on BOTH claims. DUP compares a claim against the others' indexed
+   * values as they stand when it runs, so the claim validated first passed with nothing to
+   * match and was never revisited — the client QA of 2026-10 saw a duplicate pair flagged on
+   * only one VIN, and four of five in a group of five. Every earlier claim that this run
+   * matched on a hard data point and that still reads PASSED is re-validated in full (a
+   * DUP-only run would mark its other checks "not run"). It then matches this claim and
+   * fails, so it is not PASSED when this claim is next validated: no ping-pong.
+   */
+  private async requeueDuplicatePartners(
+    claim: { id: string; subCategoryId: string },
+    results: { v: Validator; findings?: FindingInput[] }[]
+  ): Promise<void> {
+    const dup = results.find((r) => r.v.key === 'DUP');
+    const partnerIds = new Set<string>();
+    for (const f of dup?.findings ?? []) {
+      if (f.severity !== 'ERROR') continue;
+      const claims = (f.data as { claims?: unknown } | undefined)?.claims;
+      if (Array.isArray(claims)) for (const c of claims) if (typeof c === 'string') partnerIds.add(c);
+    }
+    if (partnerIds.size === 0) return;
+    try {
+      const partners = await this.prisma.claim.findMany({
+        where: {
+          claimId: { in: [...partnerIds] },
+          id: { not: claim.id },
+          subCategoryId: claim.subCategoryId,
+          status: 'ACTIVE',
+          duplicateStatus: 'PASSED',
+          validationRuns: { none: { status: { in: ['QUEUED', 'RUNNING'] } } },
+        },
+        select: { id: true },
+        take: MAX_DUP_REQUEUE,
+      });
+      if (partners.length === 0) return;
+      // Imported here: validationQueue imports this module.
+      const { enqueue } = await import('./validationQueue.js');
+      for (const p of partners) await enqueue(this.prisma, this.validators, p.id, 'AUTO');
+    } catch (e) {
+      // Best effort: the partner keeps its old result, which is no worse than before.
+      console.warn(`[validation] could not re-queue duplicate partners of ${claim.id}:`, e);
+    }
   }
 
   /**
