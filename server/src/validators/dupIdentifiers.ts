@@ -153,7 +153,9 @@ export function extractIdentifiers(text: string): { field: IdentifierField; valu
 
   add('PF_NO', labelled(text, /\bP\.?\s?F\.?\s*(?:A\/?c\.?\s*)?(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{5,30})/gi));
 
-  add('UAN', labelled(text, /\bUAN\s*(?:No|Number)?\.?\s*[:\-]?\s*(\d{12})\b/gi));
+  // Payslips print the UAN grouped ("1012 3456 7890") as often as not; the plain \d{12}
+  // missed every one of those (client QA 2026-10: 5 of 12 duplicate UANs found).
+  add('UAN', labelled(text, /\bUAN\s*(?:No|Number)?\.?\s*[:\-]?\s*(\d{4}[ \t-]?\d{4}[ \t-]?\d{4})(?![ \t-]?\d)/gi).map((v) => v.replace(/[ \t-]/g, '')));
 
   add('GPF_NO', labelled(text, /\bGPF\s*(?:A\/?c\.?\s*)?(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{3,25})/gi));
 

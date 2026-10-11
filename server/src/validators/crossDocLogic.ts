@@ -337,6 +337,10 @@ const NOT_A_PERSON_WORD = new Set([
   'motor', 'motors', 'automobiles', 'auto', 'corporation', 'company', 'services', 'finance',
   'insurance', 'general', 'bank', 'toyota', 'kirloskar', 'tvs', 'maruti', 'suzuki', 'hyundai',
   'kia', 'honda', 'mahindra', 'tata', 'renault', 'nissan', 'skoda', 'volkswagen', 'mg',
+  // Dealer and MISP trading names the client QA of 2026-10 saw read as the customer:
+  // "PARASAVNATH AUTOWHEELS", "DRIVE N RIDE".
+  'autowheels', 'wheels', 'automotive', 'agency', 'agencies', 'traders', 'trading',
+  'enterprise', 'enterprises', 'industries', 'ride', 'rides',
 ]);
 
 function cleanPersonName(raw: string): string | null {
@@ -396,6 +400,9 @@ const NON_PERSON_NAME_LABEL = new Set([
   'misp',
   // RC "Maker's Name : TOYOTA KIRLOSKAR MOTOR" — the manufacturer, not the owner.
   'maker', 'manufacturer',
+  // "Payer Name : DRIVE N RIDE" — whoever paid the premium, often the dealer; and the
+  // payslip's "Authorised Signatory Name" — HR, not the employee (client QA 2026-10).
+  'payer', 'signatory', 'authorised', 'authorized', 'issuer',
   // The broker's "Designated Person Name : GAURAV KUMAR" on Go Digit / Reliance schedules
   // (also "Contact Person Name"): an intermediary's staff member, never the customer. It
   // surfaced once "Bill To" made the invoice's name readable (MZBB1811LSN014084).
@@ -408,15 +415,38 @@ const NON_PERSON_NAME_LABEL = new Set([
 // the nominee leaked through as the customer's name.
 // "Bill To" is how Kia dealer invoices label the customer ("Bill To : JAGJEET SINGH"); without
 // it no name was read off those invoices, so the DMS-vs-invoice check had nothing to compare.
+// The gap after the label word is [ \t]+, not \s+: with \s+ a heading on the line above
+// became the label word ("Nominee Details\nName : X" took "Details", "Authorised
+// Signatory\nName : Mayank" took "Signatory"), and the nominee or the HR signatory was read
+// as the customer (client QA 2026-10). Headings are handled by sectionHeadingBefore.
+// The label word allows digits so an OCR'd "M1SP" still reaches the blocklist.
 const NAME_RE =
-  /(?:(?:([A-Za-z]+)(?:'?s)?\s+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?|\bbill(?:ed)?\s+to)\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
+  /(?:(?:([A-Za-z][A-Za-z0-9]*)(?:'?s)?[ \t]+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?|\bbill(?:ed)?\s+to)\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
 
 /** Customer/employee names, with non-person "X Name" labels and relation names removed. */
+/** A heading on the line just above a bare "Name :" that says whose name it is. */
+const NON_PERSON_SECTION =
+  /\b(?:nominee|m[i1l]sp|payer|signatory|authori[sz]ed|financier|hypothecat\w*|broker|agent|intermediary|dealer|employer|appointee|guardian)\b/i;
+
+function sectionHeadingBefore(text: string, at: number): boolean {
+  const before = text.slice(Math.max(0, at - 120), at);
+  // Text on the same line before "Name", then the previous non-empty line.
+  const lines = before.split('\n');
+  const sameLine = lines.pop() ?? '';
+  if (sameLine.trim() !== '') return false; // "Customer Name" etc. — the label word decides
+  const prev = [...lines].reverse().find((l) => l.trim() !== '') ?? '';
+  return NON_PERSON_SECTION.test(prev);
+}
+
+/** "M1SP" → "misp": OCR swaps in a label word must not slip past the blocklist. */
+const labelWord = (w: string) => w.toLowerCase().replace(/1/g, 'i').replace(/0/g, 'o');
+
 export function extractNames(text: string): string[] {
   const relations = extractRelationNames(text);
   const out: string[] = [];
   for (const m of text.matchAll(NAME_RE)) {
-    if ((m[1] ?? '').toLowerCase() && NON_PERSON_NAME_LABEL.has((m[1] ?? '').toLowerCase())) continue;
+    if (m[1] && NON_PERSON_NAME_LABEL.has(labelWord(m[1]))) continue;
+    if (!m[1] && /^name/i.test(m[0]) && sectionHeadingBefore(text, m.index ?? 0)) continue;
     let v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
     // The value runs until a character the name class rejects, and ':' is one — so when OCR
     // puts two fields on one line ("Employee Name: Rajesh Dass profesion: Engineer") the
@@ -436,12 +466,31 @@ export function extractNames(text: string): string[] {
 }
 
 const VEHICLE_PLACEHOLDER = /^(new|applied|apply|tba|temp|na|nil|pending)/i;
+// "Vehicle" alone is not a label: a premium table's "BASIC PREMIUM - Vehicle\nTP 5114" read as
+// registration TP 5114 (client QA 2026-10, #29). Vehicle needs "No"/"Number"/"Regn";
+// Regn/Registration may stand alone. `\.?` after the noise word: "Regn. No. : MH 12 AB 1234"
+// extracted nothing with the dot in the way (#32).
 const VEHICLE_RE =
-  /(?:regn?\.?|registration|vehicle)\s*(?:no|number)?\s*[:\-]?\s*([A-Z]{2}[\s-]?\d{1,2}[\s-]?[A-Z]{0,3}[\s-]?\d{1,4}|NEW|APPLIED[\s-]?FOR|TBA|TEMP\w*)/gi;
+  /(?:\bregn?\.?|\bregistration|\bvehicle\s*(?=(?:no|number|regn?|registration)\b))\s*(?:(?:regn?|registration)\.?\s*)?(?:no|number)?\.?\s*[:\-]?\s*([A-Z]{2}[\s-]?\d{1,2}[\s-]?[A-Z]{0,3}[\s-]?\d{1,4}|NEW|APPLIED[\s-]?FOR|TBA|TEMP\w*)/gi;
+
+/** Indian state / UT registration codes, so a lower-case prose word cannot pass as one. */
+const STATE_CODES = new Set(
+  ('AN AP AR AS BR CH CG DD DL DN GA GJ HP HR JH JK KA KL LA LD MH ML MN MP MZ NL OD OR PB PY ' +
+    'RJ SK TN TR TS UK UA UP WB BH').split(' ')
+);
+
+/** Any dash OCR or a word processor may print (en/em dash, minus, figure dash) → '-'. */
+export const normDashes = (s: string) => s.replace(/[\u2010-\u2015\u2212]/g, '-');
 
 export function extractVehicleNos(text: string): string[] {
   // A new-car invoice has no registration yet ("NEW"/"APPLIED FOR") — treat as absent.
-  return allMatches(text, VEHICLE_RE).filter((v) => !VEHICLE_PLACEHOLDER.test(v.replace(/\s/g, '')));
+  return allMatches(normDashes(text), VEHICLE_RE).filter((v) => {
+    const bare = v.replace(/[\s-]/g, '');
+    if (VEHICLE_PLACEHOLDER.test(bare)) return false;
+    if (/^(?:NEW|APPLIED|TBA|TEMP)/i.test(bare)) return true;
+    // Printed in capitals with a real state code: "tp 5114" or "Ve 12" is prose.
+    return v === v.toUpperCase() && STATE_CODES.has(bare.slice(0, 2));
+  });
 }
 
 // CHASSIS/ENGINE require an explicit separator ([:\-] or newline) so a run-on OCR of a
@@ -454,7 +503,8 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   CHASSIS: /chassis\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{6,20})/gi,
   ENGINE: /engine\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{5,20})/gi,
   MODEL: /(?:model|variant|make\s*(?:&|and)?\s*model)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/gi,
-  EMP_CODE: /(?:emp(?:loyee)?\.?\s*(?:code|id|no|number)|staff\s*(?:id|code|no))\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/]{1,20})/gi,
+  // `\.?` after the noise word: "Employee No. : E1234" read nothing (client QA 2026-10, #16).
+  EMP_CODE: /(?:emp(?:loyee)?\.?\s*(?:code|id|no|number)|staff\s*(?:id|code|no))\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/]{1,20})/gi,
   // Runs to the end of the line: the character class excludes newlines, so a following
   // field on the next line cannot be swallowed into the address.
   ADDRESS:
@@ -465,8 +515,11 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   // Word-bounded, and no bare "act": that form matched the tail of "Contact No: 7088007037",
   // so a dealer's phone on every policy was read as an account number and failed the
   // Duplicate check on every claim from that dealer.
+  // "A/c No. : 1234…" and "Account No 1234…" (dot, or no separator) read nothing, so a
+  // shared salary account was never a duplicate (client QA 2026-10, #13). The separator is
+  // optional only when "No"/"Number" is present, so "Account 2024-25" is not a number.
   ACCOUNT_NO:
-    /\b(?:a\/c|acct|account)\.?\s*(?:no|number|#)?\s*[:\-]\s*([0-9][0-9\- ]{5,22}[0-9])/gi,
+    /\b(?:a\/c|acct|account)\.?\s*(?:(?:no|number|#)\.?\s*[:\-]?|[:\-])\s*([0-9][0-9\- ]{5,22}[0-9])/gi,
   RECEIPT_NO: /receipt\s*(?:no|number|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
   APPLICATION_NO:
     /(?:application|appl?n)\.?\s*(?:no|number|id|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
@@ -511,7 +564,19 @@ export function extractField(field: CrossField, text: string): string[] {
     const out: string[] = [];
     for (const m of text.matchAll(re)) {
       if (isCompanyAddress(text, m.index ?? 0)) continue;
-      const v = cutAtNextLabel((m[1] ?? '').trim().replace(/\s+/g, ' '), false);
+      let raw = (m[1] ?? '').trim();
+      // An Aadhaar prints its address over three or four lines ending at the PIN code, and
+      // the first line alone ("S/O Ram Kumar,") overlapped too little with the insurance's
+      // one-line address to match (client QA 2026-10, #31). When the line carries no PIN and
+      // one follows within the next three lines, take the address through it.
+      if (!/\b\d{6}\b/.test(raw)) {
+        const after = text.slice((m.index ?? 0) + m[0].length).split('\n').slice(0, 4).join('\n');
+        const pin = /^([\s\S]*?\b\d{3}\s?\d{3})\b/.exec(after);
+        if (pin && pin[1].split('\n').length <= 4) raw = `${raw} ${pin[1]}`;
+      }
+      // The guardian prefix is a relation, not part of where anyone lives.
+      raw = raw.replace(/^(?:[sdwc]\s*\/\s*o|son\s+of|daughter\s+of|wife\s+of|care\s+of)\b[^,\n]*,?\s*/i, '');
+      const v = cutAtNextLabel(raw.replace(/\s+/g, ' '), false);
       if (v) out.push(v);
     }
     return [...new Set(out)];
