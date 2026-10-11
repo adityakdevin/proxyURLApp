@@ -37,13 +37,24 @@ export interface QrFieldComparison {
  */
 const QR_KEY_TO_LABELS: Record<string, string[]> = {
   name: ["Insured's Name", 'Holder Name', 'Customer Name'],
+  // Insurer QRs name these keys in full. Unmapped, a QR carrying another customer's name
+  // or the real policy number was decoded and then compared against nothing (client QA
+  // 2026-10, #35/#36).
+  insuredname: ["Insured's Name", 'Customer Name'],
+  nameofinsured: ["Insured's Name", 'Customer Name'],
+  customername: ["Insured's Name", 'Customer Name', 'Holder Name'],
+  proposername: ["Insured's Name", 'Customer Name'],
   polno: ['Policy No'],
   policyno: ['Policy No'],
+  policynumber: ['Policy No'],
   chassisno: ['Chassis No'],
   chassis: ['Chassis No'],
   engineno: ['Engine No'],
   engine: ['Engine No'],
   model: ['Model'],
+  vehiclemodel: ['Model'],
+  makemodel: ['Model'],
+  modelname: ['Model'],
   uid: ['Aadhaar Number'],
   pan: ['PAN Number'],
   panno: ['PAN Number'],

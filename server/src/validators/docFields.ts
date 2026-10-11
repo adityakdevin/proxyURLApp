@@ -62,12 +62,18 @@ const DOB_RE = /(?:date\s*of\s*birth|d\.?o\.?b\.?|birth\s*date|जन्म)\s*[
 const INVOICE_NO_RE = /invoice\s*(?:no|number|#)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,25})/i;
 const INVOICE_DATE_RE = /invoice\s*date\s*[:\-]?\s*(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})/i;
 const CUSTOMER_ID_RE = /customer\s*id\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,25})/i;
-const POLICY_NO_RE = /policy\s*(?:no|number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{4,25})/i;
+// A policy number carries a digit: "Policy No\nPrivate Car Package" read "Private" as the
+// number, and the QR's real number then scored a mismatch (client QA 2026-10, #36).
+const POLICY_NO_RE = /policy\s*(?:no|number)\.?\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{4,25})/i;
 // `\.?` and `[:\-\n]` mirror crossDocLogic: documents print "Chassis No. : X" as often as
 // "Chassis No\nX", and both have to read the same value the comparison rules read.
 const CHASSIS_RE = /chassis\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{6,20})/i;
 const ENGINE_RE = /engine\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{5,20})/i;
-const MODEL_RE = /(?:model|variant)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/i;
+// Not a model: the next column's header or policy boilerplate after "Model :" ("Company
+// Fitted", "Name", "Year") — "Company" was shown against the QR's "SONET" (client QA
+// 2026-10, #37/38).
+const MODEL_RE =
+  /(?:model|variant)\s*[:\-]\s*(?!(?:company|name|private|fitted|year|no|number|make|cc|type)\b)([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/i;
 const VID_RE = /\bV\.?I\.?D\.?\s*[:\-]?\s*((?:\d[\s-]?){13,15}\d)/i;
 
 /**
@@ -287,7 +293,8 @@ function engineFromRow(text: string): string | null {
  *  would read the variant instead; the label-anchored MODEL_RE is still tried first. */
 function modelFromRow(text: string): string | null {
   const row = rowUnder(text, /\bmake\b[\s\S]{0,40}?\bmodel\b/i);
-  return row[1] ?? null;
+  const v = row[1] ?? null;
+  return v && !/^(?:company|name|private|fitted|year|cc|type)$/i.test(v) ? v : null;
 }
 
 // A vehicle invoice never labels the buyer "Name" — it says "Bill To" or "Sold To", so the
