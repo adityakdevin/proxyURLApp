@@ -31,11 +31,12 @@ const err = (code: string, message: string, page: number | null, data?: Record<s
   page,
   data,
 });
-const warn = (code: string, message: string, page: number | null): RedFlagFinding => ({
+const warn = (code: string, message: string, page: number | null, data?: Record<string, unknown>): RedFlagFinding => ({
   code,
   message,
   severity: 'WARNING',
   page,
+  data,
 });
 /** A check that PASSED, recorded so a reviewer can see it ran — reviewers reported
  *  "basic checks are not getting identified" when a valid document produced no output. */
@@ -114,7 +115,13 @@ export const PAN_CATEGORY: Record<string, string> = {
 };
 
 export function checkPan(text: string, page: number | null = null): RedFlagFinding[] {
-  const cand = labeledCandidate(text, /\bP\.?A\.?N\b|permanent\s+account\s+number/i, /\b[A-Z]{5}[0-9]{4}[A-Z]\b/);
+  // A real PAN anywhere on the page wins over the word after the label: "PAN Services Unit"
+  // is NSDL's address line on the card's back, and reading "SERVICES" as the PAN number
+  // raised a malformed-PAN red flag on a valid card (client QA 2026-10, VIN ...630607).
+  const shaped = /\b[A-Z]{5}[0-9]{4}[A-Z]\b/.exec(text.toUpperCase());
+  const labelled = shaped ? undefined : labeledCandidate(text, /\bP\.?A\.?N\b|permanent\s+account\s+number/i, /(?!)/);
+  // A PAN always carries four digits; a labelled token with none is a word, not a number.
+  const cand = shaped ? shaped[0] : labelled && /\d/.test(labelled) ? labelled : undefined;
   if (!cand) return [];
   if (PAN_RE.test(cand)) {
     const cat = PAN_CATEGORY[cand[3]];
@@ -212,7 +219,10 @@ export function checkPassportPages(pages: { page: number; text: string }[]): Red
 /** Label-anchored digit run following an Aadhaar/VID label. Group 1 = the text between
  *  label and number (used to reject a number that actually belongs to a nearby label). */
 const labelledDigits = (text: string, label: string): RegExpExecArray | null =>
-  new RegExp(`\\b(?:${label})\\b([^0-9]{0,24})((?:\\d[\\s-]?){7,20}\\d)`, 'i').exec(text);
+  // Separators are spaces/hyphens on the SAME line: with \\s the run crossed a line break
+  // and swallowed the first digit of whatever was printed below the VID (a date, the
+  // Aadhaar number), so a genuine 16-digit VID was reported as 17 (client QA 2026-10).
+  new RegExp(`\\b(?:${label})\\b([^0-9]{0,24})((?:\\d[ \\t-]?){7,20}\\d)`, 'i').exec(text);
 
 /** Aadhaar number must be 12 digits. Separate from checkAadhaar (which compares front
  *  vs back): aadhaarNumbers only matches EXACTLY 12 digits, so an 11- or 13-digit number
@@ -242,10 +252,21 @@ const VID_DIGITS = 16;
 export function checkVid(text: string, page: number | null = null): RedFlagFinding[] {
   const m = labelledDigits(text, 'V\\.?I\\.?D|virtual\\s*id');
   if (!m) return [];
-  const digits = stripSep(m[2]);
+  let raw = m[2].trim();
+  // Printed as four groups of four. A trailing extra group is a neighbouring number on the
+  // same line, not part of the VID.
+  const grouped = /^\d{4}[ \t-]\d{4}[ \t-]\d{4}[ \t-]\d{4}(?=[ \t-]|$)/.exec(raw);
+  if (grouped) raw = grouped[0];
+  const digits = stripSep(raw);
   if (digits.length === VID_DIGITS) return [];
+  // Irregular grouping ("9150 6457 226 08544") is an OCR misread, not a forged VID: say
+  // it could not be read rather than failing the claim on it.
+  const groups = raw.split(/[ \t-]+/);
+  if (groups.length > 1 && groups.some((g) => g.length !== 4) && Math.abs(digits.length - VID_DIGITS) <= 1) {
+    return [warn('REDFLAG_VID_UNREADABLE', `VID "${raw}" could not be read reliably (${digits.length} digits)`, page, { vid: digits })];
+  }
   return [
-    err('REDFLAG_VID_FORMAT', `VID "${m[2].trim()}" is ${digits.length} digits, not ${VID_DIGITS}`, page, { vid: digits }),
+    err('REDFLAG_VID_FORMAT', `VID "${raw}" is ${digits.length} digits, not ${VID_DIGITS}`, page, { vid: digits }),
   ];
 }
 
@@ -256,7 +277,7 @@ export const AADHAAR_GROUP_RE = /\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/g;
  *  number ("Toll Free No: 1800 2666 9666") is Aadhaar-shaped, and reading it as one made a
  *  legitimate claim hard-fail with "Aadhaar number differs across pages". */
 export const AADHAAR_COMPETING_LABEL =
-  /(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax|\bph\b|enrol|\bvid\b)[^0-9]{0,12}$/i;
+  /(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax|\bph\b|enrol|\bvid\b|\buan\b|\bpf\b|invoice|policy|emp(?:loyee)?\s*(?:code|id|no)|\bcode\b|a\/c|account|acct)[^0-9]{0,12}$/i;
 
 /** Distinct 12-digit Aadhaar numbers on one page, excluding phone-shaped lookalikes. */
 export function aadhaarNumbers(text: string): string[] {
@@ -495,15 +516,24 @@ function isRealDay(day: number, month: number, year: number): boolean {
  *  generated stamps (e-receipts, "Printed On" footers) print month-first: "6/29/26" is 29 June
  *  2026, and reading it only as day/month raised a red flag - an ERROR that failed the claim -
  *  on a perfectly ordinary date. A date that is real either way is not evidence of anything. */
-export function checkDates(fileText: string): RedFlagFinding[] {
+export function checkDates(fileText: string, page: number | null = null): RedFlagFinding[] {
   const out: RedFlagFinding[] = [];
   const seen = new Set<string>();
-  for (const m of fileText.matchAll(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\b/g)) {
+  for (const m of fileText.matchAll(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,5})\b/g)) {
     const raw = m[0];
     if (seen.has(raw)) continue;
     seen.add(raw);
     const day = +m[1];
     const month = +m[2];
+    // "19.10.20000" — a five-digit year on a salary slip DOB. With \d{2,4} it never matched
+    // and the date went unchecked (client QA 2026-10). Only a 19xxx/20xxx year on an
+    // otherwise real day counts, so a phone-number run is still not read as a date.
+    if (m[3].length === 5) {
+      if (/^(?:19|20)\d{3}$/.test(m[3]) && (isRealDay(day, month, 2000) || isRealDay(month, day, 2000))) {
+        out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}" (year has 5 digits)`, page, { date: raw }));
+      }
+      continue;
+    }
     let year = +m[3];
     if (year < 100) year += year < 50 ? 2000 : 1900;
     // Not a date at all: "+91-20-2721 8080", the NSDL helpline printed on every PAN card, reads
@@ -512,11 +542,11 @@ export function checkDates(fileText: string): RedFlagFinding[] {
     if (year < 1900 || year > 2100) continue;
     if (isRealDay(day, month, year) || isRealDay(month, day, year)) continue;
     if (month < 1 || month > 12 || day < 1) {
-      out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}"`, null, { date: raw }));
+      out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}"`, page, { date: raw }));
       continue;
     }
     const max = month === 2 && isLeap(year) ? 29 : DAYS_IN_MONTH[month - 1];
-    out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}" (${day} > ${max} for month ${month})`, null, { date: raw }));
+    out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}" (${day} > ${max} for month ${month})`, page, { date: raw }));
   }
   return out;
 }
