@@ -99,21 +99,43 @@ export function completenessOutcome(
  * alone are not enough. The digit group must not sit behind a phone-style label either.
  */
 function aadhaarFrontSide(t: string): boolean {
+  if (NOT_AN_ID_CARD.test(t)) return false;
   if (!/\b(?:dob|date\s*of\s*birth|male|female|जन्म)\b/i.test(t)) return false;
-  const m = /\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/.exec(t);
-  if (!m) return false;
-  return !/(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax)[^0-9]{0,12}$/i.test(
-    t.slice(Math.max(0, m.index - 30), m.index)
-  );
+  for (const m of t.matchAll(/\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/g)) {
+    const runUp = t.slice(Math.max(0, m.index - 30), m.index);
+    if (!FRONT_COMPETING_LABEL.test(runUp)) return true;
+  }
+  return false;
 }
+
+/** A 12-digit group behind one of these labels is that label's number, not an Aadhaar:
+ *  a payslip's UAN and a policy or invoice number are Aadhaar-shaped too. */
+const FRONT_COMPETING_LABEL =
+  /(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax|\buan\b|\bpf\b|invoice|policy|emp(?:loyee)?\s*(?:code|id|no)|\bcode\b|a\/c|account|acct)[^0-9]{0,12}$/i;
+
+/** Wording that only a payslip, policy or invoice prints. Such a page MENTIONS an Aadhaar or
+ *  PAN ("Aadhaar No", "Permanent Account Number of the dealer") without BEING one, and
+ *  counting the mention made Missing Docs report the card as provided when it was not
+ *  (client QA 2026-10, points 7-12). */
+const NOT_AN_ID_CARD =
+  /\b(?:earnings|deductions|net\s*(?:pay|salary)|gross\s*(?:pay|salary|earnings)|pay\s*slip|payslip|salary\s*slip|premium|sum\s*insured|policy\s*(?:no|number|period|schedule)|tax\s*invoice|invoice\s*(?:no|date|number)|ex[\s-]*showroom)\b/i;
+
+/** A PAN number in the shape the card prints (4th letter = a holder category). Lets a blurry
+ *  card whose "INCOME TAX DEPARTMENT" header did not survive OCR still count as present. */
+const PAN_NUMBER_ON_CARD = /\b[A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z]\b/;
 
 export const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
   AADHAR: (t) =>
-    /(^|[^a-z])(uidai|aad?haa?r)([^a-z]|$)/i.test(t) ||
+    /(^|[^a-z])uidai([^a-z]|$)/i.test(t) ||
     /unique\s+identification\s+authority/i.test(t) ||
+    (!NOT_AN_ID_CARD.test(t) && /(^|[^a-z])aad?haa?r([^a-z]|$)/i.test(t)) ||
     aadhaarFrontSide(t),
   // OCR of blurry cards drops spaces ("INCOMETAX DEPARTMENT") — keep \s* loose.
-  PAN: (t) => /income\s*tax\s*depart/i.test(t) || /permanent\s*account\s*number/i.test(t),
+  PAN: (t) =>
+    /income\s*tax\s*depart/i.test(t) ||
+    (!NOT_AN_ID_CARD.test(t) &&
+      (/permanent\s*account\s*number/i.test(t) ||
+        (PAN_NUMBER_ON_CARD.test(t) && /father|date\s*of\s*birth|\bdob\b|signature/i.test(t)))),
   // Cards carry a DL number / class-of-vehicle codes; policy clauses just say
   // "driving license", so require both signals.
   DL: (t) =>

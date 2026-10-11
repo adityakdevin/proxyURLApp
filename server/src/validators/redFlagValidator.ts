@@ -71,7 +71,15 @@ const MAX_SPAN = 8;
  *  keys is one more place to forget a new rule. */
 function locatableValue(data?: Record<string, unknown>): string | null {
   for (const v of Object.values(data ?? {})) {
-    const s = typeof v === 'string' ? v : Array.isArray(v) && typeof v[0] === 'string' ? v[0] : null;
+    const first: unknown = Array.isArray(v) ? v[0] : v;
+    // checkAadhaar records {page, num} pairs; reading only plain strings left every
+    // Aadhaar mismatch without a highlight (client QA 2026-10).
+    const s =
+      typeof first === 'string'
+        ? first
+        : first && typeof first === 'object' && typeof (first as { num?: unknown }).num === 'string'
+          ? (first as { num: string }).num
+          : null;
     if (s && norm(s).length >= MIN_LOCATABLE) return s;
   }
   return null;
@@ -161,6 +169,7 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_MODIFIED_AFTER_CREATE: 'Modified after creation',
   REDFLAG_NOMINEE_NO_NAME: 'Nominee without name',
   REDFLAG_BAD_DATE: 'Impossible date',
+  REDFLAG_VID_UNREADABLE: 'VID unreadable',
 };
 
 export const redFlagValidator: Validator = {
@@ -199,14 +208,33 @@ export const redFlagValidator: Validator = {
       // Cross-page rules over ALL of this document's pages (a back side may be unclassified).
       const asPages = pages.map((p) => ({ page: p.page ?? 1, text: p.text }));
       if (codes.has('AADHAR')) for (const f of checkAadhaar(asPages)) findings.push(toFinding(doc.id, f));
-      if (codes.has('VOTER_ID')) for (const f of checkVoterId(asPages)) findings.push(toFinding(doc.id, f));
+      if (codes.has('VOTER_ID')) {
+        // Only the Voter ID's own sides: the bundle's RC or engine-number pages carry
+        // AAA9999999-shaped tokens too, and comparing them reported a mismatch on a card
+        // whose two sides agree (client QA 2026-10). An unclassified page right after a
+        // Voter page is its back side.
+        const voterPages = asPages.filter(
+          (_, i) => pages[i].govtCode === 'VOTER_ID' || (!pages[i].govtCode && i > 0 && pages[i - 1].govtCode === 'VOTER_ID')
+        );
+        for (const f of checkVoterId(voterPages)) findings.push(toFinding(doc.id, f));
+      }
       if (codes.has('PASSPORT')) for (const f of checkPassportPages(asPages)) findings.push(toFinding(doc.id, f));
 
       // File-level "Every Doc" rules (spec decision 3): whole-document text.
       const fileText = pages.map((p) => p.text).join('\n');
       for (const f of checkSignature(fileText)) findings.push(toFinding(doc.id, f));
       for (const f of checkSignatoryWord(fileText)) findings.push(toFinding(doc.id, f));
-      for (const f of checkDates(fileText)) findings.push(toFinding(doc.id, f));
+      // Dates per page so the finding names a page and can be boxed; the same bad date
+      // printed on several pages is reported once.
+      const seenDates = new Set<string>();
+      for (const inst of pages) {
+        for (const f of checkDates(inst.text, inst.page ?? 1)) {
+          const key = String(f.data?.date ?? f.message);
+          if (seenDates.has(key)) continue;
+          seenDates.add(key);
+          findings.push(toFinding(doc.id, f));
+        }
+      }
 
       // Editor/AI watermark — read the PDF Producer/Creator (I/O; PDFs only).
       if ((doc.mimeType ?? '') === 'application/pdf') {
