@@ -228,6 +228,34 @@ export function matchesClaimId(text: string, claimId: string): boolean {
   return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(text);
 }
 
+/** Glyphs OCR swaps inside a VIN-like code, folded to one form on BOTH sides. */
+const ID_GLYPH: Record<string, string> = { o: '0', q: '0', d: '0', i: '1', l: '1', t: '1', j: '1', z: '2', s: '5', b: '8', g: '6' };
+const idFold = (s: string) => [...normalizeText(s)].map((c) => ID_GLYPH[c] ?? c).join('');
+/** Claim IDs at least this long (a VIN is 17) may be matched through OCR misreads. */
+export const INTRA_FUZZY_MIN_LEN = 10;
+
+/**
+ * The claim ID as OCR may have printed it: same glyph-folded form with at most one other
+ * character wrong. Returns the text it matched, or null.
+ *
+ * Exact matching failed 164 of 570 sample claims, nearly all on an invoice whose VIN reads
+ * "MZBGESISVIN301510" for MZBGE815VTN301510 (client QA 2026-10, #39-40); this recovers 138.
+ * One extra difference, not two: a document for another car of the same series differs in
+ * only the last digit or two, and that must still fail.
+ */
+export function fuzzyClaimIdMatch(text: string, claimId: string): string | null {
+  const id = idFold(claimId);
+  if (id.length < INTRA_FUZZY_MIN_LEN) return null;
+  const raw = normalizeText(text);
+  const folded = idFold(text);
+  for (let i = 0; i + id.length <= folded.length; i++) {
+    let diff = 0;
+    for (let j = 0; j < id.length && diff <= 1; j++) if (folded[i + j] !== id[j]) diff++;
+    if (diff <= 1) return raw.slice(i, i + id.length).toUpperCase();
+  }
+  return null;
+}
+
 /** Spell-check candidates: 3+ letter alphabetic tokens with CASE PRESERVED.
  *  Case is kept so the caller can test proper-noun capitalisation against the
  *  dictionary — dictionary-en holds many proper nouns only in capitalised form
