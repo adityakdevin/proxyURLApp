@@ -114,6 +114,15 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
           ? ids.filter((i) => i.field === field).map((i) => i.value)
           : extractField(field, unit.text);
         for (const value of values) {
+          // "HANUMANGARH , RAJASTHAN-335512" — a policy's wrapped address tail — is a town, not
+          // a home: it "matched" unrelated claims from the same town as a hard duplicate
+          // (client QA 2026-10, #18). Skip a town-and-state line: no number besides the PIN and
+          // three words or fewer. A village address ("VILLAGE BIJAURI, DISTRICT JABALPUR")
+          // has no house number either, but says more than a town.
+          if (field === 'ADDRESS') {
+            const rest = value.replace(/\b\d{3}\s?\d{3}\b/g, '');
+            if (!/\d/.test(rest) && (rest.match(/[A-Za-z]{2,}/g) ?? []).length <= 3) continue;
+          }
           const norm = normValue(field, value);
           if (norm.replace(/\s/g, '').length < MIN_NORM_LEN) continue;
           const key = `${field}:${norm}`;

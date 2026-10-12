@@ -15,6 +15,9 @@ describe('client QA 2026-10 — Duplicate', () => {
     expect(extractField('ACCOUNT_NO', 'Account No 50100234567890')).toEqual(['50100234567890']);
     expect(extractField('ACCOUNT_NO', 'Contact No: 7088007037')).toEqual([]);
   });
+  it('#16 the next table column is not part of the account number', () => {
+    expect(extractField('ACCOUNT_NO', 'Bank A/C No 05451610146036 31.00 31.00 0.00')).toEqual(['05451610146036']);
+  });
   it('#16 an employee code after "Employee No." is read', () => {
     expect(extractField('EMP_CODE', 'Employee No. : E1234')).toEqual(['E1234']);
   });
@@ -22,6 +25,9 @@ describe('client QA 2026-10 — Duplicate', () => {
     expect(extractNames('MISP Name : PARASAVNATH AUTOWHEELS')).toEqual([]);
     expect(extractNames('M1SP Name : PARASAVNATH AUTOWHEELS')).toEqual([]);
     expect(extractNames('Payer Name : DRIVE N RIDE')).toEqual([]);
+    // As OCR actually printed the MISP label on 637769 and 627998.
+    expect(extractNames('| MIS Name : PARASAVNATI AUTOWIEELS Tor & On Behalf of')).toEqual([]);
+    expect(extractNames('| MSP Name : PARASAVNATH AUTOWHEELS Tor & On Behalf of')).toEqual([]);
     expect(extractNames('Insured Name : BHUPENDER SINGH')).toEqual(['BHUPENDER SINGH']);
   });
 });
@@ -29,6 +35,16 @@ describe('client QA 2026-10 — Duplicate', () => {
 describe('client QA 2026-10 — Data Compare', () => {
   it('#25 the authorised signatory is not the employee', () => {
     expect(extractNames('Employee Name : NEERAJ TRIVEDI\nAuthorised Signatory\nName : Mayank')).toEqual(['NEERAJ TRIVEDI']);
+    // The real 611015 salary certificate: the heading is five lines above the name.
+    expect(
+      extractNames(
+        'Authorized Signatory, =\nCopp\nFor. iffonised Sineter\nNational Medical College Education Trust,\n' +
+          '(Managing Pt. Dr. Shivshakii Lal Sharma Ayurved Medical College, Ratlam,)\nName: Mayank Joshi :'
+      )
+    ).toEqual([]);
+  });
+  it('#24 a staff ID card\'s "F.Name" is the father, not the holder', () => {
+    expect(extractNames('Name : RUPALISINGH\nF.Name : PRAVIN KUMAR SINGH')).toEqual(['RUPALISINGH']);
   });
   it('#27 the nominee under a heading is not the customer', () => {
     expect(extractNames('Insured Name : RAM KUMAR\nNominee Details\nName : SUNITA DEVI')).toEqual(['RAM KUMAR']);
