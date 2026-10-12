@@ -115,4 +115,27 @@ describe('dupValidator — Duplicacy sheet numbers', () => {
     expect(outcome.findings!.find((x) => x.code === 'DUP_ADDRESS')!.severity).toBe('ERROR');
     expect(outcome.summary).toContain('1 of them a red flag'); // not "a reference number"
   });
+
+  // Client QA 2026-10, #18: a policy's wrapped town line matched unrelated claims.
+  it('does not treat a bare town, state and PIN as a shared address', async () => {
+    const prisma = {
+      claimFieldValue: {
+        deleteMany: async () => ({}),
+        createMany: async () => ({}),
+        findMany: async ({ where }: { where: { field: string; norm: { in: string[] } } }) =>
+          where.norm.in.map((norm) => ({ norm, claim: { claimId: 'OTHER-1' } })),
+      },
+    };
+    const text = 'Address: HANUMANGARH , RAJASTHAN-335512';
+    const outcome = await dupValidator.run({
+      claim: { id: 'c1', claimId: 'CLM-1', subCategoryId: 's1' },
+      documents: [],
+      prisma: prisma as never,
+      ocr: {} as never,
+      shared: new Map([['d1', text]]),
+      pageTexts: new Map([['d1', [text]]]),
+      wordBoxes: new Map(),
+    });
+    expect(outcome.findings?.find((x) => x.code === 'DUP_ADDRESS')).toBeUndefined();
+  });
 });

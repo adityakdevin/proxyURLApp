@@ -449,8 +449,20 @@ function sectionHeadingBefore(text: string, at: number): boolean {
   const sameLine = lines.pop() ?? '';
   if (sameLine.trim() !== '') return false; // "Customer Name" etc. — the label word decides
   const prev = [...lines].reverse().find((l) => l.trim() !== '') ?? '';
-  return NON_PERSON_SECTION.test(prev);
+  if (NON_PERSON_SECTION.test(prev)) return true;
+  // A signature block runs several lines: "Authorized Signatory, / For, National Medical
+  // College … / (Managing …) / Name: Mayank Joshi" read the signatory as the employee and
+  // failed the claim (client QA 2026-10, #25). Only this unmistakable heading reaches back.
+  return /\bauthori[sz]ed\s+signator/i.test(
+    text.slice(Math.max(0, at - 300), at).split('\n').slice(-7).join('\n')
+  );
 }
+
+/** "F.Name" / "M.Name": a staff ID card's father's / mother's name, not the holder's (#24). */
+const RELATION_INITIAL_BEFORE = /\b[FM]\.\s*$/i;
+
+/** The selling dealer's "MISP Name" as OCR prints it: "MIS Name", "MSP Name" (#18, #24, #28). */
+const MISP_OCR = new Set(['mis', 'msp']);
 
 /** "M1SP" → "misp": OCR swaps in a label word must not slip past the blocklist. */
 const labelWord = (w: string) => w.toLowerCase().replace(/1/g, 'i').replace(/0/g, 'o');
@@ -459,8 +471,9 @@ export function extractNames(text: string): string[] {
   const relations = extractRelationNames(text);
   const out: string[] = [];
   for (const m of text.matchAll(NAME_RE)) {
-    if (m[1] && NON_PERSON_NAME_LABEL.has(labelWord(m[1]))) continue;
+    if (m[1] && (NON_PERSON_NAME_LABEL.has(labelWord(m[1])) || MISP_OCR.has(labelWord(m[1])))) continue;
     if (!m[1] && /^name/i.test(m[0]) && sectionHeadingBefore(text, m.index ?? 0)) continue;
+    if (!m[1] && RELATION_INITIAL_BEFORE.test(text.slice(Math.max(0, (m.index ?? 0) - 4), m.index ?? 0))) continue;
     let v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
     // The value runs until a character the name class rejects, and ':' is one — so when OCR
     // puts two fields on one line ("Employee Name: Rajesh Dass profesion: Engineer") the
@@ -533,7 +546,10 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   // shared salary account was never a duplicate (client QA 2026-10, #13). The separator is
   // optional only when "No"/"Number" is present, so "Account 2024-25" is not a number.
   ACCOUNT_NO:
-    /\b(?:a\/c|acct|account)\.?\s*(?:(?:no|number|#)\.?\s*[:\-]?|[:\-])\s*([0-9][0-9\- ]{5,22}[0-9])/gi,
+    // A space may split the digit groups, but not lead into the next table column: Infosys
+    // payslips print "Bank A/C No 05451610146036 31.00" (days payable), and swallowing "31"
+    // split one shared account into two duplicate groups (client QA 2026-10, #16).
+    /\b(?:a\/c|acct|account)\.?\s*(?:(?:no|number|#)\.?\s*[:\-]?|[:\-])\s*([0-9](?:[0-9\-]| (?!\d+[.,]\d)){5,22}[0-9])/gi,
   RECEIPT_NO: /receipt\s*(?:no|number|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
   APPLICATION_NO:
     /(?:application|appl?n)\.?\s*(?:no|number|id|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,

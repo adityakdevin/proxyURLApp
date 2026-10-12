@@ -518,12 +518,17 @@ export class ValidationService {
    * values as they stand when it runs, so the claim validated first passed with nothing to
    * match and was never revisited — the client QA of 2026-10 saw a duplicate pair flagged on
    * only one VIN, and four of five in a group of five. Every earlier claim that this run
-   * matched on a hard data point and that still reads PASSED is re-validated in full (a
-   * DUP-only run would mark its other checks "not run"). It then matches this claim and
-   * fails, so it is not PASSED when this claim is next validated: no ping-pong.
+   * matched on a hard data point and whose latest Duplicate result does not yet name this
+   * claim is re-validated in full (a DUP-only run would mark its other checks "not run").
+   *
+   * Keyed on "does it name me", not on its status. Re-queuing only PASSED partners left a
+   * partner already FAILED on some other match (650618 on a PF number) or DOUBTFUL on a
+   * name warning (621370) blind to this claim for good (client QA 2026-10, #17, #18). The
+   * re-run partner names this claim, so this claim's next run finds nothing to re-queue:
+   * no ping-pong.
    */
   private async requeueDuplicatePartners(
-    claim: { id: string; subCategoryId: string },
+    claim: { id: string; claimId: string; subCategoryId: string },
     results: { v: Validator; findings?: FindingInput[] }[]
   ): Promise<void> {
     const dup = results.find((r) => r.v.key === 'DUP');
@@ -541,16 +546,29 @@ export class ValidationService {
           id: { not: claim.id },
           subCategoryId: claim.subCategoryId,
           status: 'ACTIVE',
-          duplicateStatus: 'PASSED',
           validationRuns: { none: { status: { in: ['QUEUED', 'RUNNING'] } } },
         },
-        select: { id: true },
+        select: {
+          id: true,
+          validationResults: {
+            where: { validatorKey: 'DUP' },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { findings: { select: { data: true } } },
+          },
+        },
         take: MAX_DUP_REQUEUE,
       });
-      if (partners.length === 0) return;
+      const namesMe = (p: (typeof partners)[number]) =>
+        (p.validationResults[0]?.findings ?? []).some((f) => {
+          const c = (f.data as { claims?: unknown } | null)?.claims;
+          return Array.isArray(c) && c.includes(claim.claimId);
+        });
+      const stale = partners.filter((p) => !namesMe(p));
+      if (stale.length === 0) return;
       // Imported here: validationQueue imports this module.
       const { enqueue } = await import('./validationQueue.js');
-      for (const p of partners) await enqueue(this.prisma, this.validators, p.id, 'AUTO');
+      for (const p of stale) await enqueue(this.prisma, this.validators, p.id, 'AUTO');
     } catch (e) {
       // Best effort: the partner keeps its old result, which is no worse than before.
       console.warn(`[validation] could not re-queue duplicate partners of ${claim.id}:`, e);
