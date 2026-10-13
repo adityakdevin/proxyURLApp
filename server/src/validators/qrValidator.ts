@@ -1,4 +1,3 @@
-import path from 'path';
 import { promises as fs } from 'fs';
 import { Jimp } from 'jimp';
 import jsQR from 'jsqr';
@@ -7,7 +6,8 @@ import { qrOutcome } from './logic.js';
 import { classifyPage } from './segment.js';
 import { docFieldGroups } from './docFields.js';
 import { aadhaarQrAsFields, isUnreadableQrPayload } from './aadhaarSecureQr.js';
-import { compareQrToFields, QrFieldComparison } from './qrCompare.js';
+import { compareQrToFields, panCarriesQr, qrForeignChassis, QrFieldComparison } from './qrCompare.js';
+import { classifyDocType } from './crossDocLogic.js';
 import { verifyKiaPolicy, kiaVerificationUrl } from './policyOnline.js';
 import { rasterizePdf, largestImageWidthPerPage, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
 import { BBox, clamp01 } from '../lib/bbox.js';
@@ -33,6 +33,7 @@ export function qrValue(text: string, bytes?: Uint8Array): string {
   // PrintLetterBarcodeData XML carrying a Devanagari or accented name is perfectly
   // renderable text; the old ASCII-only whitelist turned it into a base64 blob that the
   // UI's XML field parser then never got to see.
+  // eslint-disable-next-line no-control-regex -- detecting control bytes is the point
   if (text && !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(text)) return text.trim();
   return bytes && bytes.length > 0 ? `binary:${Buffer.from(bytes).toString('base64')}` : text.trim();
 }
@@ -182,14 +183,68 @@ export async function decodeAll(
   }
 }
 
-async function decodeQrImage(absolutePath: string): Promise<QrHit[]> {
+/** Largest edge a retry pass may upscale an image to — keeps one pass's bitmap under ~64 MB. */
+const IMAGE_RETRY_MAX_EDGE = 4000;
+/** Above this many source pixels an image gets the single native-resolution decode only. */
+const IMAGE_RETRY_MAX_PIXELS = 25_000_000;
+
+/**
+ * A photographed card's QR is small and soft, and one decode at native resolution missed
+ * codes a phone reads at once (client QA 2026-10, #33/#34) — PDFs already got a second,
+ * higher-resolution pass; images got none. Retries, cheapest first, stopping at the first
+ * hit: upscaled; upscaled + greyscale + contrast; then each quadrant upscaled, for a QR that
+ * is a small corner of a large photo. `retried` says whether those passes ran, so the caller
+ * counts its budget and flags a card the retries never looked at (too large, or no budget).
+ */
+export async function decodeQrImage(
+  absolutePath: string,
+  retry: boolean
+): Promise<{ hits: QrHit[]; retried: boolean; tooLarge: boolean; unreadable: boolean }> {
+  const done = (hits: QrHit[], retried = true, tooLarge = false, unreadable = false) => ({ hits, retried, tooLarge, unreadable });
   try {
     const img = await Jimp.read(absolutePath);
-    const { data, width, height } = img.bitmap;
-    return await decodeAll(new Uint8ClampedArray(data), width, height);
+    const decode = async (j: { bitmap: { data: Buffer | Uint8Array; width: number; height: number } }) =>
+      decodeAll(new Uint8ClampedArray(j.bitmap.data), j.bitmap.width, j.bitmap.height);
+    const first = await decode(img);
+    // Retries copy and upscale the bitmap several times: not for an image so large that the
+    // copies alone would strain memory beside other workers' scans.
+    if (first.length > 0 || !retry) return done(first, false);
+    if (img.bitmap.width * img.bitmap.height > IMAGE_RETRY_MAX_PIXELS) return done(first, false, true);
+
+    const { width, height } = img.bitmap;
+    const factor = (w: number, h: number) => Math.min(3, IMAGE_RETRY_MAX_EDGE / Math.max(w, h));
+    const f = factor(width, height);
+    if (f > 1.2) {
+      // Scaled once and reused: each copy of a 4000px bitmap is ~64 MB.
+      const scaled = img.clone().scale(f);
+      const up = await decode(scaled);
+      if (up.length > 0) return done(up.map(withoutBox));
+      const enhanced = await decode(scaled.greyscale().contrast(0.4));
+      if (enhanced.length > 0) return done(enhanced.map(withoutBox));
+    } else {
+      const enhanced = await decode(img.clone().greyscale().contrast(0.4));
+      if (enhanced.length > 0) return done(enhanced);
+    }
+    // Quadrants, overlapping by a quarter so a QR on a seam is whole in one of them.
+    const qw = Math.ceil(width * 0.625);
+    const qh = Math.ceil(height * 0.625);
+    for (const [x, y] of [[0, 0], [width - qw, 0], [0, height - qh], [width - qw, height - qh]]) {
+      const tile = img.clone().crop({ x, y, w: qw, h: qh });
+      const tf = factor(qw, qh);
+      const hits = await decode(tf > 1.2 ? tile.scale(tf).greyscale() : tile.greyscale());
+      if (hits.length > 0) return done(hits.map(withoutBox));
+    }
+    return done([]);
   } catch {
-    return [];
+    return done([], false, false, true);
   }
+}
+
+/** A retry's box is in its own (scaled or cropped) frame, not the page's. Highlighting it
+ *  there would point at the wrong place, so drop the box and keep the value: the viewer
+ *  then falls back to the page, which is still right. */
+function withoutBox(h: QrHit): QrHit {
+  return { ...h, bbox: undefined };
 }
 
 /** What a PDF scan found, plus what it did NOT look at. The skipped counts are returned
@@ -221,7 +276,10 @@ export async function decodeQrPdf(absolutePath: string): Promise<PdfQrScan> {
   };
   // rasterizePdf returns [] on any failure, so an unreadable PDF just yields no QR.
   const misses: number[] = [];
-  const pages = await rasterizePdf(absolutePath, MAX_QR_PAGES, PDF_QR_SCALE);
+  // Unsmoothed first: a low-resolution card's QR survives nearest-neighbour scaling and
+  // blurs under smoothing. The high-res retry below stays smoothed, so a code that only
+  // reads smoothed still has its chance (client QA 2026-10, #34).
+  const pages = await rasterizePdf(absolutePath, MAX_QR_PAGES, PDF_QR_SCALE, undefined, { smooth: false });
   const totalPages = pages[0]?.totalPages ?? 0;
   for (const p of pages) {
     const found = await decodePage(p);
@@ -384,7 +442,9 @@ export function classifyQrOutcome(input: {
   const unreadable =
     input.opaquePayloads > 0 ||
     input.truncatedScans > 0 ||
-    input.missing.some((m) => m.data?.tooCoarse === true || m.data?.decoderDegraded === true);
+    input.missing.some(
+      (m) => m.data?.tooCoarse === true || m.data?.decoderDegraded === true || m.data?.qrExpected === true
+    );
   if (unreadable) return 'UNREADABLE';
   // Nothing scannable in the claim is not a QR problem — there is no code to be wrong about.
   return input.decodedValues === 0 && input.scannableDocs > 0 ? 'NO_QR' : 'OK';
@@ -425,6 +485,7 @@ export const qrValidator: Validator = {
     resetDecoderDegraded();
     // One lookup per policy link: a bundle often carries the same policy QR on two pages.
     const verifiedUrls = new Set<string>();
+    let imageRetries = 0;
     for (const doc of scannable) {
       let hits: (QrHit & { page?: number })[];
       if (doc.mimeType === 'application/pdf') {
@@ -434,7 +495,9 @@ export const qrValidator: Validator = {
           truncated.push({
             documentId: doc.id,
             code: 'QR_PAGES_TRUNCATED',
-            severity: 'WARNING',
+            // ERROR, not WARNING: warnings are hidden, and pages never scanned must not read
+            // as a clean pass (security review, 2026-10-13).
+            severity: 'ERROR',
             message:
               `Only the first ${scan.totalPages - scan.skippedPages} of ${scan.totalPages} pages of ` +
               `${doc.fileName} were scanned for QR codes. A code on pages ` +
@@ -447,7 +510,7 @@ export const qrValidator: Validator = {
           truncated.push({
             documentId: doc.id,
             code: 'QR_RETRY_BUDGET_EXHAUSTED',
-            severity: 'WARNING',
+            severity: 'ERROR',
             message:
               `${scan.skippedRetries} page(s) of ${doc.fileName} showed no QR at standard resolution ` +
               `and were not re-rendered at high resolution (budget is ${MAX_QR_RETRY_PAGES} pages). ` +
@@ -456,7 +519,31 @@ export const qrValidator: Validator = {
           });
         }
       } else {
-        hits = await decodeQrImage(doc.readablePath);
+        // One plain decode; the costly retries (up to six more decodes) only for an image the
+        // first pass missed, within a per-run budget the same size as the PDF one. Counted only
+        // when they ran: an image too large to retry spends no budget.
+        const scan = await decodeQrImage(doc.readablePath, imageRetries < MAX_QR_RETRY_PAGES);
+        hits = scan.hits;
+        if (scan.retried) imageRetries++;
+        const cardLike = ['KYC', 'INSURANCE', 'RC'].includes(classifyDocType(ctx.shared.get(doc.id) ?? '') ?? '');
+        if (hits.length === 0 && !scan.retried && cardLike) {
+          // A card photo not looked at closely is not "no QR": past the budget, too large to
+          // retry, or not openable at all. Only card-like images: a vehicle photo or a JPG
+          // invoice carries none.
+          truncated.push({
+            documentId: doc.id,
+            code: 'QR_RETRY_BUDGET_EXHAUSTED',
+            severity: 'ERROR',
+            message: scan.unreadable
+              ? `${doc.fileName} could not be opened to scan for a QR code. Please check it by eye.`
+              : scan.tooLarge
+              ? `${doc.fileName} showed no QR at its own resolution and is too large to retry at a ` +
+                `higher one. A small card QR needs that pass: please check it by eye.`
+              : `${doc.fileName} showed no QR at its own resolution and was not retried at a higher ` +
+                `one (budget is ${MAX_QR_RETRY_PAGES} images per claim). A small card QR needs that pass.`,
+            data: { skippedRetries: 1, retryBudget: MAX_QR_RETRY_PAGES, tooLarge: scan.tooLarge, unreadable: scan.unreadable },
+          });
+        }
       }
       if (hits.length > 0) {
         for (const h of hits) {
@@ -469,7 +556,7 @@ export const qrValidator: Validator = {
             ...(h.bbox ? { bbox: h.bbox } : {}),
           });
           // INFO, so it draws the outline and lists in the sidebar without ever changing
-          // the check's status (deriveCheckStatus only softens on WARNING).
+          // the check's status.
           found.push({
             documentId: doc.id,
             code: 'QR_FOUND',
@@ -493,6 +580,27 @@ export const qrValidator: Validator = {
                 data: { label: c.label, qrValue: c.qrValue, documentValue: c.documentValue },
               });
             }
+          }
+          // Is the QR even about this vehicle? A claim's ID is its VIN, so a policy QR naming
+          // another chassis is someone else's policy whatever the page around it says — on
+          // 020440 the QR read another person's name and another chassis (client QA
+          // 2026-10, #35). Needs no name reading, so it catches what the field compare misses.
+          // Only a NEW-car policy (registration "New"): an exchange claim legitimately
+          // carries the OLD car's policy and RC, whose QR names the old chassis — 26 of the
+          // 34 sample claims whose QR chassis differs from the VIN were exactly that.
+          const qrChassis = qrForeignChassis(h.value, ctx.claim.claimId);
+          if (qrChassis) {
+            mismatches.push({
+              documentId: doc.id,
+              code: 'QR_FIELD_MISMATCH',
+              severity: 'ERROR',
+              message:
+                `QR code's chassis number "${qrChassis}" is not this claim's VIN ` +
+                `${ctx.claim.claimId} — the QR belongs to another vehicle.`,
+              page: h.page ?? null,
+              bbox: h.bbox ?? null,
+              data: { label: 'Chassis No', qrValue: qrChassis, documentValue: ctx.claim.claimId },
+            });
           }
           // Does KIA Safety's own record of the policy back the printed page up?
           const url = kiaVerificationUrl(h.value);
@@ -556,6 +664,12 @@ export const qrValidator: Validator = {
         // — invisible. The source width is the measurement that tells them apart.
         const tooCoarse = img !== undefined && img.width < MIN_CARD_IMAGE_WIDTH;
         const dpi = img ? Math.round(img.width / CARD_WIDTH_INCHES) : 0;
+        // The current PAN design prints "Permanent Account Number Card" and always carries a
+        // QR; the older one says "Permanent Account Number" and has none. On the current
+        // design "no QR found" is wrong — the code is there and unreadable (client QA
+        // 2026-10, #33: the customer's PAN on 026512, a blurred QR reported as absent).
+        const qrExpected =
+          p.kind === 'PAN' && panCarriesQr(pageTextFor(doc, ctx, p.page));
         missing.push({
           documentId: doc.id,
           code: 'QR_MISSING',
@@ -573,6 +687,10 @@ export const qrValidator: Validator = {
                 `needs — its squares are under ~2 pixels each, so they blur together in the ` +
                 `scan itself. This is not a fault in the document: rescan the card at 400 DPI ` +
                 `or higher and it will read.`
+              : qrExpected
+                ? `QR present but unreadable on page ${p.page} of ${doc.fileName}: this PAN ` +
+                  `card is the current design, which always carries a QR code, but it could ` +
+                  `not be read — it is blurred or too small in the scan. Rescan the card.`
               : `No QR code was found on page ${p.page} of ${doc.fileName}, which reads as ` +
                 `${card}. Many older card designs carry no QR code at all; if this one does, ` +
                 `the scan may be too small or blurred to read it.`,
@@ -584,6 +702,7 @@ export const qrValidator: Validator = {
             sourceHeight: img?.height,
             approxDpi: img ? dpi : undefined,
             tooCoarse,
+            qrExpected,
           },
         });
       }
@@ -594,6 +713,10 @@ export const qrValidator: Validator = {
     if (mismatches.length > 0) {
       outcome.status = 'FAILED';
       outcome.summary = `${mismatches.length} field(s) do not match the QR code.`;
+    } else if (truncated.length > 0) {
+      // Not every page was looked at: a QR may be there unread. Not a pass.
+      outcome.status = 'FAILED';
+      outcome.summary = 'Some pages or images were not fully scanned for QR codes — please check them visually.';
     }
     // Row 19 — bifurcate the column by WHAT happened, not just pass/fail.
     //

@@ -27,7 +27,8 @@ export function ValidationBadge({
     <Badge
       variant={showOutcome ? qrOutcomeVariant(outcome!) : validationStatusVariant(status)}
       title={title}
-      className={title ? 'cursor-help' : undefined}
+      // One line in dense status columns: "NOT RUN / DOUBTFUL" is twice the usual length.
+      className={title ? 'cursor-help whitespace-nowrap' : 'whitespace-nowrap'}
     >
       {showOutcome ? qrOutcomeLabel(outcome!) : validationStatusLabel(status)}
     </Badge>

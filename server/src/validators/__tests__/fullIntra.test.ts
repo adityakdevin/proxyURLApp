@@ -93,6 +93,44 @@ describe('FULL + INTRA validators', () => {
     expect((await fullValidator.run(ctxFor(prisma, claim, both, new Map()))).status).toBe('PASSED');
   });
 
+  // Value: protects=a missing ID card on a claim with an unreadable page stays an ERROR and names that page; fails_when=soft branch becomes WARNING (hidden) or drops the page hint; why_new=no FULL test had an unreadable page; seam=none; no_claim=readability threshold tuning
+  it('Missing Docs names the unreadable pages when an ID card is not found (client QA 2026-10)', async () => {
+    const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
+    const docs = [doc({ id: 'd1', fileName: 'bundle.pdf', documentTypeId: typeBId })];
+    // 8+ dictionary words: a short page reads as unreadable by design.
+    const readable = 'This tax invoice is issued for the sale of one new motor car to the customer named below';
+    const garbled = 'Xqvt brrk zzwp qhhd mmvx kjtr wplq vvzr Tkkq';
+    const run = (pages: string[]) =>
+      fullValidator.run({ ...ctxFor(prisma, claim, docs, new Map()), pageTexts: new Map([['d1', pages]]) });
+
+    const soft = await run([readable, garbled]);
+    expect(soft.status).toBe('FAILED');
+    const miss = soft.findings!.find((f) => f.code === 'FULL_MISSING_TYPE')!;
+    expect(miss.severity).toBe('ERROR');
+    expect(miss.message).toContain('Aadhar Card');
+    expect(miss.message).toContain('bundle.pdf p.2 could not be read');
+
+    const plain = await run([readable]);
+    expect(plain.findings!.find((f) => f.code === 'FULL_MISSING_TYPE')!.message).toBe('Missing docs - Aadhar Card');
+  });
+
+  // Value: protects=pages past the scan cap are reported as unread, visibly; fails_when=FULL
+  // stops reading ctx.truncatedPages or reports it as a hidden WARNING; why_new=only META,
+  // a hidden check, recorded it; seam=none; no_claim=META filling truncatedPages
+  it('Missing Docs names pages the scan cap left unread', async () => {
+    const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
+    // Every required type present, so the unread pages are the only reason to fail.
+    const docs = [doc({ id: 'd1', fileName: 'bundle.pdf', documentTypeId: typeBId }), doc({ id: 'd2', documentTypeId: typeAId })];
+    const out = await fullValidator.run({
+      ...ctxFor(prisma, claim, docs, new Map()),
+      truncatedPages: new Map([['d1', { scanned: 60, total: 75 }]]),
+    });
+    const f = out.findings!.find((x) => x.code === 'FULL_PAGES_NOT_READ')!;
+    expect(f).toMatchObject({ severity: 'ERROR', documentId: 'd1' });
+    expect(f.message).toContain('Pages 61-75 of bundle.pdf');
+    expect(out.status).toBe('FAILED');
+  });
+
   it('Missing Docs no longer carries the cross-document comparison', async () => {
     const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
     const docs = [doc({ id: 'd1', documentTypeId: typeAId }), doc({ id: 'd2', documentTypeId: typeBId })];
@@ -163,5 +201,21 @@ describe('FULL + INTRA validators', () => {
     expect((await intraValidator.run(ctxFor(prisma, claim, [], shared))).status).toBe('PASSED');
     const shared2 = new Map<string, string>([['d1', 'nothing matching']]);
     expect((await intraValidator.run(ctxFor(prisma, claim, [], shared2))).status).toBe('FAILED');
+  });
+
+  // Client QA 2026-10, #39-40: the invoice prints the VIN, OCR reads 8→S, 1→I, 5→S, T→I.
+  it('INTRA finds a VIN through OCR misreads, but only as a warning', async () => {
+    const claim = { id: 'c', claimId: 'MZBGE815VTN701510', subCategoryId };
+    const run = (text: string) => intraValidator.run(ctxFor(prisma, claim, [], new Map([['d1', text]])));
+    const misread = await run('Vin No. Chassis No.\nMZBGESISVIN7OISI0 MZBGESISVIN701510 GALHSMS11111');
+    expect(misread.status).toBe('PASSED');
+    expect(misread.findings).toEqual([
+      expect.objectContaining({ code: 'INTRA_CLAIMID_MISREAD', severity: 'WARNING' }),
+    ]);
+    // Another car of the same series, two digits off: still not this claim's document.
+    expect((await run('Chassis No. MZBGE815VTN701528')).status).toBe('FAILED');
+    // One digit off in the serial is another car too, even with the model code misread.
+    expect((await run('Chassis No. MZBGE815VTN701511')).status).toBe('FAILED');
+    expect((await run('Vin No. MZBGESISVIN701511')).status).toBe('FAILED');
   });
 });

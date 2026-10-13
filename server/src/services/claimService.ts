@@ -799,7 +799,8 @@ export class ClaimService {
     const findings = await this.prisma.validationFinding.findMany({
       where: {
         result: { runId: { in: [...latest.values()] } },
-        severity: { in: ['ERROR', 'WARNING'] },
+        // Doubtful (WARNING) findings are hidden from reviewers, export included (2026-10).
+        severity: 'ERROR',
         validatorKey: { not: 'META' },
       },
       select: {

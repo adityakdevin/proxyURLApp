@@ -15,7 +15,7 @@
  */
 import { DocField } from './docFields.js';
 import { isUnreadableQrPayload } from './aadhaarSecureQr.js';
-import { nameMatches } from './crossDocLogic.js';
+import { idMatches, idNorm, nameMatches } from './crossDocLogic.js';
 import { editDistanceCapped } from './logic.js';
 
 export type QrVerdict = 'MATCH' | 'MISMATCH';
@@ -37,13 +37,24 @@ export interface QrFieldComparison {
  */
 const QR_KEY_TO_LABELS: Record<string, string[]> = {
   name: ["Insured's Name", 'Holder Name', 'Customer Name'],
+  // Insurer QRs name these keys in full. Unmapped, a QR carrying another customer's name
+  // or the real policy number was decoded and then compared against nothing (client QA
+  // 2026-10, #35/#36).
+  insuredname: ["Insured's Name", 'Customer Name'],
+  nameofinsured: ["Insured's Name", 'Customer Name'],
+  customername: ["Insured's Name", 'Customer Name', 'Holder Name'],
+  proposername: ["Insured's Name", 'Customer Name'],
   polno: ['Policy No'],
   policyno: ['Policy No'],
+  policynumber: ['Policy No'],
   chassisno: ['Chassis No'],
   chassis: ['Chassis No'],
   engineno: ['Engine No'],
   engine: ['Engine No'],
   model: ['Model'],
+  vehiclemodel: ['Model'],
+  makemodel: ['Model'],
+  modelname: ['Model'],
   uid: ['Aadhaar Number'],
   pan: ['PAN Number'],
   panno: ['PAN Number'],
@@ -66,7 +77,7 @@ const QR_KEY_TO_LABELS: Record<string, string[]> = {
   //                 invoice sample to get right.
   invoiceno: ['Invoice No'],
   // NO `gstin` ENTRY, DELIBERATELY. It was mapped once and had to be removed: on a real
-  // certificate (claim MZBEU813LSN749087 p.6) OCR read the printed GSTIN as
+  // certificate (claim …749087 p.6) OCR read the printed GSTIN as
   // "24AAGFO2459A1ZM" where the QR says "24AAGFO2658A1ZM" — two digit misreads on small
   // print beside the code. identifierMatches allows length/8 = 1 edit for a 15-character
   // GSTIN, so that scored MISMATCH, and a MISMATCH FAILS the whole QR check on a perfectly
@@ -86,7 +97,7 @@ const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, '');
 /**
  * Characters OCR routinely confuses on a photographed document. Folding them before
  * comparing is what stops a legitimate claim being flagged: this claim's chassis reads
- * MZBB2SIALSNO10383 off the page and MZBB2814LSN010383 out of the QR — same number, four
+ * MZBB2SIALSNO10007 off the page and MZBB2814LSN010007 out of the QR — same number, four
  * misread glyphs.
  */
 const CONFUSABLE: Record<string, string> = {
@@ -180,6 +191,15 @@ export function parseQrPayload(value: string): Map<string, string> {
   return out;
 }
 
+/** One model, written fuller on one side: "SONET" in the QR, "SONET HTK" on the policy
+ *  (client QA 2026-10, #37/38). Same first word, and every word of the shorter one present
+ *  in the longer; a different model name ("CRETA") still mismatches. */
+function modelMatches(a: string, b: string): boolean {
+  const words = (v: string) => v.toUpperCase().split(/[^A-Z0-9.]+/).filter(Boolean);
+  const [short, long] = [words(a), words(b)].sort((x, y) => x.length - y.length);
+  return short.length > 0 && short[0] === long[0] && short.every((w) => long.includes(w));
+}
+
 /**
  * Compare one QR payload against one document's field pane.
  *
@@ -203,7 +223,9 @@ export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldC
         ? nameMatches(qrRaw, documentValue)
         : label === 'Gender'
           ? genderMatches(qrRaw, documentValue)
-          : identifierMatches(qrRaw, documentValue);
+          : label === 'Model'
+            ? modelMatches(qrRaw, documentValue)
+            : identifierMatches(qrRaw, documentValue);
       out.push({
         label,
         qrValue: qrRaw.replace(/\s+/g, ' ').trim(),
@@ -214,4 +236,31 @@ export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldC
     }
   }
   return out;
+}
+
+const VIN_SHAPE = /^[A-HJ-NPR-Z0-9]{17}$/i;
+
+/**
+ * The chassis a NEW-car policy QR names, when it is not this claim's VIN; else null.
+ * A claim's ID is its VIN, so such a QR is another vehicle's policy whatever the page around
+ * it says (client QA 2026-10, #35). Only a QR whose registration reads "New": an exchange
+ * claim legitimately carries the OLD car's policy, whose QR names the old chassis.
+ */
+export function qrForeignChassis(qrValue: string, claimId: string): string | null {
+  const qr = parseQrPayload(qrValue);
+  const chassis = qr.get('chassisno') ?? qr.get('chassis');
+  const reg = qr.get('regno') ?? qr.get('regnno') ?? qr.get('registrationno') ?? qr.get('registrationnumber');
+  if (!chassis || !reg || !/^new\b/i.test(reg.trim())) return null;
+  // The serial (last six) must agree exactly: one digit off there is the next car of the
+  // batch, which idMatches' one-edit tolerance would otherwise wave through (review, 2026-10-13).
+  // A QR is machine-read, so no OCR misread to allow for (unlike crossDocLogic's sameCar).
+  const sameSerial = idNorm(chassis).slice(-6) === idNorm(claimId).slice(-6);
+  if (!VIN_SHAPE.test(claimId) || (sameSerial && idMatches(chassis, claimId))) return null;
+  return chassis;
+}
+
+/** The current PAN design prints "Permanent Account Number Card" and always carries a QR;
+ *  the older one says "Permanent Account Number" and has none (client QA 2026-10, #33). */
+export function panCarriesQr(pageText: string): boolean {
+  return /account\s+number\s+card/i.test(pageText);
 }

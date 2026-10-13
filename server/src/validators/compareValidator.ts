@@ -33,7 +33,7 @@ export const compareValidator: Validator = {
     const findings = [
       // Sheet row 1, "1st Chk to apply" — first in the list too.
       ...dmsNameFindings(ctx.claim.customerName, pages),
-      ...crossDocFieldFindings(pages).filter((f) => !(rcDiff && isInvoiceRcName(f))),
+      ...crossDocFieldFindings(pages, ctx.claim.claimId).filter((f) => !(rcDiff && isInvoiceRcName(f))),
       ...rcResult,
     ];
     // Box the value each finding names, so its row zooms to it on the document the way Red
@@ -47,13 +47,10 @@ export const compareValidator: Validator = {
       }
     }
     const mismatches = findings.filter((f) => f.severity === 'ERROR').length;
-    const advisories = findings.filter((f) => f.severity === 'WARNING').length;
-
+    // Advisory (WARNING) findings are hidden from reviewers, so the card does not count them.
     const summary =
       mismatches > 0
-        ? `${mismatches} mismatch(es) between documents${advisories ? `, ${advisories} advisory` : ''}.`
-        : advisories > 0
-        ? `No mismatches; ${advisories} advisory note(s).`
+        ? `${mismatches} mismatch(es) between documents.`
         : 'All compared values agree across documents.';
     // The sheet wants the Invoice vs RC outcome stated ("Same Name" / "Diff Name"), so it sits
     // on the card itself, not only in the findings.

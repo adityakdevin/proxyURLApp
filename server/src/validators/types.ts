@@ -76,6 +76,9 @@ export interface ValidatorContext {
   wordBoxes: Map<string, WordBox[]>;
   /** documentId → per-page text (META fills; segment/REDFLAG read for page-scoped classification+rules). */
   pageTexts: Map<string, string[]>;
+  /** documentId → pages read vs pages in the file, for a PDF the page cap cut short (META
+   *  fills; FULL reports it, since META itself is hidden from reviewers). */
+  truncatedPages?: Map<string, { scanned: number; total: number }>;
 }
 
 /**
@@ -93,7 +96,7 @@ export interface FindingInput {
 }
 
 /** What lands in the claim's status column. Validators decide PASSED/FAILED; DOUBTFUL is
- *  derived from their findings by `deriveCheckStatus`. */
+ *  now written only for a check that did not run (see validationService). */
 export type CheckStatus = 'PASSED' | 'FAILED' | 'DOUBTFUL';
 
 export interface ValidatorOutcome {

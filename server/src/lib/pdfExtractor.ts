@@ -267,12 +267,18 @@ export interface RasterPage {
  * extraction returns '' for them, and Tesseract can't read PDFs directly. `scale`
  * ~2 keeps small print legible to OCR without ballooning render time. Returns [] on
  * any failure so the caller degrades to no-text rather than throwing.
+ *
+ * `smooth: false` scales embedded images by nearest neighbour. A phone-scanned card is
+ * often a ~110 DPI JPEG drawn up to page size; smoothing blurs its QR modules into each
+ * other, and the QR scan missed codes zxing reads from the same page unsmoothed (client
+ * QA 2026-10, #34: 642615, 612342, 059741 p15). OCR keeps smoothing — it reads text better.
  */
 export async function rasterizePdf(
   absolutePath: string,
   maxPages = MAX_PDF_PAGES,
   scale = 2,
-  onlyPages?: number[]
+  onlyPages?: number[],
+  { smooth = true }: { smooth?: boolean } = {}
 ): Promise<RasterPage[]> {
   try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -315,6 +321,10 @@ export async function rasterizePdf(
         // @napi-rs/canvas's 2D context is API-compatible with what pdfjs renders into;
         // cast through unknown since the DOM lib isn't in this project's tsconfig.
         const canvasContext = canvas.getContext('2d') as unknown;
+        // pdfjs sets imageSmoothingEnabled itself per image, so pin it rather than set it once.
+        if (!smooth) {
+          Object.defineProperty(canvasContext, 'imageSmoothingEnabled', { get: () => false, set: () => {} });
+        }
         await page.render({ canvasContext, viewport } as never).promise;
         out.push({
           page: p,

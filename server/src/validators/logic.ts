@@ -1,21 +1,4 @@
-import { CheckStatus, FindingInput, ValidatorOutcome } from './types.js';
-
-/**
- * Final stored status for a check, given what the validator decided and the evidence it
- * produced. A validator only ever returns PASSED or FAILED; DOUBTFUL is derived here so
- * all six checks behave the same way instead of each one re-deciding.
- *
- * A PASSED check that raised WARNING findings becomes DOUBTFUL: a doubtful OCR read, a
- * page with no extractable text or a missing signature is not something to show a
- * reviewer behind a green badge. FAILED is never softened — errors outrank warnings.
- */
-export function deriveCheckStatus(
-  status: 'PASSED' | 'FAILED',
-  findings: FindingInput[] | undefined
-): CheckStatus {
-  if (status !== 'PASSED') return status;
-  return findings?.some((f) => f.severity === 'WARNING') ? 'DOUBTFUL' : 'PASSED';
-}
+import { ValidatorOutcome } from './types.js';
 
 /** A document FAILS the SPELL check on the FIRST distinct expected-term misspelling.
  *  Human reviewers flag a form on a single genuine typo ("enginear", "Cleark",
@@ -99,21 +82,43 @@ export function completenessOutcome(
  * alone are not enough. The digit group must not sit behind a phone-style label either.
  */
 function aadhaarFrontSide(t: string): boolean {
+  if (NOT_AN_ID_CARD.test(t)) return false;
   if (!/\b(?:dob|date\s*of\s*birth|male|female|जन्म)\b/i.test(t)) return false;
-  const m = /\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/.exec(t);
-  if (!m) return false;
-  return !/(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax)[^0-9]{0,12}$/i.test(
-    t.slice(Math.max(0, m.index - 30), m.index)
-  );
+  for (const m of t.matchAll(/\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/g)) {
+    const runUp = t.slice(Math.max(0, m.index - 30), m.index);
+    if (!FRONT_COMPETING_LABEL.test(runUp)) return true;
+  }
+  return false;
 }
+
+/** A 12-digit group behind one of these labels is that label's number, not an Aadhaar:
+ *  a payslip's UAN and a policy or invoice number are Aadhaar-shaped too. */
+const FRONT_COMPETING_LABEL =
+  /(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax|\buan\b|\bpf\b|invoice|policy|emp(?:loyee)?\s*(?:code|id|no)|\bcode\b|a\/c|account|acct)[^0-9]{0,12}$/i;
+
+/** Wording that only a payslip, policy or invoice prints. Such a page MENTIONS an Aadhaar or
+ *  PAN ("Aadhaar No", "Permanent Account Number of the dealer") without BEING one, and
+ *  counting the mention made Missing Docs report the card as provided when it was not
+ *  (client QA 2026-10, points 7-12). */
+const NOT_AN_ID_CARD =
+  /\b(?:earnings|deductions|net\s*(?:pay|salary)|gross\s*(?:pay|salary|earnings)|pay\s*slip|payslip|salary\s*slip|premium|sum\s*insured|policy\s*(?:no|number|period|schedule)|tax\s*invoice|invoice\s*(?:no|date|number)|ex[\s-]*showroom)\b/i;
+
+/** A PAN number in the shape the card prints (4th letter = a holder category). Lets a blurry
+ *  card whose "INCOME TAX DEPARTMENT" header did not survive OCR still count as present. */
+const PAN_NUMBER_ON_CARD = /\b[A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z]\b/;
 
 export const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
   AADHAR: (t) =>
-    /(^|[^a-z])(uidai|aad?haa?r)([^a-z]|$)/i.test(t) ||
+    /(^|[^a-z])uidai([^a-z]|$)/i.test(t) ||
     /unique\s+identification\s+authority/i.test(t) ||
+    (!NOT_AN_ID_CARD.test(t) && /(^|[^a-z])aad?haa?r([^a-z]|$)/i.test(t)) ||
     aadhaarFrontSide(t),
   // OCR of blurry cards drops spaces ("INCOMETAX DEPARTMENT") — keep \s* loose.
-  PAN: (t) => /income\s*tax\s*depart/i.test(t) || /permanent\s*account\s*number/i.test(t),
+  PAN: (t) =>
+    /income\s*tax\s*depart/i.test(t) ||
+    (!NOT_AN_ID_CARD.test(t) &&
+      (/permanent\s*account\s*number/i.test(t) ||
+        (PAN_NUMBER_ON_CARD.test(t) && /father|date\s*of\s*birth|\bdob\b|signature/i.test(t)))),
   // Cards carry a DL number / class-of-vehicle codes; policy clauses just say
   // "driving license", so require both signals.
   DL: (t) =>
@@ -206,6 +211,46 @@ export function matchesClaimId(text: string, claimId: string): boolean {
   return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(text);
 }
 
+/** Glyphs OCR swaps inside a VIN-like code, folded to one form on BOTH sides. */
+const ID_GLYPH: Record<string, string> = { o: '0', q: '0', d: '0', i: '1', l: '1', t: '1', j: '1', z: '2', s: '5', b: '8', g: '6' };
+const idFold = (s: string) => [...normalizeText(s)].map((c) => ID_GLYPH[c] ?? c).join('');
+/** Claim IDs at least this long (a VIN is 17) may be matched through OCR misreads. */
+export const INTRA_FUZZY_MIN_LEN = 10;
+/** A VIN's serial number: its last six characters. */
+const SERIAL_LEN = 6;
+
+/**
+ * The claim ID as OCR may have printed it: same glyph-folded form with at most one other
+ * character wrong. Returns the text it matched, or null.
+ *
+ * Exact matching failed 164 of 570 sample claims, nearly all on an invoice whose VIN reads
+ * "MZBGESISVIN701510" for MZBGE815VTN701510 (client QA 2026-10, #39-40); this recovers 138.
+ * One extra difference, not two, and never in the serial: a document for another car of the
+ * same series differs only in the last digit or two, and that must still fail. (Data
+ * Compare's sameCar in crossDocLogic deliberately tolerates one serial edit: it only decides
+ * whether a page is set aside, and keeping a page in the comparison is the safe side.)
+ */
+export function fuzzyClaimIdMatch(text: string, claimId: string): string | null {
+  const id = idFold(claimId);
+  if (id.length < INTRA_FUZZY_MIN_LEN) return null;
+  const raw = normalizeText(text);
+  const folded = idFold(text);
+  // The serial — the last six — must agree exactly once glyphs are folded: it is what
+  // tells two cars of one series apart, and the misread this recovers ("VIN" for "VTN")
+  // sits in the model code, never there.
+  const serialFrom = id.length - SERIAL_LEN;
+  for (let i = 0; i + id.length <= folded.length; i++) {
+    let diff = 0;
+    for (let j = 0; j < id.length && diff <= 1; j++) {
+      if (folded[i + j] === id[j]) continue;
+      if (j >= serialFrom) diff = 2;
+      else diff++;
+    }
+    if (diff <= 1) return raw.slice(i, i + id.length).toUpperCase();
+  }
+  return null;
+}
+
 /** Spell-check candidates: 3+ letter alphabetic tokens with CASE PRESERVED.
  *  Case is kept so the caller can test proper-noun capitalisation against the
  *  dictionary — dictionary-en holds many proper nouns only in capitalised form
@@ -214,7 +259,7 @@ export function matchesClaimId(text: string, claimId: string): boolean {
  *
  *  The boundaries do the filtering that an all-caps skip used to do, without its cost:
  *   - `(?<![A-Za-z])` … `(?![A-Za-z\d])` drops the letter prefix of an alphanumeric code
- *     (VIN "MZBFB812LSN", PAN "GROPS2837J") while keeping a word that merely FOLLOWS a
+ *     (VIN "MZBFB812LSN", PAN "ABCPS1234J") while keeping a word that merely FOLLOWS a
  *     number ("30Dayes" → "Dayes").
  *   - `'` / `’` in the lookahead drops the stem of a contraction, which used to be
  *     reported as its own misspelling ("doesn't" → "doesn" flagged as "does").
@@ -270,6 +315,12 @@ export const EXPECTED_TERMS: string[] = [
   // containing a space can never match one. See MIN_TERM_LEN.
   'statement', 'assistant', 'security', 'guard', 'unique', 'consultant', 'remittance',
   'welfare', 'dearness', 'leadership',
+  // Employee-ID-card job titles. The client QA of 2026-10 cited misspelt "surgeon" and
+  // "associate", which had no term to be near. Reaches a populated SpellTerm table only via
+  // `npm run db:sync-spell-terms`.
+  'surgeon', 'associate', 'technician', 'operator', 'analyst', 'coordinator',
+  'representative', 'administrator', 'administration', 'marketing', 'trainee', 'senior',
+  'junior', 'physician', 'pharmacist', 'nurse',
   // pay-period vocabulary — "Quartarly" was cited by reviewers and had no term to miss
   'quarterly', 'monthly', 'weekly', 'annual', 'annually', 'yearly', 'period',
   // months

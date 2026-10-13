@@ -146,6 +146,67 @@ expect, and would replace the specific `NOT_FOUND` a missing claim reports with 
 Fix, if it ever matters: report `alreadyInactive` as its own field on the bulk report.
 Found by: /review, 2026-08-16.
 
+## Validators — client QA 2026-10 follow-ups
+
+### Re-validate every claim, and review "Doubtful" claim rules, after deploying PR #114
+**Priority:** P0 — operational, not code
+Findings stored before this branch with severity WARNING ("Missing docs - X", claim ID not
+found, QR missing) stay hidden until the claim is re-validated, so those claims show a
+FAILED card with no reasons. DOUBTFUL also changed meaning, from "passed with warnings" to
+"check did not run": any ClaimRule or saved filter on DOUBTFUL or PASSED for a check field
+now matches a different set of claims.
+Fix: `npm run db:revalidate` after deploy; list `ClaimRule` rows whose value is DOUBTFUL or
+PASSED on a check field and have an admin confirm each.
+Found by: /ship review passes 3-4, 2026-10-13.
+
+### Parsing edge cases the red team found, each confidence 4-5
+**Priority:** P1
+Each touches extraction used by real claims, so each needs a 570-claim re-run to check:
+- `logic.ts` PAN presence marker accepts a PAN-shaped token plus "father"/"dob"/"signature"
+  on booking forms, Form 60 and KYC declarations, so FULL counts a missing PAN card present.
+- `redFlagLogic.ts` `vidRead` takes the first four groups, so a 20-digit VID passes as 16.
+- `redFlagLogic.ts` `checkPan` prefers any well-shaped PAN on the page over the labelled one.
+- `crossDocLogic.ts` ACCOUNT_NO lookahead swallows an integer next column, missing a DUP.
+- `crossDocLogic.ts` guardian-prefix strip eats a comma-less Aadhaar address and its PIN.
+- `crossDocLogic.ts` `sectionHeadingBefore` drops a bare "Name :" when the other OCR column
+  says agent/dealer/employer/hypothecated, so a name mismatch passes clean.
+- Data Compare's CHASSIS/ENGINE field match (`idMatches`) still allows one edit in the
+  serial, so a next-in-batch chassis on two papers agrees. QR and Intra already require an
+  exact serial; this one predates the branch.
+Found by: /ship red team pass 4, 2026-10-13.
+
+### QR image retries run on the request thread
+**Priority:** P1
+`decodeQrImage`'s retry passes (Jimp scale, greyscale, four quadrant crops, zxing tryHarder)
+are synchronous on the Express process, up to 12 images per claim times
+`VALIDATION_CONCURRENCY` workers; a bundle of unreadable card photos can stall login and the
+claim list for seconds. Each quadrant also clones the full bitmap before cropping.
+Fix: crop from one shared clone, yield between passes, then move decode to `worker_threads`.
+The retry path has no automated test either (zxing loads through a dynamic `import()` that
+Jest cannot run): add a tsx script over three card photos (small, over 25 MP, past budget).
+Found by: /ship performance + testing specialists, 2026-10-13.
+
+### Duplicate-partner re-queue reads every historical DUP result
+**Priority:** P2
+`requeueDuplicatePartners` loads partners with nested `validationResults {take: 1}`, which
+Prisma resolves in memory, and `ValidationResult` has only a `claimId` index. Add
+`@@index([claimId, validatorKey, createdAt])` (needs `db:push`). Separately, while a
+re-queued partner's run is QUEUED, `GET /claims/:id/validation` returns that empty run and
+the claim's cards go blank; fall back to the latest COMPLETED run's results.
+Found by: /ship performance + API contract specialists, 2026-10-13.
+
+### Smaller review leftovers
+**Priority:** P2
+- "Not run / Doubtful" is spelled in `checkFilters.ts` and twice in `ClaimRules.tsx`, next to
+  upper-case PASSED/FAILED; derive every status label from one helper.
+- The QR card shows "View QR Data" on every document row when it has no red flags.
+- `ValidationBadge` is `whitespace-nowrap`; check the claims table at 1280px.
+- FieldPanes still colours a WARNING chip that can no longer arrive.
+- Tests still missing: the GET /validation WARNING filter (route test), QR page truncation,
+  redFlagValidator date de-duplication, and a re-queue of a RUNNING partner.
+- Wheel zoom does not re-centre on the cursor; docFields reports NOT_A_MODEL twice.
+Found by: /ship review passes 2-4, 2026-10-13.
+
 ## Completed
 
 - **Bulk actions on a filter set could target claims the reviewer never selected** — `allMatching`

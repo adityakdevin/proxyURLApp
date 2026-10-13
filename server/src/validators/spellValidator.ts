@@ -7,6 +7,9 @@ import {
   SPELL_MIN_TERM_HITS,
   EXPECTED_TERMS,
   MIN_TERM_LEN,
+  ocrIndistinguishable,
+  isTruncation,
+  editDistanceCapped,
 } from './logic.js';
 import { extractNames, extractRelationNames } from './crossDocLogic.js';
 import { ADDRESS_WORDS, INDIAN_PLACE_WORDS } from './indianPlaces.js';
@@ -70,12 +73,14 @@ function indexBoxes(boxes: WordBox[]): Map<string, WordBox[]> {
  * ponytail: whole-document ratio, so one unreadable page inside a readable PDF is not caught;
  * score per page (ctx.pageTexts) if that shows up.
  */
-const UNREADABLE_REAL_WORD_RATIO = 0.35;
+export const UNREADABLE_REAL_WORD_RATIO = 0.35;
 const UNREADABLE_MIN_WORDS = 12;
 
 /** Tesseract word confidence (0-100) below which a hit is treated as doubtful rather
  *  than as a misspelling. Digital PDF text has no confidence and is never softened. */
 const LOW_OCR_CONFIDENCE = 70;
+/** At or above this a softened near-miss is reported as a misspelling: the scan was clear. */
+const CONFIDENT_OCR = 85;
 
 /** Every word used in a person's name anywhere in the claim, lowercased.
  *
@@ -98,7 +103,7 @@ function claimNameWords(shared: Map<string, string>): Set<string> {
   for (const text of shared.values()) {
     for (const name of [...extractNames(text), ...extractRelationNames(text)]) {
       // EVERY word, no length cap. A cap was tried here and was the wrong tool: it made
-      // name length decide whether a surname is spell-flagged, so "Mohammed Abdul Rahman
+      // name length decide whether a surname is spell-flagged, so "Mohammed Abdul Karim
       // Dass" left "Dass" exposed as the "days" near-miss this exists to prevent. Spillover
       // from an adjacent field is bounded at extraction instead, where the colon that marks
       // the next label is still visible.
@@ -142,7 +147,6 @@ export const spellValidator: Validator = {
       const isRealWord = (w: string) =>
         dictHasWord(s, w) || glossary.has(w.toLowerCase()) || KNOWN_LOCAL_WORDS.has(w.toLowerCase());
       // Finding no misspelling in OCR noise is not a pass — nothing was actually checked.
-      // Say so, as a WARNING, so the check reads DOUBTFUL rather than a green tick.
       if (words.length >= UNREADABLE_MIN_WORDS) {
         const real = words.filter(isRealWord).length;
         if (real / words.length < UNREADABLE_REAL_WORD_RATIO) {
@@ -150,7 +154,7 @@ export const spellValidator: Validator = {
           findings.push({
             documentId,
             code: 'SPELL_UNREADABLE',
-            severity: 'WARNING',
+            severity: 'ERROR',
             message:
               `${name} could not be read reliably (only ${Math.round((100 * real) / words.length)}% ` +
               `of its words are real words), so its spelling was not checked — please check it visually`,
@@ -168,9 +172,27 @@ export const spellValidator: Validator = {
         const box = boxIndex.get(token)?.shift();
         // A low-confidence OCR read is itself grounds for doubt, whatever the glyphs say, and
         // so is a word the claim uses as somebody's name.
+        // A confident read is not a scan error. Two edits and place names are softened
+        // because OCR garbage looks like that — but "Assoolate" (conf 91) and "Degination"
+        // (93) were printed that way, and Doubtful hid real misspellings (client QA 2026-10,
+        // #42, #45; Master row 13 for places). Glyph swaps and clipped words stay soft:
+        // those ARE what a confident misread looks like.
+        // A form word only, same first letter, and two letters off only on a long word.
+        // Across all 570 claims a looser promotion failed real words and names as
+        // misspellings: "enquire" (require) on 107 claims, "licence" (science), "Sahoo"
+        // (school), "Kalan" (Kalyan), "Shree" (three). "Degination" is two off "designation".
+        // ponytail: length as the two-edit gate; a per-term allow list if it lets noise in.
+        const confidentlyPrinted =
+          box?.conf !== undefined &&
+          box.conf >= CONFIDENT_OCR &&
+          !PLACES.has(term) &&
+          token[0] === term[0] &&
+          editDistanceCapped(token, term, 2) <= (term.length >= 9 ? 2 : 1) &&
+          !ocrIndistinguishable(token, term) &&
+          !isTruncation(token, term);
         const soft =
-          hit.doubtful ||
           nameWords.has(token) ||
+          (hit.doubtful && !confidentlyPrinted) ||
           (box?.conf !== undefined && box.conf < LOW_OCR_CONFIDENCE);
         (soft ? doubtful : distinct).add(token);
         const into = soft ? doubtfulSample : sample;
@@ -189,18 +211,19 @@ export const spellValidator: Validator = {
       }
     }
 
-    // Only CONFIDENT misspellings FAIL the check — a poor scan must not fail a claim.
-    // A doubtful-only run returns PASSED here and the service downgrades it to DOUBTFUL
-    // off the WARNING findings (deriveCheckStatus), so it never shows a green badge.
-    const status = distinct.size >= SPELL_MIN_TERM_HITS ? 'FAILED' : 'PASSED';
+    // FAILS on a confident misspelling, or when a document could not be read at all (nothing
+    // was checked). Doubtful hits are WARNINGs, hidden from reviewers: they neither fail the
+    // check nor appear in its summary.
+    const unread = findings.filter((f) => f.code === 'SPELL_UNREADABLE').length;
+    const status = distinct.size >= SPELL_MIN_TERM_HITS || unread > 0 ? 'FAILED' : 'PASSED';
     const parts: string[] = [];
     if (distinct.size) parts.push(`${distinct.size} expected-term misspelling(s): ${sample.slice(0, 8).join(', ')}`);
-    if (doubtful.size) parts.push(`${doubtful.size} doubtful (possible scan misread): ${doubtfulSample.slice(0, 8).join(', ')}`);
+    if (unread) parts.push(`${unread} document(s) could not be read reliably — please check them visually`);
     return {
       status,
       summary: parts.length ? parts.join('. ') : 'No expected-term misspellings found.',
       details: { suspect: sample, doubtful: doubtfulSample },
-      // Both tiers surface: a doubtful word still needs the reviewer's eye on the page.
+      // Doubtful (WARNING) hits are stored but hidden from reviewers; only SUSPECT shows.
       findings: findings.slice(0, 200),
     };
   },

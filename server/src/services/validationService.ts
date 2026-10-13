@@ -7,7 +7,10 @@ import {
   FindingInput,
   CheckStatus,
 } from '../validators/types.js';
-import { deriveCheckStatus } from '../validators/logic.js';
+import { DUP_CLAIMS_CAP, normValue } from '../validators/dupValidator.js';
+// A cycle (validationQueue imports this module), safe because enqueue is only called at run
+// time, never while modules load. Static rather than import(): Jest cannot run import().
+import { enqueue } from './validationQueue.js';
 
 /** Bound the rows written per check so a noisy OCR page can't flood the table. */
 const MAX_FINDINGS_PER_RESULT = 200;
@@ -27,8 +30,19 @@ const MAX_FINDINGS_PER_RESULT = 200;
  * it the wait itself can exhaust the budget before any work starts.
  */
 const TX = { timeout: 30_000, maxWait: 15_000 };
+/** Cap on claims one run re-queues for a duplicate it found (see requeueDuplicatePartners). */
+const MAX_DUP_REQUEUE = 20;
 import { resolveScanRoot } from '../lib/directoryReader.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
+
+/** One shared duplicate value as both sides' DUP findings record it: field plus the same
+ *  255-character norm the index matches on — the untruncated form could differ for two long
+ *  values the index calls equal, and the pair would then re-queue each other forever.
+ *  '?' for a finding without field/value (none are written that way today). */
+const dupKey = (field: unknown, value: unknown) =>
+  typeof field === 'string' && typeof value === 'string'
+    ? `${field}|${normValue(field as Parameters<typeof normValue>[0], value).slice(0, 255)}`
+    : '?';
 
 /**
  * How long a single check may run before it is abandoned.
@@ -311,9 +325,10 @@ export class ValidationService {
         let ran: Ran;
         try {
           const outcome = await withTimeout(v.run(ctx), checkTimeoutMs(), v.key);
-          // DOUBTFUL is decided here, not per validator: a check that passed but raised
-          // warning-level findings must not show the reviewer a green badge.
-          ran = { ...outcome, v, status: deriveCheckStatus(outcome.status, outcome.findings) };
+          // The validator's own verdict is stored. Warning-only runs used to be downgraded to
+          // DOUBTFUL here; that tier is hidden from reviewers (2026-10-12), so anything that
+          // must not pass silently is raised as an ERROR by its validator instead.
+          ran = { ...outcome, v };
         } catch (e) {
           ran = {
             v,
@@ -382,7 +397,10 @@ export class ValidationService {
                 validatorKey: r.v.key,
                 documentId: f.documentId ?? null,
                 code: f.code,
-                severity: f.severity ?? 'WARNING',
+                // No explicit severity: an ERROR on a failed check, INFO otherwise. It used to
+                // default to WARNING, which reviewers no longer see — every plain "Missing docs"
+                // line was hidden behind a FAILED card (review, 2026-10-13).
+                severity: f.severity ?? (r.status === 'FAILED' ? 'ERROR' : 'INFO'),
                 message: f.message.slice(0, 500),
                 page: f.page ?? null,
                 // Prisma's InputJsonValue rejects named interfaces (no index signature); cast via unknown.
@@ -481,6 +499,7 @@ export class ValidationService {
           data: { status: 'COMPLETED', finishedAt: new Date() },
         });
       }, TX);
+      await this.requeueDuplicatePartners(claim, results);
     } catch (e) {
       try {
         // The COMPLETED commit never ran, so columns are still IN_PROGRESS:
@@ -508,6 +527,92 @@ export class ValidationService {
     // Reached whether the run completed or was caught and marked FAILED above: either way
     // THIS call did the work, which is the only question the return value answers.
     return true;
+  }
+
+  /**
+   * Make a duplicate show on BOTH claims. DUP compares a claim against the others' indexed
+   * values as they stand when it runs, so the claim validated first passed with nothing to
+   * match and was never revisited — the client QA of 2026-10 saw a duplicate pair flagged on
+   * only one VIN, and four of five in a group of five. Every earlier claim that this run
+   * matched on a hard data point and whose latest Duplicate result does not yet name this
+   * claim is re-validated in full (a DUP-only run would mark its other checks "not run").
+   *
+   * Keyed on "does it name me", not on its status. Re-queuing only PASSED partners left a
+   * partner already FAILED on some other match (650618 on a PF number) or DOUBTFUL on a
+   * name warning (621370) blind to this claim for good (client QA 2026-10, #17, #18). The
+   * re-run partner names this claim, so this claim's next run finds nothing to re-queue:
+   * no ping-pong.
+   */
+  private async requeueDuplicatePartners(
+    claim: { id: string; claimId: string; subCategoryId: string },
+    results: { v: Validator; findings?: FindingInput[] }[]
+  ): Promise<void> {
+    const dup = results.find((r) => r.v.key === 'DUP');
+    // Partner claim id -> the shared values ("field|norm") this claim found it on.
+    const sharedWith = new Map<string, Set<string>>();
+    for (const f of dup?.findings ?? []) {
+      if (f.severity !== 'ERROR') continue;
+      const d = f.data as { claims?: unknown; field?: unknown; value?: unknown } | undefined;
+      if (!Array.isArray(d?.claims)) continue;
+      const key = dupKey(d.field, d.value);
+      for (const c of d.claims) {
+        if (typeof c !== 'string') continue;
+        sharedWith.set(c, (sharedWith.get(c) ?? new Set()).add(key));
+      }
+    }
+    const partnerIds = new Set(sharedWith.keys());
+    if (partnerIds.size === 0) return;
+    try {
+      const partners = await this.prisma.claim.findMany({
+        where: {
+          claimId: { in: [...partnerIds] },
+          id: { not: claim.id },
+          subCategoryId: claim.subCategoryId,
+          status: 'ACTIVE',
+          // A QUEUED run that includes DUP has not started and will see this claim. One narrowed
+          // to other checks would not, so it is widened by enqueue below. A RUNNING one may have
+          // read the index before this claim wrote to it (concurrent bulk runs), so it still gets
+          // a fresh run behind it — enqueue adds one rather than joining a frozen snapshot.
+          validationRuns: { none: { status: 'QUEUED', OR: [{ checks: null }, { checks: { contains: 'DUP' } }] } },
+        },
+        select: {
+          id: true,
+          claimId: true,
+          validationResults: {
+            where: { validatorKey: 'DUP' },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { findings: { select: { data: true } } },
+          },
+        },
+        // No take here: cap what is ENQUEUED, after the up-to-date partners are filtered out,
+        // or up-to-date rows could crowd out the stale ones. Bounded by the finding lists.
+        orderBy: { claimId: 'asc' },
+      });
+      // Up to date when, for every value this claim shares with the partner, the partner's
+      // latest finding on that SAME value names this claim — or is at the cap, which may
+      // have cut it off (else a group of more than DUP_CLAIMS_CAP re-queues itself forever).
+      // Matched per value: a capped list for a town address says nothing about the account
+      // number this claim shares (security review, 2026-10-13).
+      const namesMe = (p: (typeof partners)[number]) => {
+        const theirs = (p.validationResults[0]?.findings ?? []).map((f) => f.data as { claims?: unknown; field?: unknown; value?: unknown } | null);
+        return [...(sharedWith.get(p.claimId) ?? [])].every((key) =>
+          theirs.some(
+            (d) =>
+              d !== null &&
+              dupKey(d.field, d.value) === key &&
+              Array.isArray(d.claims) &&
+              (d.claims.includes(claim.claimId) || d.claims.length >= DUP_CLAIMS_CAP)
+          )
+        );
+      };
+      const stale = partners.filter((p) => !namesMe(p)).slice(0, MAX_DUP_REQUEUE);
+      if (stale.length === 0) return;
+      for (const p of stale) await enqueue(this.prisma, this.validators, p.id, 'AUTO');
+    } catch (e) {
+      // Best effort: the partner keeps its old result, which is no worse than before.
+      console.warn(`[validation] could not re-queue duplicate partners of ${claim.id}:`, e);
+    }
   }
 
   /**

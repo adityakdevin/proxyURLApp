@@ -49,6 +49,7 @@ interface CodedError extends Error {
  * to the global handler.
  */
 export function makeErrorHandler<E extends CodedError>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any error class constructor
   ErrorClass: new (...args: any[]) => E,
   statusByCode: Record<string, number>,
   fallbackStatus = 400

@@ -25,7 +25,7 @@ export const CHECK_STATUS_OPTIONS = [
   { value: 'PENDING', label: 'Pending' },
   { value: 'IN_PROGRESS', label: 'In Progress' },
   { value: 'PASSED', label: 'Passed' },
-  { value: 'DOUBTFUL', label: 'Doubtful' },
+  { value: 'DOUBTFUL', label: 'Not run / Doubtful' },
   { value: 'FAILED', label: 'Failed' },
   { value: 'DOCS_NOT_AVAILABLE', label: 'Docs N/A' },
 ];

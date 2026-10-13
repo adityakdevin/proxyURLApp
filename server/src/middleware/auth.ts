@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthService } from '../services/authService.js';
 import { SessionData, SESSION_MAX_AGE_MS } from '../services/sessionService.js';
-import { createError } from './errorHandler.js';
 
 // Extend Express Request to include session data
 declare global {

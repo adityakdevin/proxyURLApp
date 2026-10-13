@@ -24,14 +24,16 @@ describe('spellValidator', () => {
   });
   // What OCR returned for a 613x393 salary slip that DID carry "Dayes" and "Profesion".
   // Finding nothing wrong in noise is not a pass: nothing was checked.
-  it('warns (DOUBTFUL, not PASSED) when a document read as noise', async () => {
+  // A red flag, not a hidden warning: reviewers never see warnings (security review, 2026-10-13).
+  it('fails, visibly, when a document read as noise', async () => {
     const noise =
       '[REE RR RR EE FREESE HE CFE EI J SEE celicidliiiis i: HERR S REE FENRIS ET ENN) ' +
       'EEER CIEREEamsnen lk Eiii: [HEEREEIEEE EI 5232s ||| AERIS Sf Bl? id § ERE H H i. ili';
     const res = await spellValidator.run(ctx(noise));
     const unreadable = (res.findings ?? []).filter((f) => f.code === 'SPELL_UNREADABLE');
     expect(unreadable).toHaveLength(1);
-    expect(unreadable[0].severity).toBe('WARNING');
+    expect(unreadable[0].severity).toBe('ERROR');
+    expect(res.status).toBe('FAILED');
   });
   it('does not call a readable document unreadable', async () => {
     const slip =
@@ -113,6 +115,19 @@ describe('spellValidator', () => {
       term: 'authorised',
       doubtful: false,
     });
+  });
+
+  // A clear scan promotes a one-letter miss off a form word, nothing looser: "enquire"
+  // (two letters off "require") failed 107 claims when two-edit hits were promoted.
+  it('promotes only a confidently read one-letter miss to a misspelling', async () => {
+    const text = 'Degination Clerk please enquire at the office';
+    const c = ctx(text);
+    c.wordBoxes = new Map([
+      ['d1', text.split(' ').map((w, i) => ({ text: w, page: 1, conf: 93, bbox: { x: i / 10, y: 0, w: 0.05, h: 0.02 } }))],
+    ]);
+    const res = await spellValidator.run(c);
+    const shown = (res.findings ?? []).filter((f) => f.severity === 'ERROR').map((f) => f.data?.word);
+    expect(shown).toEqual(['degination']);
   });
 
   it('PASSES (N/A) when there is no text', async () => {
