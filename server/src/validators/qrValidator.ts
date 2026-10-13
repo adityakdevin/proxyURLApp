@@ -7,7 +7,8 @@ import { qrOutcome } from './logic.js';
 import { classifyPage } from './segment.js';
 import { docFieldGroups } from './docFields.js';
 import { aadhaarQrAsFields, isUnreadableQrPayload } from './aadhaarSecureQr.js';
-import { compareQrToFields, QrFieldComparison } from './qrCompare.js';
+import { compareQrToFields, parseQrPayload, QrFieldComparison } from './qrCompare.js';
+import { idMatches } from './crossDocLogic.js';
 import { verifyKiaPolicy, kiaVerificationUrl } from './policyOnline.js';
 import { rasterizePdf, largestImageWidthPerPage, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
 import { BBox, clamp01 } from '../lib/bbox.js';
@@ -25,6 +26,8 @@ const PDF_QR_RETRY_SCALE = 8;
 // deployment already setting it.
 const MAX_QR_PAGES = Number(process.env.QR_MAX_PAGES ?? MAX_PDF_PAGES);
 const MAX_QR_RETRY_PAGES = 12;
+/** A 17-character VIN: the claim ID is checked against a QR's chassis only when it is one. */
+const VIN_SHAPE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 
 /** Render a decoded QR as a stable string: printable text as-is, binary
  *  payloads (Aadhaar Secure QR) as base64 so identical QRs compare equal. */
@@ -263,7 +266,10 @@ export async function decodeQrPdf(absolutePath: string): Promise<PdfQrScan> {
   };
   // rasterizePdf returns [] on any failure, so an unreadable PDF just yields no QR.
   const misses: number[] = [];
-  const pages = await rasterizePdf(absolutePath, MAX_QR_PAGES, PDF_QR_SCALE);
+  // Unsmoothed first: a low-resolution card's QR survives nearest-neighbour scaling and
+  // blurs under smoothing. The high-res retry below stays smoothed, so a code that only
+  // reads smoothed still has its chance (client QA 2026-10, #34).
+  const pages = await rasterizePdf(absolutePath, MAX_QR_PAGES, PDF_QR_SCALE, undefined, { smooth: false });
   const totalPages = pages[0]?.totalPages ?? 0;
   for (const p of pages) {
     const found = await decodePage(p);
@@ -426,7 +432,9 @@ export function classifyQrOutcome(input: {
   const unreadable =
     input.opaquePayloads > 0 ||
     input.truncatedScans > 0 ||
-    input.missing.some((m) => m.data?.tooCoarse === true || m.data?.decoderDegraded === true);
+    input.missing.some(
+      (m) => m.data?.tooCoarse === true || m.data?.decoderDegraded === true || m.data?.qrExpected === true
+    );
   if (unreadable) return 'UNREADABLE';
   // Nothing scannable in the claim is not a QR problem — there is no code to be wrong about.
   return input.decodedValues === 0 && input.scannableDocs > 0 ? 'NO_QR' : 'OK';
@@ -536,6 +544,34 @@ export const qrValidator: Validator = {
               });
             }
           }
+          // Is the QR even about this vehicle? A claim's ID is its VIN, so a policy QR naming
+          // another chassis is someone else's policy whatever the page around it says — on
+          // 020440 the QR read another person's name and another chassis (client QA
+          // 2026-10, #35). Needs no name reading, so it catches what the field compare misses.
+          // Only a NEW-car policy (registration "New"): an exchange claim legitimately
+          // carries the OLD car's policy and RC, whose QR names the old chassis — 26 of the
+          // 34 sample claims whose QR chassis differs from the VIN were exactly that.
+          const qrPayload = parseQrPayload(h.value);
+          const qrChassis = qrPayload.get('chassisno') ?? qrPayload.get('chassis');
+          const qrReg =
+            qrPayload.get('regno') ?? qrPayload.get('regnno') ??
+            qrPayload.get('registrationno') ?? qrPayload.get('registrationnumber');
+          if (
+            qrChassis && qrReg && /^new\b/i.test(qrReg.trim()) &&
+            VIN_SHAPE.test(ctx.claim.claimId) && !idMatches(qrChassis, ctx.claim.claimId)
+          ) {
+            mismatches.push({
+              documentId: doc.id,
+              code: 'QR_FIELD_MISMATCH',
+              severity: 'ERROR',
+              message:
+                `QR code's chassis number "${qrChassis}" is not this claim's VIN ` +
+                `${ctx.claim.claimId} — the QR belongs to another vehicle.`,
+              page: h.page ?? null,
+              bbox: h.bbox ?? null,
+              data: { label: 'Chassis No', qrValue: qrChassis, documentValue: ctx.claim.claimId },
+            });
+          }
           // Does KIA Safety's own record of the policy back the printed page up?
           const url = kiaVerificationUrl(h.value);
           if (url && !verifiedUrls.has(url)) {
@@ -598,6 +634,12 @@ export const qrValidator: Validator = {
         // — invisible. The source width is the measurement that tells them apart.
         const tooCoarse = img !== undefined && img.width < MIN_CARD_IMAGE_WIDTH;
         const dpi = img ? Math.round(img.width / CARD_WIDTH_INCHES) : 0;
+        // The current PAN design prints "Permanent Account Number Card" and always carries a
+        // QR; the older one says "Permanent Account Number" and has none. On the current
+        // design "no QR found" is wrong — the code is there and unreadable (client QA
+        // 2026-10, #33: the customer's PAN on 026512, a blurred QR reported as absent).
+        const qrExpected =
+          p.kind === 'PAN' && /account\s+number\s+card/i.test(pageTextFor(doc, ctx, p.page));
         missing.push({
           documentId: doc.id,
           code: 'QR_MISSING',
@@ -615,6 +657,10 @@ export const qrValidator: Validator = {
                 `needs — its squares are under ~2 pixels each, so they blur together in the ` +
                 `scan itself. This is not a fault in the document: rescan the card at 400 DPI ` +
                 `or higher and it will read.`
+              : qrExpected
+                ? `QR present but unreadable on page ${p.page} of ${doc.fileName}: this PAN ` +
+                  `card is the current design, which always carries a QR code, but it could ` +
+                  `not be read — it is blurred or too small in the scan. Rescan the card.`
               : `No QR code was found on page ${p.page} of ${doc.fileName}, which reads as ` +
                 `${card}. Many older card designs carry no QR code at all; if this one does, ` +
                 `the scan may be too small or blurred to read it.`,
@@ -626,6 +672,7 @@ export const qrValidator: Validator = {
             sourceHeight: img?.height,
             approxDpi: img ? dpi : undefined,
             tooCoarse,
+            qrExpected,
           },
         });
       }
