@@ -613,6 +613,34 @@ describe('ValidationService + drainer', () => {
       expect(await runsOf(b.id)).toBe(1);
     });
 
+    it('still re-queues a partner whose capped list is about a different value', async () => {
+      const a = await withDoc(`C-RQE-${SUF}`);
+      const b = await withDoc(`C-RQF-${SUF}`);
+      const others = Array.from({ length: 20 }, (_, i) => `C-TOWN-${i}-${SUF}`);
+      const v: Validator[] = [
+        {
+          key: 'DUP',
+          column: 'duplicateStatus',
+          run: async (ctx) => ({
+            status: 'FAILED',
+            summary: 'dup',
+            findings:
+              ctx.claim.claimId === b.claimId
+                ? [{ documentId: null, code: 'DUP_ADDRESS', severity: 'ERROR', message: 'm', data: { field: 'ADDRESS', value: '12 MG ROAD', claims: others } }]
+                : [{ documentId: null, code: 'DUP_ACCOUNT_NO', severity: 'ERROR', message: 'm', data: { field: 'ACCOUNT_NO', value: '50100234567890', claims: [b.claimId] } }],
+          }),
+        },
+      ];
+      await enqueue(prisma, v, b.id, 'AUTO');
+      await kickDrain(prisma, v);
+      await drained();
+      await enqueue(prisma, v, a.id, 'AUTO');
+      await kickDrain(prisma, v);
+      await drained();
+      // B's capped list is its town address; the account number it shares with A is news.
+      expect(await runsOf(b.id)).toBe(2);
+    });
+
     it('does not re-queue a partner whose list is at the cap', async () => {
       const a = await withDoc(`C-RQC-${SUF}`);
       const b = await withDoc(`C-RQD-${SUF}`);

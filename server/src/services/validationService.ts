@@ -7,7 +7,7 @@ import {
   FindingInput,
   CheckStatus,
 } from '../validators/types.js';
-import { DUP_CLAIMS_CAP } from '../validators/dupValidator.js';
+import { DUP_CLAIMS_CAP, normValue } from '../validators/dupValidator.js';
 // A cycle (validationQueue imports this module), safe because enqueue is only called at run
 // time, never while modules load. Static rather than import(): Jest cannot run import().
 import { enqueue } from './validationQueue.js';
@@ -32,6 +32,11 @@ const MAX_FINDINGS_PER_RESULT = 200;
 const TX = { timeout: 30_000, maxWait: 15_000 };
 /** Cap on claims one run re-queues for a duplicate it found (see requeueDuplicatePartners). */
 const MAX_DUP_REQUEUE = 20;
+/** One shared duplicate value, as both sides' DUP findings record it. */
+const dupKey = (field: unknown, value: unknown) =>
+  typeof field === 'string' && typeof value === 'string'
+    ? `${field}|${normValue(field as Parameters<typeof normValue>[0], value)}`
+    : '?';
 import { resolveScanRoot } from '../lib/directoryReader.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
 
@@ -539,12 +544,19 @@ export class ValidationService {
     results: { v: Validator; findings?: FindingInput[] }[]
   ): Promise<void> {
     const dup = results.find((r) => r.v.key === 'DUP');
-    const partnerIds = new Set<string>();
+    // Partner claim id -> the shared values ("field|norm") this claim found it on.
+    const sharedWith = new Map<string, Set<string>>();
     for (const f of dup?.findings ?? []) {
       if (f.severity !== 'ERROR') continue;
-      const claims = (f.data as { claims?: unknown } | undefined)?.claims;
-      if (Array.isArray(claims)) for (const c of claims) if (typeof c === 'string') partnerIds.add(c);
+      const d = f.data as { claims?: unknown; field?: unknown; value?: unknown } | undefined;
+      if (!Array.isArray(d?.claims)) continue;
+      const key = dupKey(d.field, d.value);
+      for (const c of d.claims) {
+        if (typeof c !== 'string') continue;
+        sharedWith.set(c, (sharedWith.get(c) ?? new Set()).add(key));
+      }
     }
+    const partnerIds = new Set(sharedWith.keys());
     if (partnerIds.size === 0) return;
     try {
       const partners = await this.prisma.claim.findMany({
@@ -560,6 +572,7 @@ export class ValidationService {
         },
         select: {
           id: true,
+          claimId: true,
           validationResults: {
             where: { validatorKey: 'DUP' },
             orderBy: { createdAt: 'desc' },
@@ -569,13 +582,23 @@ export class ValidationService {
         },
         take: MAX_DUP_REQUEUE,
       });
-      const namesMe = (p: (typeof partners)[number]) =>
-        (p.validationResults[0]?.findings ?? []).some((f) => {
-          const c = (f.data as { claims?: unknown } | null)?.claims;
-          // A list at the cap may have cut this claim off; treat it as naming us, or a group
-          // of more than DUP_CLAIMS_CAP claims re-queues itself forever (review, 2026-10-13).
-          return Array.isArray(c) && (c.includes(claim.claimId) || c.length >= DUP_CLAIMS_CAP);
-        });
+      // Up to date when, for every value this claim shares with the partner, the partner's
+      // latest finding on that SAME value names this claim — or is at the cap, which may
+      // have cut it off (else a group of more than DUP_CLAIMS_CAP re-queues itself forever).
+      // Matched per value: a capped list for a town address says nothing about the account
+      // number this claim shares (security review, 2026-10-13).
+      const namesMe = (p: (typeof partners)[number]) => {
+        const theirs = (p.validationResults[0]?.findings ?? []).map((f) => f.data as { claims?: unknown; field?: unknown; value?: unknown } | null);
+        return [...(sharedWith.get(p.claimId) ?? [])].every((key) =>
+          theirs.some(
+            (d) =>
+              d !== null &&
+              dupKey(d.field, d.value) === key &&
+              Array.isArray(d.claims) &&
+              (d.claims.includes(claim.claimId) || d.claims.length >= DUP_CLAIMS_CAP)
+          )
+        );
+      };
       const stale = partners.filter((p) => !namesMe(p));
       if (stale.length === 0) return;
       for (const p of stale) await enqueue(this.prisma, this.validators, p.id, 'AUTO');
