@@ -48,7 +48,8 @@ Plain-English definitions and answers to common questions.
 | **Full Scan** | A thorough scan of every document that produces the overall authenticity verdict. |
 
 Each check ends as **Passed** (no problem found), **Failed** (needs a human to look),
-**Pending** (not run yet), or **In Progress** (running now).
+**Pending** (not run yet), **In Progress** (running now), or **Not run / Doubtful** (the
+latest run skipped this check, for example because it is switched off; it has not passed).
 
 ---
 

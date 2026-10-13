@@ -42,7 +42,7 @@ You'll see a table with one row per claim. The columns are:
 | **Sub-Category** | Which section the claim belongs to. |
 | **Workflow Status** | The stage the claim is at: **New → In Progress → Verified → Closed**. |
 | **Assigned To** | Who is responsible for it. |
-| **Spell · QR · Meta · Intra-Claim · Full Scan** | The five **automatic check** results (see [section 2.5](#25-the-five-automatic-checks)). Each shows Pending, In Progress, Passed, or Failed. |
+| **Spell · QR · Meta · Intra-Claim · Full Scan** | The five **automatic check** results (see [section 2.5](#25-the-five-automatic-checks)). Each shows Pending, In Progress, Passed, Failed, or Not run / Doubtful. |
 | **Created** | When the claim was created. |
 | **Actions** | Buttons to open the claim's documents, re-run its checks, and a **⋮** menu with the rest (see [Quick actions on one row](#quick-actions-on-one-row)). This column stays visible while you scroll the table sideways. |
 
@@ -168,8 +168,9 @@ Two controls make working through a batch quicker:
 ## 2.5 The five automatic checks
 
 When a claim is **validated**, the app runs five automatic checks on its documents.
-Each one ends up **Passed**, **Failed**, **Pending** (not run yet), or **In Progress**
-(running now).
+Each one ends up **Passed**, **Failed**, **Pending** (not run yet), **In Progress**
+(running now), or **Not run / Doubtful** (the latest run skipped this check, for example
+because it is switched off; it has not passed).
 
 | Badge | Plain-English meaning |
 |---|---|
