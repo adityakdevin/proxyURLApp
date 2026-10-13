@@ -754,15 +754,13 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   // Judged against THIS claim's car — its VIN — not against whichever
   // cluster is larger, so a family car's papers outnumbering the customer's own cannot
   // set the customer's own RC or policy aside.
-  // Same car when the serial — the last six — agrees once OCR glyphs are folded: OCR mangles
-  // a VIN's front ("MZBBISHILSN100007" on a customer's own policy) far more than its serial,
-  // and a serial one digit off is the next car of the batch, as Intra's claim-ID match also
-  // holds (security review, 2026-10-13).
-  const sameCar = (x: string, y: string) => idNorm(x).slice(-6) === idNorm(y).slice(-6);
-  // Setting a page aside is the riskier call (its names leave the comparison), so it takes a
-  // VIN not even close to the claim's: an own RC with one serial digit misread stays compared,
-  // and so does the next car of the batch, whose different owner then fails as a name mismatch.
-  const nearCar = (x: string, y: string) => sameCar(x, y) || idMatches(x, y);
+  // Same car when the serial — the last six — agrees once OCR glyphs are folded (OCR mangles
+  // a VIN's front, "MZBBISHILSN100007" on a customer's own policy, far more than its serial),
+  // or within one edit, for a serial digit OCR misread. Deliberately loose: a page close to
+  // the claim's VIN is never set aside, so the next car of the batch stays compared and a
+  // different owner fails as a name mismatch; an exact-serial rule instead stopped a
+  // customer's own misread policy counting as theirs (review, 2026-10-13).
+  const sameCar = (x: string, y: string) => idNorm(x).slice(-6) === idNorm(y).slice(-6) || idMatches(x, y);
   const vehiclePaper = (p: { docType: DocTypeCode | 'UNKNOWN' }) => p.docType === 'RC' || p.docType === 'INSURANCE';
   const vinsOn = (documentId: string, page: number | null) =>
     pageVins(classified.find((p) => p.documentId === documentId && p.page === page)?.text ?? '');
@@ -775,7 +773,7 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   const otherCar = (v: Val) => {
     if (!ownCarPapers || !vehiclePaper(v)) return false;
     const vins = vinsOn(v.documentId, v.page);
-    return vins.length > 0 && !vins.some((x) => claimVins.some((y) => nearCar(x, y)));
+    return vins.length > 0 && !vins.some((x) => claimVins.some((y) => sameCar(x, y)));
   };
   const setAside = new Map<string, Val>(); // documentId:page -> one value from that page
 
