@@ -6,7 +6,6 @@ export type ValidationStatus =
   | 'PENDING'
   | 'IN_PROGRESS'
   | 'PASSED'
-  // Passed on errors, but raised warning-level findings — the reviewer still has to look.
   | 'DOUBTFUL'
   | 'FAILED'
   | 'DOCS_NOT_AVAILABLE';
@@ -26,6 +25,8 @@ export function validationStatusLabel(s: string): string {
       return 'DOCS N/A';
     case 'IN_PROGRESS':
       return 'IN PROGRESS';
+    case 'DOUBTFUL':
+      return 'NOT RUN / DOUBTFUL';
     default:
       return s;
   }

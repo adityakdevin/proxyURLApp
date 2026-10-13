@@ -78,8 +78,8 @@ function labelled(text: string, re: RegExp): string[] {
  *
  * A schedule's table cell wraps a long number: "0G-26-1021-1825-" on one line, "00036132" on
  * the next. Read alone, the first half is the insurer's product prefix — identical on every
- * Bajaj policy — and two unrelated claims "shared a policy number" (MZBB2814LSN010383 and
- * MZBFB812LSN575194). A value ending in a separator is continued from the next line; one that
+ * Bajaj policy — and two unrelated claims "shared a policy number" (claims …010383 and
+ * …575194). A value ending in a separator is continued from the next line; one that
  * still ends in a separator is dropped rather than compared as a fragment.
  */
 function policyNumbers(text: string): string[] {
@@ -153,7 +153,9 @@ export function extractIdentifiers(text: string): { field: IdentifierField; valu
 
   add('PF_NO', labelled(text, /\bP\.?\s?F\.?\s*(?:A\/?c\.?\s*)?(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{5,30})/gi));
 
-  add('UAN', labelled(text, /\bUAN\s*(?:No|Number)?\.?\s*[:\-]?\s*(\d{12})\b/gi));
+  // Payslips print the UAN grouped ("1012 3456 7890") as often as not; the plain \d{12}
+  // missed every one of those (client QA 2026-10: 5 of 12 duplicate UANs found).
+  add('UAN', labelled(text, /\bUAN\s*(?:No|Number)?\.?\s*[:\-]?\s*(\d{4}[ \t-]?\d{4}[ \t-]?\d{4})(?![ \t-]?\d)/gi).map((v) => v.replace(/[ \t-]/g, '')));
 
   add('GPF_NO', labelled(text, /\bGPF\s*(?:A\/?c\.?\s*)?(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{3,25})/gi));
 

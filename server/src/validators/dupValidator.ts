@@ -86,6 +86,11 @@ export function normValue(field: DupField, v: string): string {
 
 /** Below this a "value" is too short to be evidence of anything (OCR noise, "NA", "01"). */
 const MIN_NORM_LEN = 4;
+/** How many partner claim ids a finding's data carries. validationService reads a list
+ *  this long as complete-enough: it cannot tell whether this claim was cut off. */
+export const DUP_CLAIMS_CAP = 20;
+/** A digit-less address of this many words or fewer is a town line, not a home. */
+const TOWN_LINE_MAX_WORDS = 5;
 /** Guard against a pathological document flooding the table. */
 const MAX_VALUES_PER_CLAIM = 500;
 
@@ -114,6 +119,20 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
           ? ids.filter((i) => i.field === field).map((i) => i.value)
           : extractField(field, unit.text);
         for (const value of values) {
+          // "HANUMANGARH , RAJASTHAN-335512" — a policy's wrapped address tail — is a town, not
+          // a home: it "matched" unrelated claims from the same town as a hard duplicate
+          // (client QA 2026-10, #18). Skip a town-and-state line: no number besides the PIN and
+          // three words or fewer. A village address ("VILLAGE BIJAURI, DISTRICT JABALPUR")
+          // has no house number either, but says more than a town. With no number at all, not
+          // even a PIN, a short line is a town, district and state ("RAJAHMUNDRY, EAST
+          // GODAVARI, ANDHRA PRADESH"); a longer one names a village, post and tehsil and is
+          // an address like any other.
+          if (field === 'ADDRESS') {
+            const rest = value.replace(/\b\d{3}\s?\d{3}\b/g, '');
+            const words = (rest.match(/[A-Za-z]{2,}/g) ?? []).length;
+            if (!/\d/.test(value) && words <= TOWN_LINE_MAX_WORDS) continue;
+            if (!/\d/.test(rest) && words <= 3) continue;
+          }
           const norm = normValue(field, value);
           if (norm.replace(/\s/g, '').length < MIN_NORM_LEN) continue;
           const key = `${field}:${norm}`;
@@ -160,7 +179,6 @@ export const dupValidator: Validator = {
     for (const m of mine) byField.set(m.field, [...(byField.get(m.field) ?? []), m]);
 
     const findings: FindingInput[] = [];
-    let hardHits = 0;
     for (const [field, items] of byField) {
       const hard = DUP_FIELDS.find((f) => f.field === field)!.hard;
       const rows = await ctx.prisma.claimFieldValue.findMany({
@@ -184,7 +202,6 @@ export const dupValidator: Validator = {
       for (const item of items) {
         const claims = others.get(item.norm);
         if (!claims || claims.size === 0) continue;
-        if (hard) hardHits++;
         const list = [...claims].slice(0, 5).join(', ');
         findings.push({
           documentId: item.documentId,
@@ -201,12 +218,15 @@ export const dupValidator: Validator = {
             item.page != null
               ? locate(ctx.wordBoxes.get(item.documentId) ?? [], item.page, item.value)
               : null,
-          data: { field, value: item.value, claims: [...claims].slice(0, 20) },
+          data: { field, value: item.value, claims: [...claims].slice(0, DUP_CLAIMS_CAP) },
         });
       }
     }
 
-    if (findings.length === 0) {
+    // A shared name or birth date is a WARNING, hidden from reviewers: it neither fails the
+    // claim nor counts in the summary. Only the hard data points are reported.
+    const shown = findings.filter((f) => f.severity !== 'WARNING').length;
+    if (shown === 0) {
       return {
         status: 'PASSED' as const,
         summary: `No duplicates found across ${mine.length} unique data point(s).`,
@@ -214,13 +234,9 @@ export const dupValidator: Validator = {
       };
     }
     return {
-      // Only a hard data point (a reference number, or an address) fails the claim. A shared
-      // name or birth date is reported and left to the reviewer — deriveCheckStatus turns
-      // warning-only into DOUBTFUL rather than a pass.
-      status: hardHits > 0 ? ('FAILED' as const) : ('PASSED' as const),
-      summary:
-        `${findings.length} duplicate data point(s) shared with other claims` +
-        `${hardHits > 0 ? `, ${hardHits} of them a red flag` : ''}.`,
+      // Only a hard data point (a reference number, or an address) fails the claim.
+      status: 'FAILED' as const,
+      summary: `${shown} duplicate data point(s) shared with other claims, all red flags.`,
       findings,
     };
   },

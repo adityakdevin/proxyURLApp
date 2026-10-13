@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { ClaimAuditAction, ClaimAuditTargeting } from '@prisma/client';
+import { ClaimAuditAction } from '@prisma/client';
 import { body, param, query } from 'express-validator';
 import { adminMiddleware, authMiddleware, passwordChangedMiddleware } from '../middleware/auth.js';
 import {
@@ -30,7 +30,7 @@ function checkFilters(q: Request['query']): Partial<Record<(typeof CHECK_KEYS)[n
   }
   return out;
 }
-import { BulkTarget, recordClaimAudit, resolveTargets, runBulk } from '../lib/bulkClaims.js';
+import { BulkTarget, resolveTargets, runBulk } from '../lib/bulkClaims.js';
 import { enqueue } from '../services/validationQueue.js';
 import { registry } from '../validators/registry.js';
 

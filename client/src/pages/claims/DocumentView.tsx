@@ -119,13 +119,18 @@ export default function DocumentView() {
     setActiveId(null); // else the finding-scroll effect yanks the view straight back
     setGoto((g) => ({ page, nonce: (g?.nonce ?? 0) + 1 }));
   }, []);
+  // A "Page N" request belongs to the document it was made on: stepping to the next document
+  // must not jump that one to the old page as well.
+  useEffect(() => setGoto(null), [documentId]);
 
   // Findings for THIS document, narrowed to the selected check. Derived rather than stored,
   // so switching check is instant instead of a refetch.
   const findings = useMemo(
     () =>
       results
-        .filter((r) => !check || r.validatorKey === check)
+        // META is the extraction step, not a verdict, and is in no tab — nor in "All", which
+        // the export agrees with (review, 2026-10-13).
+        .filter((r) => (check ? r.validatorKey === check : r.validatorKey !== 'META'))
         .flatMap((r) => (r.findings ?? []).filter((f) => f.documentId === documentId))
         .sort(byPriority),
     [results, check, documentId]

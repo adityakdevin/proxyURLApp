@@ -46,7 +46,7 @@ describe('PAN', () => {
     for (const garbled of ['Authorised Sighatopy', 'Authorised Signotiry']) {
       const fs = checkSignatoryWord(garbled);
       expect(codes(fs)).toEqual(['REDFLAG_SIGNATORY_UNREADABLE']);
-      expect(fs[0].severity).toBe('WARNING');
+      expect(fs[0].severity).toBe('INFO');
     }
   });
 
@@ -67,11 +67,14 @@ describe('PAN', () => {
     // 4th char X is not a valid category
     expect(codes(checkPan('PAN ABCXD1234E'))).toEqual(['REDFLAG_PAN_CATEGORY']);
   });
-  it('treats an OCR-garbled PAN as unreadable (advisory), not a red flag', () => {
+  // A red flag worded as a possible misread: warnings are hidden from reviewers, and an
+  // unverifiable PAN must not pass silently (security review, 2026-10-13).
+  it('reports an OCR-garbled PAN as a possible misread, visibly', () => {
     // B misread as 8 in the letter block: A8CPD1234E → OCR-adjacent to ABCPD1234E
     const fs = checkPan('PAN A8CPD1234E');
     expect(codes(fs)).toEqual(['REDFLAG_PAN_UNREADABLE']);
-    expect(fs[0].severity).toBe('WARNING');
+    expect(fs[0].severity).toBe('ERROR');
+    expect(fs[0].message).toContain('possibly a scan misread');
   });
   it('stays silent when no PAN candidate is present', () => {
     expect(checkPan('just some invoice text, no id here')).toEqual([]);
@@ -241,7 +244,7 @@ describe('Every-doc rules', () => {
   it('warns (not fails) when no signature wording is found', () => {
     const fs = checkSignature('plain body text');
     expect(codes(fs)).toEqual(['REDFLAG_NO_SIGNATURE']);
-    expect(fs[0].severity).toBe('WARNING');
+    expect(fs[0].severity).toBe('INFO');
   });
   it('flags an editor/AI watermark from the Producer', () => {
     expect(codes(checkEditorWatermark('iLovePDF; modified using iText 5.5.9'))).toEqual([
@@ -368,7 +371,7 @@ describe('Editable text in a scanned PDF', () => {
   it('notes pages with real text inside an otherwise-scanned bundle', () => {
     const f = checkEditableText([scan, typed, typed], 'claim.pdf');
     expect(codes(f)).toEqual(['REDFLAG_EDITABLE_TEXT']);
-    expect(f[0].severity).toBe('WARNING');
+    expect(f[0].severity).toBe('INFO');
     expect(f[0].message).toBe('Editable doc - Text insertable in "claim.pdf" (pages 2, 3)');
   });
   it('ignores a wholly digital PDF and a wholly scanned one', () => {

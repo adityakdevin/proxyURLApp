@@ -107,8 +107,6 @@ export default function ClaimRules() {
     if (form.field === 'ASSIGNED') return ['true', 'false'];
     if (form.field === 'HAS_DOCUMENT_TYPE') return docTypeNames;
     if (form.field === 'WORKFLOW_STATUS') return statusNames;
-    // Validation-check rule targets. DOUBTFUL is its own state — a rule written against
-    // PASSED will not match a doubtful check, so it needs to be selectable on its own.
     if (STATUS_FIELDS.includes(form.field)) return ['PASSED', 'DOUBTFUL', 'FAILED'];
     return null;
   }, [form.field, docTypeNames, statusNames]);
@@ -178,7 +176,7 @@ export default function ClaimRules() {
     {
       id: 'rule',
       header: 'Rule',
-      cell: ({ row }) => `${FIELD_LABELS[row.original.field]} ${OP_LABELS[row.original.operator]} ${row.original.value}`,
+      cell: ({ row }) => `${FIELD_LABELS[row.original.field]} ${OP_LABELS[row.original.operator]} ${row.original.value === 'DOUBTFUL' ? 'Not run / Doubtful' : row.original.value}`,
     },
     {
       accessorKey: 'status',
@@ -313,7 +311,8 @@ export default function ClaimRules() {
                   <SelectContent>
                     {valueOptions.map((v) => (
                       <SelectItem key={v} value={v}>
-                        {v}
+                        {/* Same wording as the list filter and badges; the stored value is unchanged. */}
+                        {v === 'DOUBTFUL' ? 'Not run / Doubtful' : v}
                       </SelectItem>
                     ))}
                   </SelectContent>

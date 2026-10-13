@@ -1,4 +1,4 @@
-import { chromium, Browser, BrowserContext } from 'playwright';
+import { chromium, Browser } from 'playwright';
 import { HeadlessSession } from './headlessSession.js';
 import { EventEmitter } from 'events';
 

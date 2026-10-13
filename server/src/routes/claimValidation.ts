@@ -48,7 +48,7 @@ router.get('/validation', [param('id').isUUID()], validate, requireView, async (
     const results = run
       ? await prisma.validationResult.findMany({
           where: { runId: run.id },
-          include: { findings: true },
+          include: { findings: { where: { severity: { not: 'WARNING' } } } },
         })
       : [];
     res.json({ data: { run, results } });
@@ -66,7 +66,7 @@ router.get('/validation/:runId', [param('id').isUUID(), param('runId').isUUID()]
     if (!run) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
     const results = await prisma.validationResult.findMany({
       where: { runId: run.id },
-      include: { findings: true },
+      include: { findings: { where: { severity: { not: 'WARNING' } } } },
     });
     res.json({ data: { run, results } });
   } catch (err) {

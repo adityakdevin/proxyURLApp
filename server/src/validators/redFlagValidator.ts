@@ -24,6 +24,7 @@ import {
   checkPassportFileNo,
   checkPassportPages,
   checkAadhaar,
+  aadhaarNumbers,
   checkAadhaarFormat,
   checkVid,
   checkVoterId,
@@ -34,8 +35,10 @@ import {
   checkDates,
   checkNominee,
   checkEditableText,
+  ADVISORY_CODES,
   RedFlagFinding,
 } from './redFlagLogic.js';
+import { classifyDocType } from './crossDocLogic.js';
 
 /** Per-page format rule per classified type. */
 const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlagFinding[])[]> = {
@@ -53,8 +56,8 @@ const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlag
 // offending value in its message and carries it in `data`, and META fills ctx.wordBoxes with
 // coordinates for scanned AND digital PDFs alike — so the box can simply be looked up.
 
-/** Compare on alphanumerics only: a VID prints as "9150 6457 2260 8544" and is recorded as
- *  "9150645722608544", and a PAN may carry stray punctuation from OCR. */
+/** Compare on alphanumerics only: a VID prints as "9876 5432 1098 7654" and is recorded as
+ *  "9876543210987654", and a PAN may carry stray punctuation from OCR. */
 const norm = (s: string) => s.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
 /** Below this a value is too short to identify one place on a page — a 4-character match
@@ -71,7 +74,15 @@ const MAX_SPAN = 8;
  *  keys is one more place to forget a new rule. */
 function locatableValue(data?: Record<string, unknown>): string | null {
   for (const v of Object.values(data ?? {})) {
-    const s = typeof v === 'string' ? v : Array.isArray(v) && typeof v[0] === 'string' ? v[0] : null;
+    const first: unknown = Array.isArray(v) ? v[0] : v;
+    // checkAadhaar records {page, num} pairs; reading only plain strings left every
+    // Aadhaar mismatch without a highlight (client QA 2026-10).
+    const s =
+      typeof first === 'string'
+        ? first
+        : first && typeof first === 'object' && typeof (first as { num?: unknown }).num === 'string'
+          ? (first as { num: string }).num
+          : null;
     if (s && norm(s).length >= MIN_LOCATABLE) return s;
   }
   return null;
@@ -161,6 +172,10 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_MODIFIED_AFTER_CREATE: 'Modified after creation',
   REDFLAG_NOMINEE_NO_NAME: 'Nominee without name',
   REDFLAG_BAD_DATE: 'Impossible date',
+  REDFLAG_VID_UNREADABLE: 'VID unreadable',
+  REDFLAG_PAN_UNREADABLE: 'PAN unreadable',
+  REDFLAG_DL_UNREADABLE: 'DL unreadable',
+  REDFLAG_PASSPORT_UNREADABLE: 'Passport no. unreadable',
 };
 
 export const redFlagValidator: Validator = {
@@ -198,15 +213,55 @@ export const redFlagValidator: Validator = {
 
       // Cross-page rules over ALL of this document's pages (a back side may be unclassified).
       const asPages = pages.map((p) => ({ page: p.page ?? 1, text: p.text }));
-      if (codes.has('AADHAR')) for (const f of checkAadhaar(asPages)) findings.push(toFinding(doc.id, f));
-      if (codes.has('VOTER_ID')) for (const f of checkVoterId(asPages)) findings.push(toFinding(doc.id, f));
+      if (codes.has('AADHAR')) {
+        // An unclassified page right after an Aadhaar page is its back side when it reads like
+        // one: an address block and an Aadhaar-shaped number, and not a payslip or invoice whose
+        // UAN merely has the shape (security review, 2026-10-13).
+        const aadhaarBack = /address|पता|uidai|1947|help@/i;
+        const aadhaarPages = asPages.filter(
+          (p, i) =>
+            pages[i].govtCode === 'AADHAR' ||
+            (!pages[i].govtCode &&
+              i > 0 &&
+              pages[i - 1].govtCode === 'AADHAR' &&
+              aadhaarBack.test(p.text) &&
+              aadhaarNumbers(p.text).length > 0 &&
+              !['PAYSLIP', 'INVOICE', 'INSURANCE', 'RC'].includes(classifyDocType(p.text) ?? ''))
+        );
+        for (const f of checkAadhaar(aadhaarPages)) findings.push(toFinding(doc.id, f));
+      }
+      if (codes.has('VOTER_ID')) {
+        // Only the Voter ID's own sides: the bundle's RC or engine-number pages carry
+        // AAA9999999-shaped tokens too, and comparing them reported a mismatch on a card
+        // whose two sides agree (client QA 2026-10). An unclassified page right after a
+        // Voter page is its back side.
+        // …but only when it reads like one: on 648914 the page after the Voter ID was a
+        // Government of Gujarat card whose "GCN1234567" was compared as the EPIC.
+        const voterBack = /elector|election|\bepic\b|voter|मतदाता|निर्वाचन/i;
+        const voterPages = asPages.filter(
+          (p, i) =>
+            pages[i].govtCode === 'VOTER_ID' ||
+            (!pages[i].govtCode && i > 0 && pages[i - 1].govtCode === 'VOTER_ID' && voterBack.test(p.text))
+        );
+        for (const f of checkVoterId(voterPages)) findings.push(toFinding(doc.id, f));
+      }
       if (codes.has('PASSPORT')) for (const f of checkPassportPages(asPages)) findings.push(toFinding(doc.id, f));
 
       // File-level "Every Doc" rules (spec decision 3): whole-document text.
       const fileText = pages.map((p) => p.text).join('\n');
       for (const f of checkSignature(fileText)) findings.push(toFinding(doc.id, f));
       for (const f of checkSignatoryWord(fileText)) findings.push(toFinding(doc.id, f));
-      for (const f of checkDates(fileText)) findings.push(toFinding(doc.id, f));
+      // Dates per page so the finding names a page and can be boxed; the same bad date
+      // printed on several pages is reported once.
+      const seenDates = new Set<string>();
+      for (const inst of pages) {
+        for (const f of checkDates(inst.text, inst.page ?? 1)) {
+          const key = String(f.data?.date ?? f.message);
+          if (seenDates.has(key)) continue;
+          seenDates.add(key);
+          findings.push(toFinding(doc.id, f));
+        }
+      }
 
       // Editor/AI watermark — read the PDF Producer/Creator (I/O; PDFs only).
       if ((doc.mimeType ?? '') === 'application/pdf') {
@@ -233,22 +288,22 @@ export const redFlagValidator: Validator = {
       .join(', ');
     // INFO findings record checks that PASSED (e.g. a valid PAN and its holder category);
     // they are never a red flag, but they are what tells a reviewer the check ran.
-    const notes = findings.length - errors - warnings;
+    const advisories = findings.filter((f) => ADVISORY_CODES.has(f.code)).length;
+    const notes = findings.length - errors - warnings - advisories;
     if (errors > 0) {
       return {
         status: 'FAILED',
-        summary: `${errors} red flag(s) found: ${perRule}${warnings ? `; ${warnings} advisory` : ''}.`,
+        // Advisories (WARNING) are hidden from reviewers, so the card does not count them.
+        summary: `${errors} red flag(s) found: ${perRule}.`,
         findings,
         details: { counts },
       };
     }
     return {
       status: 'PASSED',
-      summary: warnings
-        ? `No red flags; ${warnings} advisory note(s).`
-        : notes
-        ? `No red flags; ${notes} check(s) verified.`
-        : 'No red flags found.',
+      summary:
+        (notes ? `No red flags; ${notes} check(s) verified.` : 'No red flags found.') +
+        (advisories ? ` ${advisories} note(s) to look at.` : ''),
       findings: findings.length > 0 ? findings : undefined,
     };
   },

@@ -41,7 +41,7 @@ export default function AdminDashboard() {
         categories: categories.pagination.total,
         subCategories: subCategories.pagination.total,
       });
-    } catch (error) {
+    } catch {
       toast({ title: 'Error', description: 'Failed to load dashboard stats', variant: 'destructive' });
     } finally {
       setIsLoading(false);

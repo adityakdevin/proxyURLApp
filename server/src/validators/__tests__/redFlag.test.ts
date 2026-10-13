@@ -98,11 +98,15 @@ describe('redFlagValidator', () => {
     expect(out.findings!.some((f) => f.code === 'REDFLAG_AADHAAR_MISMATCH')).toBe(true);
   });
 
-  it('PASSES with only advisory warnings (no signature keyword)', async () => {
+  // Value: protects=an advisory (no signature) is a visible note the card summary points at,
+  // not counted as a verified check; fails_when=advisories are hidden or counted as passes
+  it('PASSES with only an advisory, and the summary points at it (no signature keyword)', async () => {
     const c = ctx({ pageTexts: new Map([['d1', ['permanent account number ABCPD1234E']]]) });
     const out = await redFlagValidator.run(c);
     expect(out.status).toBe('PASSED');
-    expect(out.findings!.some((f) => f.code === 'REDFLAG_NO_SIGNATURE')).toBe(true);
+    expect(out.findings!.find((f) => f.code === 'REDFLAG_NO_SIGNATURE')!.severity).toBe('INFO');
+    expect(out.summary).toContain('1 note(s) to look at');
+    expect(out.summary).not.toMatch(/2 check\(s\) verified/);
   });
 });
 
@@ -219,5 +223,40 @@ describe('red flag summary', () => {
     const out = await redFlagValidator.run(c);
     expect(out.status).toBe('FAILED');
     expect(out.summary).toMatch(/^3 red flag\(s\) found: GST format ×1, Impossible date ×2/);
+  });
+});
+
+// Value: protects=Aadhaar/Voter cross-page checks only compare the card's own pages in a bundle; fails_when=page filter in redFlagValidator is dropped and bundle pages are compared; why_new=only redFlagLogic unit tests cover this, not the validator's page selection; seam=none; no_claim=classification accuracy on real OCR
+describe('redFlagValidator compares a card only with its own pages (client QA 2026-10)', () => {
+  const codes = async (pages: string[]) =>
+    ((await redFlagValidator.run(ctx({ pageTexts: new Map([['d1', pages]]) }))).findings ?? []).map((f) => f.code);
+
+  it('a payslip next to an Aadhaar card is not read as its other side', async () => {
+    const out = await codes([
+      'UIDAI Aadhaar 2345 6789 0123 signature',
+      'Pay Slip Earnings Deductions Net Pay Ref 9876 5432 1098 signature',
+    ]);
+    expect(out).not.toContain('REDFLAG_AADHAAR_MISMATCH');
+  });
+
+  it('an unclassified back side right after the card is compared with it', async () => {
+    expect(
+      await codes(['UIDAI Aadhaar 2345 6789 0123 signature', 'Address: H No 12 Gandhi Nagar, Lucknow 226001\n6789 2345 0123'])
+    ).toContain('REDFLAG_AADHAAR_MISMATCH');
+  });
+
+  it('two Aadhaar pages with different numbers in one bundle still mismatch', async () => {
+    expect(
+      await codes(['UIDAI Aadhaar 2345 6789 0123 signature', 'UIDAI Aadhaar 2345 6789 0999 signature'])
+    ).toContain('REDFLAG_AADHAAR_MISMATCH');
+  });
+
+  it("an RC's EPIC-shaped engine number is not the Voter ID's back side", async () => {
+    const voter = 'ELECTION COMMISSION OF INDIA Identity Card ABX1234567 signature';
+    expect(await codes([voter, 'Certificate of Registration Engine No: KMR7654321 signature'])).not.toContain(
+      'REDFLAG_VOTER_MISMATCH'
+    );
+    // An unclassified page that reads like the card's back is still compared.
+    expect(await codes([voter, "Elector's Name RAM KUMAR ABX7654321 signature"])).toContain('REDFLAG_VOTER_MISMATCH');
   });
 });
