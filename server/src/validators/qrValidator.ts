@@ -7,6 +7,7 @@ import { classifyPage } from './segment.js';
 import { docFieldGroups } from './docFields.js';
 import { aadhaarQrAsFields, isUnreadableQrPayload } from './aadhaarSecureQr.js';
 import { compareQrToFields, panCarriesQr, qrForeignChassis, QrFieldComparison } from './qrCompare.js';
+import { classifyDocType } from './crossDocLogic.js';
 import { verifyKiaPolicy, kiaVerificationUrl } from './policyOnline.js';
 import { rasterizePdf, largestImageWidthPerPage, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
 import { BBox, clamp01 } from '../lib/bbox.js';
@@ -184,6 +185,8 @@ export async function decodeAll(
 
 /** Largest edge a retry pass may upscale an image to — keeps one pass's bitmap under ~64 MB. */
 const IMAGE_RETRY_MAX_EDGE = 4000;
+/** Above this many source pixels an image gets the single native-resolution decode only. */
+const IMAGE_RETRY_MAX_PIXELS = 25_000_000;
 
 /**
  * A photographed card's QR is small and soft, and one decode at native resolution missed
@@ -192,13 +195,15 @@ const IMAGE_RETRY_MAX_EDGE = 4000;
  * hit: upscaled; upscaled + greyscale + contrast; then each quadrant upscaled, for a QR that
  * is a small corner of a large photo.
  */
-export async function decodeQrImage(absolutePath: string, { retry = true }: { retry?: boolean } = {}): Promise<QrHit[]> {
+export async function decodeQrImage(absolutePath: string, retry: boolean): Promise<QrHit[]> {
   try {
     const img = await Jimp.read(absolutePath);
     const decode = async (j: { bitmap: { data: Buffer | Uint8Array; width: number; height: number } }) =>
       decodeAll(new Uint8ClampedArray(j.bitmap.data), j.bitmap.width, j.bitmap.height);
     const first = await decode(img);
-    if (first.length > 0 || !retry) return first;
+    // Retries copy and upscale the bitmap several times: not for an image so large that the
+    // copies alone would strain memory beside other workers' scans.
+    if (first.length > 0 || !retry || img.bitmap.width * img.bitmap.height > IMAGE_RETRY_MAX_PIXELS) return first;
 
     const { width, height } = img.bitmap;
     const factor = (w: number, h: number) => Math.min(3, IMAGE_RETRY_MAX_EDGE / Math.max(w, h));
@@ -510,11 +515,16 @@ export const qrValidator: Validator = {
       } else {
         // The extra passes cost up to six full decodes, and most images in a claim carry
         // no QR: they share the PDF path's per-document retry budget, counted per run.
-        const retry = imageRetries < MAX_QR_RETRY_PAGES;
-        hits = await decodeQrImage(doc.readablePath, { retry });
-        imageRetries++;
-        // Same as a PDF page past the budget: not looked at closely is not "no QR".
-        if (!retry && hits.length === 0) {
+        // One plain decode; the costly retries (up to six more decodes) only for an image the
+        // first pass missed, within their own per-run budget, the same size as the PDF one.
+        hits = await decodeQrImage(doc.readablePath, false);
+        const cardLike = ['KYC', 'INSURANCE', 'RC'].includes(classifyDocType(ctx.shared.get(doc.id) ?? '') ?? '');
+        if (hits.length === 0 && imageRetries < MAX_QR_RETRY_PAGES) {
+          imageRetries++;
+          hits = await decodeQrImage(doc.readablePath, true);
+        } else if (hits.length === 0 && cardLike) {
+          // Same as a PDF page past the budget: a card photo not looked at closely is not
+          // "no QR". Only card-like images: a vehicle photo or a JPG invoice carries none.
           truncated.push({
             documentId: doc.id,
             code: 'QR_RETRY_BUDGET_EXHAUSTED',
@@ -697,7 +707,7 @@ export const qrValidator: Validator = {
     } else if (truncated.length > 0) {
       // Not every page was looked at: a QR may be there unread. Not a pass.
       outcome.status = 'FAILED';
-      outcome.summary = 'Not every page was scanned for QR codes — please check the remaining pages visually.';
+      outcome.summary = 'Some pages or images were not fully scanned for QR codes — please check them visually.';
     }
     // Row 19 — bifurcate the column by WHAT happened, not just pass/fail.
     //

@@ -198,6 +198,15 @@ export function parseQrPayload(value: string): Map<string, string> {
  * policy QR's registration number, its URL) is not evidence of anything, and neither is a
  * pane row the QR does not carry.
  */
+/** One model, written fuller on one side: "SONET" in the QR, "SONET HTK" on the policy
+ *  (client QA 2026-10, #37/38). Same first word, and every word of the shorter one present
+ *  in the longer; a different model name ("CRETA") still mismatches. */
+function modelMatches(a: string, b: string): boolean {
+  const words = (v: string) => v.toUpperCase().split(/[^A-Z0-9.]+/).filter(Boolean);
+  const [short, long] = [words(a), words(b)].sort((x, y) => x.length - y.length);
+  return short.length > 0 && short[0] === long[0] && short.every((w) => long.includes(w));
+}
+
 export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldComparison[] {
   const payload = parseQrPayload(qrValue);
   if (payload.size === 0) return [];
@@ -214,7 +223,9 @@ export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldC
         ? nameMatches(qrRaw, documentValue)
         : label === 'Gender'
           ? genderMatches(qrRaw, documentValue)
-          : identifierMatches(qrRaw, documentValue);
+          : label === 'Model'
+            ? modelMatches(qrRaw, documentValue)
+            : identifierMatches(qrRaw, documentValue);
       out.push({
         label,
         qrValue: qrRaw.replace(/\s+/g, ' ').trim(),

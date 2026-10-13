@@ -32,13 +32,17 @@ const MAX_FINDINGS_PER_RESULT = 200;
 const TX = { timeout: 30_000, maxWait: 15_000 };
 /** Cap on claims one run re-queues for a duplicate it found (see requeueDuplicatePartners). */
 const MAX_DUP_REQUEUE = 20;
-/** One shared duplicate value, as both sides' DUP findings record it. */
-const dupKey = (field: unknown, value: unknown) =>
-  typeof field === 'string' && typeof value === 'string'
-    ? `${field}|${normValue(field as Parameters<typeof normValue>[0], value)}`
-    : '?';
 import { resolveScanRoot } from '../lib/directoryReader.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
+
+/** One shared duplicate value as both sides' DUP findings record it: field plus the same
+ *  255-character norm the index matches on — the untruncated form could differ for two long
+ *  values the index calls equal, and the pair would then re-queue each other forever.
+ *  '?' for a finding without field/value (none are written that way today). */
+const dupKey = (field: unknown, value: unknown) =>
+  typeof field === 'string' && typeof value === 'string'
+    ? `${field}|${normValue(field as Parameters<typeof normValue>[0], value).slice(0, 255)}`
+    : '?';
 
 /**
  * How long a single check may run before it is abandoned.
@@ -580,7 +584,9 @@ export class ValidationService {
             select: { findings: { select: { data: true } } },
           },
         },
-        take: MAX_DUP_REQUEUE,
+        // No take here: cap what is ENQUEUED, after the up-to-date partners are filtered out,
+        // or up-to-date rows could crowd out the stale ones. Bounded by the finding lists.
+        orderBy: { claimId: 'asc' },
       });
       // Up to date when, for every value this claim shares with the partner, the partner's
       // latest finding on that SAME value names this claim — or is at the cap, which may
@@ -599,7 +605,7 @@ export class ValidationService {
           )
         );
       };
-      const stale = partners.filter((p) => !namesMe(p));
+      const stale = partners.filter((p) => !namesMe(p)).slice(0, MAX_DUP_REQUEUE);
       if (stale.length === 0) return;
       for (const p of stale) await enqueue(this.prisma, this.validators, p.id, 'AUTO');
     } catch (e) {

@@ -24,6 +24,7 @@ import {
   checkPassportFileNo,
   checkPassportPages,
   checkAadhaar,
+  aadhaarNumbers,
   checkAadhaarFormat,
   checkVid,
   checkVoterId,
@@ -36,6 +37,7 @@ import {
   checkEditableText,
   RedFlagFinding,
 } from './redFlagLogic.js';
+import { classifyDocType } from './crossDocLogic.js';
 
 /** Per-page format rule per classified type. */
 const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlagFinding[])[]> = {
@@ -208,7 +210,20 @@ export const redFlagValidator: Validator = {
       // Cross-page rules over ALL of this document's pages (a back side may be unclassified).
       const asPages = pages.map((p) => ({ page: p.page ?? 1, text: p.text }));
       if (codes.has('AADHAR')) {
-        const aadhaarPages = asPages.filter((_, i) => pages[i].govtCode === 'AADHAR');
+        // An unclassified page right after an Aadhaar page is its back side when it reads like
+        // one: an address block and an Aadhaar-shaped number, and not a payslip or invoice whose
+        // UAN merely has the shape (security review, 2026-10-13).
+        const aadhaarBack = /address|पता|uidai|1947|help@/i;
+        const aadhaarPages = asPages.filter(
+          (p, i) =>
+            pages[i].govtCode === 'AADHAR' ||
+            (!pages[i].govtCode &&
+              i > 0 &&
+              pages[i - 1].govtCode === 'AADHAR' &&
+              aadhaarBack.test(p.text) &&
+              aadhaarNumbers(p.text).length > 0 &&
+              !['PAYSLIP', 'INVOICE', 'INSURANCE', 'RC'].includes(classifyDocType(p.text) ?? ''))
+        );
         for (const f of checkAadhaar(aadhaarPages)) findings.push(toFinding(doc.id, f));
       }
       if (codes.has('VOTER_ID')) {

@@ -3,17 +3,17 @@ import { completenessOutcome, typePresent, customTypeOfPage, GOVT_TYPE_MARKERS }
 import { classifyDocType } from './crossDocLogic.js';
 import { segment, type DocInstance } from './segment.js';
 import { getSpell, isRealWord } from './dictionary.js';
+import { UNREADABLE_REAL_WORD_RATIO } from './spellValidator.js';
 import { spellCandidates } from './logic.js';
 
 /**
  * Pages OCR could not make sense of, that no ID-card marker claimed: fewer than
- * MIN_REAL_WORDS dictionary words, or under REAL_WORD_RATIO of its words real (the ratio
+ * MIN_REAL_WORDS dictionary words, or under UNREADABLE_REAL_WORD_RATIO of its words real (the ratio
  * SPELL uses for an unreadable document). A blank page yields no words and is not counted.
  * ponytail: dictionary words as the readability measure; use Tesseract confidence if
  * the OCR port starts returning it per page.
  */
 const MIN_REAL_WORDS = 8;
-const REAL_WORD_RATIO = 0.35;
 async function unreadablePages(instances: DocInstance[]): Promise<DocInstance[]> {
   const spell = await getSpell();
   return instances.filter((i) => {
@@ -21,7 +21,7 @@ async function unreadablePages(instances: DocInstance[]): Promise<DocInstance[]>
     const words = spellCandidates(i.text);
     if (words.length === 0) return false;
     const real = words.filter((w) => isRealWord(spell, w)).length;
-    return real < MIN_REAL_WORDS || real / words.length < REAL_WORD_RATIO;
+    return real < MIN_REAL_WORDS || real / words.length < UNREADABLE_REAL_WORD_RATIO;
   });
 }
 
@@ -127,6 +127,22 @@ export const fullValidator: Validator = {
               }
       ),
     ];
+
+    // Pages past the scan cap were never read, so no check saw them: a document "missing"
+    // there, or a page added after the cap, would otherwise pass unseen (security review,
+    // 2026-10-13). A red flag naming the pages to check by eye.
+    for (const [documentId, { scanned, total }] of ctx.truncatedPages ?? []) {
+      const fileName = ctx.documents.find((d) => d.id === documentId)?.fileName ?? 'A document';
+      outcome.findings.push({
+        documentId,
+        code: 'FULL_PAGES_NOT_READ',
+        severity: 'ERROR',
+        message: `Pages ${scanned + 1}-${total} of ${fileName} were not read by any check — please check them visually.`,
+        data: { scannedPages: scanned, totalPages: total },
+      });
+      outcome.status = 'FAILED';
+    }
+    if (ctx.truncatedPages?.size) outcome.summary = `${outcome.summary} Some pages were not read — see findings.`;
 
     return outcome;
   },

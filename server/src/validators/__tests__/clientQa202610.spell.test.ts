@@ -16,6 +16,8 @@ describe('client QA 2026-10 — Spell', () => {
   });
   it('the new terms are all single words the matcher can act on', () => {
     for (const t of ['surgeon', 'associate', 'technician']) expect(EXPECTED_TERMS).toContain(t);
+    // The matcher compares one token at a time: a term with a space could never match.
+    expect(EXPECTED_TERMS.filter((t) => /\s/.test(t))).toEqual([]);
   });
   it('#44-46 a misspelt label does not run on into the name', () => {
     expect(extractNames('Employee Name : RAJESH KUMAR Desigantion Engineer')).toEqual(['RAJESH KUMAR']);

@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { ValidationService } from '../validationService.js';
 import { enqueue, kickDrain } from '../validationQueue.js';
+import { DUP_CLAIMS_CAP } from '../../validators/dupValidator.js';
 import { Validator } from '../../validators/types.js';
 import {
   getTestPrisma,
@@ -472,7 +473,8 @@ describe('ValidationService + drainer', () => {
       expect(runs.length).toBe(ids.length);
       expect(runs.every((r) => r.status === 'COMPLETED')).toBe(true);
     } finally {
-      process.env.VALIDATION_CONCURRENCY = prev;
+      if (prev === undefined) delete process.env.VALIDATION_CONCURRENCY;
+      else process.env.VALIDATION_CONCURRENCY = prev;
     }
   });
 
@@ -506,11 +508,16 @@ describe('ValidationService + drainer', () => {
         });
         ids.push(c.id);
       }
-      for (const id of ids) await enqueue(prisma, slow, id, 'AUTO');
+      // The first claim starts the pool; its spare workers find an empty queue and leave
+      // before the rest arrive — the bulk-validate shape. Only a top-up gets past one worker.
+      await enqueue(prisma, slow, ids[0], 'AUTO');
+      await new Promise((r) => setTimeout(r, 30));
+      for (const id of ids.slice(1)) await enqueue(prisma, slow, id, 'AUTO');
       await drained();
       expect(peak).toBeGreaterThan(1);
     } finally {
-      process.env.VALIDATION_CONCURRENCY = prev;
+      if (prev === undefined) delete process.env.VALIDATION_CONCURRENCY;
+      else process.env.VALIDATION_CONCURRENCY = prev;
     }
   });
 
@@ -539,37 +546,44 @@ describe('ValidationService + drainer', () => {
   // Value: protects=a run queued while every worker is busy is still drained, and the
   // caller's promise waits for it; fails_when=the rearm/chaining in kickDrain regresses;
   // why_new=only the top-up path was tested; seam=none; no_claim=multi-process drains
-  it('drains a run queued while every worker is busy', async () => {
+  it('drains a run queued just as the last worker found the queue empty', async () => {
     const prev = process.env.VALIDATION_CONCURRENCY;
     process.env.VALIDATION_CONCURRENCY = '1';
+    const quick: Validator[] = [
+      { key: 'FULL', column: 'fullScanStatus', run: async () => ({ status: 'PASSED', summary: 'ok' }) },
+    ];
+    const mk = async (id: string) => {
+      const c = await makeClaim(id);
+      await prisma.document.create({
+        data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-${id}.pdf`, createdBy: adminId },
+      });
+      return c;
+    };
+    const a = await mk(`C-RA-${SUF}`);
+    const b = await mk(`C-RB-${SUF}`);
+    // Force the window rearm exists for: the only worker reads an empty queue, B is queued
+    // and kicked before that worker has left. Without rearm, B is stranded.
+    const real = prisma.validationRun.findFirst.bind(prisma.validationRun);
+    let injected = false;
+    const spy = jest.spyOn(prisma.validationRun, 'findFirst').mockImplementation((async (args: Parameters<typeof real>[0]) => {
+      const r = await real(args);
+      if (!r && !injected && (args?.where as { status?: unknown } | undefined)?.status === 'QUEUED' && args?.orderBy) {
+        injected = true;
+        await prisma.validationRun.create({ data: { claimId: b.id, trigger: 'AUTO' } });
+        void kickDrain(prisma, quick);
+      }
+      return r;
+    }) as never);
     try {
-      const slow: Validator[] = [
-        {
-          key: 'FULL',
-          column: 'fullScanStatus',
-          run: async () => {
-            await new Promise((r) => setTimeout(r, 80));
-            return { status: 'PASSED', summary: 'ok' };
-          },
-        },
-      ];
-      const mk = async (id: string) => {
-        const c = await makeClaim(id);
-        await prisma.document.create({
-          data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-${id}.pdf`, createdBy: adminId },
-        });
-        return c;
-      };
-      const a = await mk(`C-RA-${SUF}`);
-      const b = await mk(`C-RB-${SUF}`);
-      await enqueue(prisma, slow, a.id, 'AUTO');
-      await new Promise((r) => setTimeout(r, 20)); // A is RUNNING, the only worker busy
-      await enqueue(prisma, slow, b.id, 'AUTO');
-      await kickDrain(prisma, slow);
-      const runB = await prisma.validationRun.findFirst({ where: { claimId: b.id } });
+      await enqueue(prisma, quick, a.id, 'AUTO');
+      await kickDrain(prisma, quick);
+      await drained();
+      const runB = await real({ where: { claimId: b.id } });
       expect(runB?.status).toBe('COMPLETED');
     } finally {
-      process.env.VALIDATION_CONCURRENCY = prev;
+      spy.mockRestore();
+      if (prev === undefined) delete process.env.VALIDATION_CONCURRENCY;
+      else process.env.VALIDATION_CONCURRENCY = prev;
     }
   });
 
@@ -616,7 +630,7 @@ describe('ValidationService + drainer', () => {
     it('still re-queues a partner whose capped list is about a different value', async () => {
       const a = await withDoc(`C-RQE-${SUF}`);
       const b = await withDoc(`C-RQF-${SUF}`);
-      const others = Array.from({ length: 20 }, (_, i) => `C-TOWN-${i}-${SUF}`);
+      const others = Array.from({ length: DUP_CLAIMS_CAP }, (_, i) => `C-TOWN-${i}-${SUF}`);
       const v: Validator[] = [
         {
           key: 'DUP',
@@ -644,7 +658,7 @@ describe('ValidationService + drainer', () => {
     it('does not re-queue a partner whose list is at the cap', async () => {
       const a = await withDoc(`C-RQC-${SUF}`);
       const b = await withDoc(`C-RQD-${SUF}`);
-      const others = Array.from({ length: 20 }, (_, i) => `C-OTHER-${i}-${SUF}`);
+      const others = Array.from({ length: DUP_CLAIMS_CAP }, (_, i) => `C-OTHER-${i}-${SUF}`);
       const v = dupNaming((me) => (me === b.claimId ? others : [b.claimId]));
       await enqueue(prisma, v, b.id, 'AUTO');
       await kickDrain(prisma, v);

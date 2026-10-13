@@ -731,8 +731,8 @@ function relationHolder(text: string, value: string): string | null {
 /**
  * Compare each field across the claim's classified pages and emit a red flag when a
  * value disagrees across doc types (or documents). Values from UNKNOWN (unclassifiable)
- * pages still take part — type-blind fallback — but any flag they cause is a WARNING,
- * not a hard red flag, and the page is separately noted as unclassified.
+ * pages still take part — type-blind fallback — but any flag they cause is a WARNING
+ * (stored, hidden from reviewers), not a red flag, and the page is noted as unclassified.
  */
 export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): FindingInput[] {
   const classified = pages.map((p) => ({ ...p, docType: pageType(p) }));
@@ -754,10 +754,11 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   // Judged against THIS claim's car — its VIN — not against whichever
   // cluster is larger, so a family car's papers outnumbering the customer's own cannot
   // set the customer's own RC or policy aside.
-  // Same car when the serial — the last six — agrees within one misread: OCR mangles a
-  // VIN's front ("MZBBISHILSN100007" on a customer's own policy) far more than a different
-  // car shares its serial.
-  const sameCar = (x: string, y: string) => idMatches(x, y) || within1(idNorm(x).slice(-6), idNorm(y).slice(-6));
+  // Same car when the serial — the last six — agrees once OCR glyphs are folded: OCR mangles
+  // a VIN's front ("MZBBISHILSN100007" on a customer's own policy) far more than its serial,
+  // and a serial one digit off is the next car of the batch, as Intra's claim-ID match also
+  // holds (security review, 2026-10-13).
+  const sameCar = (x: string, y: string) => idMatches(x, y) || idNorm(x).slice(-6) === idNorm(y).slice(-6);
   const vehiclePaper = (p: { docType: DocTypeCode | 'UNKNOWN' }) => p.docType === 'RC' || p.docType === 'INSURANCE';
   const vinsOn = (documentId: string, page: number | null) =>
     pageVins(classified.find((p) => p.documentId === documentId && p.page === page)?.text ?? '');
@@ -880,8 +881,9 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
     });
   }
 
-  // Surface every page we could not classify but that carried a comparable field —
-  // the flag above ran type-blind, so the WARNING tells a reviewer precision was reduced.
+  // Record every page we could not classify but that carried a comparable field — the flag
+  // above ran type-blind. A WARNING, so stored for the record but hidden from reviewers
+  // (Doubtful is hidden, 2026-10-12); its type-blind mismatches are hidden with it.
   for (const p of classified) {
     if (p.docType !== 'UNKNOWN') continue;
     if (!unknownContributed.has(`${p.documentId}:${p.page}`)) continue;

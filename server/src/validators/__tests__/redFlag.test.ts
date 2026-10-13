@@ -235,6 +235,12 @@ describe('redFlagValidator compares a card only with its own pages (client QA 20
     expect(out).not.toContain('REDFLAG_AADHAAR_MISMATCH');
   });
 
+  it('an unclassified back side right after the card is compared with it', async () => {
+    expect(
+      await codes(['UIDAI Aadhaar 2345 6789 0123 signature', 'Address: H No 12 Gandhi Nagar, Lucknow 226001\n6789 2345 0123'])
+    ).toContain('REDFLAG_AADHAAR_MISMATCH');
+  });
+
   it('two Aadhaar pages with different numbers in one bundle still mismatch', async () => {
     expect(
       await codes(['UIDAI Aadhaar 2345 6789 0123 signature', 'UIDAI Aadhaar 2345 6789 0999 signature'])
