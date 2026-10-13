@@ -106,6 +106,12 @@ function Highlights({
   );
 }
 
+/** Has react-pdf painted this page yet? Its canvas exists, with a height, once it has. */
+function pageRendered(pageEl: Element): boolean {
+  const canvas = pageEl.querySelector('canvas');
+  return !!canvas && canvas.getBoundingClientRect().height > 0;
+}
+
 /**
  * Document viewer with highlight overlays, sized to fill whatever container holds it.
  * Images and PDFs render with normalized ([0..1]) highlight boxes drawn as CSS % (so they
@@ -115,12 +121,6 @@ function Highlights({
  * Rendered by the standalone /claims/:id/documents/:documentId window — a reviewer needs
  * the document open beside the claim form, which a modal cannot do.
  */
-/** Has react-pdf painted this page yet? Its canvas exists, with a height, once it has. */
-function pageRendered(pageEl: Element): boolean {
-  const canvas = pageEl.querySelector('canvas');
-  return !!canvas && canvas.getBoundingClientRect().height > 0;
-}
-
 export function DocumentViewerPanel({
   claimId,
   documentId,
@@ -201,15 +201,22 @@ export function DocumentViewerPanel({
     if (!activeId) return;
     const key = `${documentId}|${activeId}|${selectNonce}|${zoom}|${rotation}`;
     if (scrolledFor.current === key) return;
+    // An image has no size until it loads, so every box sits at the top: wait for it.
+    if (isImage && !imgLoaded) return;
     const el = scrollRef.current?.querySelector(`[data-fid="${CSS.escape(activeId)}"]`);
     if (!el) return;
     // Before its page renders, the page box has no height and the target sits in the wrong
     // place; wait for the render that follows rather than scroll there.
+    // Same for every page above it: an unpainted page has no height yet and shifts the target.
     const pageEl = el.closest('[data-page]');
-    if (pageEl && !pageRendered(pageEl)) return;
+    const upTo = Number(pageEl?.getAttribute('data-page') ?? 0);
+    for (let pg = 1; pg <= upTo; pg++) {
+      const p = scrollRef.current?.querySelector(`[data-page="${pg}"]`);
+      if (p && !pageRendered(p)) return;
+    }
     scrolledFor.current = key;
     el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-  }, [documentId, activeId, selectNonce, zoom, rotation, numPages, imgLoaded, renderedPages]);
+  }, [documentId, activeId, selectNonce, zoom, rotation, numPages, isImage, imgLoaded, renderedPages]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -232,6 +239,12 @@ export function DocumentViewerPanel({
     if (jumpedFor.current === key) return;
     const el = scrollRef.current?.querySelector(`[data-page="${gotoPage}"]`);
     if (!el) return;
+    // Pages above it may not have painted yet, so their boxes have no height and the jump
+    // lands short. Wait until every page up to the target has rendered.
+    for (let pg = 1; pg <= gotoPage; pg++) {
+      const p = scrollRef.current?.querySelector(`[data-page="${pg}"]`);
+      if (p && !pageRendered(p)) return;
+    }
     jumpedFor.current = key;
     el.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }, [documentId, gotoPage, gotoNonce, renderedPages]);
