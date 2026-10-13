@@ -1,12 +1,18 @@
 /** Regressions from the client QA summary report of 2026-10: QR points #35-38. */
 import { docFieldGroups } from '../docFields.js';
 import { compareQrToFields } from '../qrCompare.js';
+import { classifyQrOutcome } from '../qrValidator.js';
 
 const valueOf = (fields: { label: string; value: string | null }[], label: string) =>
   fields.find((f) => f.label === label)?.value ?? null;
 const POLICY = 'CERTIFICATE OF INSURANCE CUM POLICY SCHEDULE\nPeriod of Insurance\nPremium\n';
 
 describe('client QA 2026-10 — QR', () => {
+  it('#33 a current-design PAN with no readable QR is UNREADABLE, not NO_QR', () => {
+    const base = { mismatches: 0, decodedValues: 0, scannableDocs: 1, opaquePayloads: 0, truncatedScans: 0 };
+    expect(classifyQrOutcome({ ...base, missing: [{ data: { qrExpected: true } }] })).toBe('UNREADABLE');
+    expect(classifyQrOutcome({ ...base, missing: [{ data: { qrExpected: false } }] })).toBe('NO_QR');
+  });
   it('#36 "Policy No" over "Private Car" is not a policy number', () => {
     const [g] = docFieldGroups([`${POLICY}Policy No\nPrivate Car Package Policy`]);
     expect(valueOf(g.fields, 'Policy No')).toBeNull();

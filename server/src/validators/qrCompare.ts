@@ -77,7 +77,7 @@ const QR_KEY_TO_LABELS: Record<string, string[]> = {
   //                 invoice sample to get right.
   invoiceno: ['Invoice No'],
   // NO `gstin` ENTRY, DELIBERATELY. It was mapped once and had to be removed: on a real
-  // certificate (claim MZBEU813LSN749087 p.6) OCR read the printed GSTIN as
+  // certificate (claim …749087 p.6) OCR read the printed GSTIN as
   // "24AAGFO2459A1ZM" where the QR says "24AAGFO2658A1ZM" — two digit misreads on small
   // print beside the code. identifierMatches allows length/8 = 1 edit for a 15-character
   // GSTIN, so that scored MISMATCH, and a MISMATCH FAILS the whole QR check on a perfectly
@@ -97,7 +97,7 @@ const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, '');
 /**
  * Characters OCR routinely confuses on a photographed document. Folding them before
  * comparing is what stops a legitimate claim being flagged: this claim's chassis reads
- * MZBB2SIALSNO10383 off the page and MZBB2814LSN010383 out of the QR — same number, four
+ * MZBB2SIALSNO10007 off the page and MZBB2814LSN010007 out of the QR — same number, four
  * misread glyphs.
  */
 const CONFUSABLE: Record<string, string> = {
