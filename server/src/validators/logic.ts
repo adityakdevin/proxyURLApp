@@ -2,19 +2,18 @@ import { CheckStatus, FindingInput, ValidatorOutcome } from './types.js';
 
 /**
  * Final stored status for a check, given what the validator decided and the evidence it
- * produced. A validator only ever returns PASSED or FAILED; DOUBTFUL is derived here so
- * all six checks behave the same way instead of each one re-deciding.
- *
- * A PASSED check that raised WARNING findings becomes DOUBTFUL: a doubtful OCR read, a
- * page with no extractable text or a missing signature is not something to show a
- * reviewer behind a green badge. FAILED is never softened — errors outrank warnings.
+ * produced. Kept as the one place all checks route through: warning-only runs used to be
+ * derived DOUBTFUL here, and that tier is now hidden from reviewers.
  */
 export function deriveCheckStatus(
   status: 'PASSED' | 'FAILED',
   findings: FindingInput[] | undefined
 ): CheckStatus {
-  if (status !== 'PASSED') return status;
-  return findings?.some((f) => f.severity === 'WARNING') ? 'DOUBTFUL' : 'PASSED';
+  // Doubtful is hidden from reviewers (decision of 2026-10-12): a warning-only run reads
+  // PASSED and its warnings are not shown. Anything that must not pass silently is raised
+  // as an ERROR by its validator instead.
+  void findings;
+  return status;
 }
 
 /** A document FAILS the SPELL check on the FIRST distinct expected-term misspelling.
@@ -239,7 +238,7 @@ export const INTRA_FUZZY_MIN_LEN = 10;
  * character wrong. Returns the text it matched, or null.
  *
  * Exact matching failed 164 of 570 sample claims, nearly all on an invoice whose VIN reads
- * "MZBGESISVIN301510" for MZBGE815VTN301510 (client QA 2026-10, #39-40); this recovers 138.
+ * "MZBGESISVIN701510" for MZBGE815VTN701510 (client QA 2026-10, #39-40); this recovers 138.
  * One extra difference, not two: a document for another car of the same series differs in
  * only the last digit or two, and that must still fail.
  */
@@ -264,7 +263,7 @@ export function fuzzyClaimIdMatch(text: string, claimId: string): string | null 
  *
  *  The boundaries do the filtering that an all-caps skip used to do, without its cost:
  *   - `(?<![A-Za-z])` … `(?![A-Za-z\d])` drops the letter prefix of an alphanumeric code
- *     (VIN "MZBFB812LSN", PAN "GROPS2837J") while keeping a word that merely FOLLOWS a
+ *     (VIN "MZBFB812LSN", PAN "ABCPS1234J") while keeping a word that merely FOLLOWS a
  *     number ("30Dayes" → "Dayes").
  *   - `'` / `’` in the lookahead drops the stem of a contraction, which used to be
  *     reported as its own misspelling ("doesn't" → "doesn" flagged as "does").

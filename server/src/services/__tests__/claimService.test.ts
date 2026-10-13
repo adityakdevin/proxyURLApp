@@ -37,7 +37,7 @@ describe('ClaimService', () => {
     return statusService.create({ name, isDefault: true }, adminId);
   }
 
-  it('findings export lists only the latest completed run, red flags and advisories only', async () => {
+  it('findings export lists only the latest completed run, red flags only (Doubtful hidden)', async () => {
     await seedDefaultStatus();
     const c = await service.create({ subCategoryId, claimId: 'C-EXP' }, adminId);
     const at = (min: number) => new Date(Date.now() - min * 60_000);
@@ -67,7 +67,6 @@ describe('ClaimService', () => {
 
     const rows = await service.findingsExportRows({ scope: 'ALL', callerId: adminId });
     expect(rows).toEqual([
-      { claimId: 'C-EXP', check: 'Spell', severity: 'Advisory', document: '', page: 2, finding: 'Doubtful "enquire"' },
       { claimId: 'C-EXP', check: 'Red Flags', severity: 'Red flag', document: '', page: 2, finding: 'Impossible date' },
     ]);
   });

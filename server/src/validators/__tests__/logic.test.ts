@@ -17,12 +17,12 @@ import {
 } from '../logic.js';
 
 describe('validator logic', () => {
-  it('deriveCheckStatus downgrades a warning-only pass to DOUBTFUL', () => {
+  it('deriveCheckStatus never derives DOUBTFUL (hidden from reviewers)', () => {
     const warn = [{ code: 'SPELL_DOUBTFUL', severity: 'WARNING' as const, message: 'm' }];
     const err = [{ code: 'SPELL_SUSPECT', severity: 'ERROR' as const, message: 'm' }];
     const info = [{ code: 'X', severity: 'INFO' as const, message: 'm' }];
-    expect(deriveCheckStatus('PASSED', warn)).toBe('DOUBTFUL');
-    expect(deriveCheckStatus('PASSED', [...warn, ...err])).toBe('DOUBTFUL'); // status wins, not severity
+    expect(deriveCheckStatus('PASSED', warn)).toBe('PASSED');
+    expect(deriveCheckStatus('PASSED', [...warn, ...err])).toBe('PASSED'); // status wins, not severity
     expect(deriveCheckStatus('PASSED', info)).toBe('PASSED');
     expect(deriveCheckStatus('PASSED', [])).toBe('PASSED');
     expect(deriveCheckStatus('PASSED', undefined)).toBe('PASSED');
