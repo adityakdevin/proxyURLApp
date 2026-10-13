@@ -1,20 +1,68 @@
 /** Regressions from the client QA summary report of 2026-10 ("Summary Report - Software
  *  Testing"): Red Flags points 1-6 and Missing Docs points 7-12. */
-import { checkPan, checkVid, checkDates, checkVoterId, aadhaarNumbers } from '../redFlagLogic.js';
+import { checkGst, checkPan, checkVid, checkDates, checkVoterId, checkAadhaar, aadhaarNumbers } from '../redFlagLogic.js';
 import { typePresent } from '../logic.js';
 import { classify, ClassifiableType } from '../../services/documentClassifier.js';
 
 describe('client QA 2026-10 — Red Flags', () => {
   it('#1 a VID is not extended by a digit printed on the next line', () => {
-    expect(checkVid('VID : 9150 6457 2260 8544\n1 Jan 1990')).toEqual([]);
-    expect(checkVid('VID: 9150 6457 2260 8544 12/03/2024')).toEqual([]);
+    expect(checkVid('VID : 9876 5432 1098 7654\n1 Jan 1990')).toEqual([]);
+    expect(checkVid('VID: 9876 5432 1098 7654 12/03/2024')).toEqual([]);
   });
   it('#1 an irregularly grouped VID one digit off is unreadable, not a red flag', () => {
-    const [f] = checkVid('VID : 9150 6457 226 08544 3');
+    const [f] = checkVid('VID : 9876 5432 109 87654 3');
     expect(f?.severity ?? 'none').not.toBe('ERROR');
   });
+  it('#1 a stray 1-2 digit tail after a 16-digit VID is card-edge noise', () => {
+    expect(checkVid('© VID: 9123456789012345 1')).toEqual([]);
+    expect(checkVid('© VID:91234567 89012345 4')).toEqual([]);
+    // A digit run JOINED to the last group is not a stray tail: still not passed.
+    expect(checkVid('VID : 9111 2222 3333 44441')).not.toEqual([]);
+  });
+  it('#1 one clean VID line on the page settles it', () => {
+    // OCR garbled the first VID line and read the second cleanly.
+    expect(checkVid('VID; 11122223333 4444 H security\n7000 1111 2222 3] VID : 9111 2222 3333 4444')).toEqual([]);
+  });
   it('#1 a genuinely short, regularly grouped VID is still flagged', () => {
-    expect(checkVid('VID : 9150 6457 2260')[0].code).toBe('REDFLAG_VID_FORMAT');
+    expect(checkVid('VID : 9876 5432 1098')[0].code).toBe('REDFLAG_VID_FORMAT');
+  });
+  it('#4 two people\'s Aadhaar cards on separate pages are not a mismatch', () => {
+    expect(checkAadhaar([
+      { page: 7, text: 'DOB: 15/06/1985 Male 5678 1234 9012' },
+      { page: 11, text: 'DOB 20/03/1987 Male 6789 2345 0123' },
+    ])).toEqual([]);
+  });
+  it('#4 front and back of one card that disagree are still a red flag', () => {
+    expect(checkAadhaar([
+      { page: 7, text: 'DOB: 15/06/1985 Male 5678 1234 9012' },
+      { page: 8, text: 'Address UIDAI 6789 2345 0123' },
+    ])[0].code).toBe('REDFLAG_AADHAAR_MISMATCH');
+  });
+  it('#4 one person\'s cards far apart with different numbers are still a red flag', () => {
+    expect(checkAadhaar([
+      { page: 3, text: 'DOB: 15/06/1985 Male 5678 1234 9012' },
+      { page: 12, text: 'DOB: 15/06/1985 Male 6789 2345 0123' },
+    ])[0].code).toBe('REDFLAG_AADHAAR_MISMATCH');
+  });
+  it('#4 a one-digit difference on one card is flagged, worded as a possible misread', () => {
+    const [f] = checkAadhaar([{ page: 9, text: '9871 2345 6012 Aadhaar 0871 2345 6012' }]);
+    expect(f.severity).toBe('ERROR');
+    expect(f.message).toContain('possibly one scan misread');
+  });
+  it('#2 a GSTIN with a 7 read as T is a misread, not malformed', () => {
+    expect(checkGst('GSTIN: 36AAACKT904GIZO', 3)[0].code).toBe('REDFLAG_GST_UNREADABLE');
+  });
+  it('#6 a money amount is not a date', () => {
+    expect(checkDates('LWP 0.00/0.00 Basic 25,000.00')).toEqual([]);
+    expect(checkDates('DOB 31/02/1990')[0].code).toBe('REDFLAG_BAD_DATE');
+  });
+  it('#3 two EPIC reads one digit apart are flagged, worded as a possible misread', () => {
+    const [f] = checkVoterId([
+      { page: 15, text: 'ELECTION COMMISSION OF INDIA ABX1234565' },
+      { page: 16, text: 'Elector address ABX1234569' },
+    ]);
+    expect(f.severity).toBe('ERROR');
+    expect(f.message).toContain('possibly one scan misread');
   });
   it('#3 Voter ID sides that agree do not mismatch', () => {
     expect(checkVoterId([

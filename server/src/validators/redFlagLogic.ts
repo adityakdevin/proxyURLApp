@@ -58,6 +58,21 @@ const OCR_ALT: Record<string, string> = {
   O: '0', '0': 'O', I: '1', '1': 'I', L: '1', S: '5', '5': 'S', B: '8', '8': 'B', Z: '2', '2': 'Z',
 };
 
+/** Letter → the digit it is misread for, and back; GSTIN positions say which one is meant. */
+const AS_DIGIT: Record<string, string> = { O: '0', Q: '0', D: '0', I: '1', L: '1', T: '7', S: '5', B: '8', Z: '2', G: '6' };
+const AS_LETTER: Record<string, string> = { '0': 'O', '1': 'I', '5': 'S', '8': 'B', '2': 'Z', '6': 'G', '7': 'T' };
+/** A GSTIN is 2 digits, 5 letters, 4 digits, a letter, an entity code, Z, a check char.
+ *  Folding each position to its own kind turns OCR's "36AAACKT904GIZO" (7 read as T, 1 as
+ *  I) back into a valid shape, which the generic swap search gave up on — too many
+ *  ambiguous characters (client QA 2026-10, #2: 643885, 650930, 328472, 004536). */
+function gstFold(g: string): string {
+  return [...g]
+    .map((c, i) =>
+      i < 2 || (i >= 7 && i <= 10) ? (AS_DIGIT[c] ?? c) : (i >= 2 && i <= 6) || i === 11 ? (AS_LETTER[c] ?? c) : i === 13 && c === '2' ? 'Z' : c
+    )
+    .join('');
+}
+
 /** Is `raw` a plausible OCR misread of a token that WOULD match `shape`? True only when
  *  it doesn't already match but some combination of single-char OCR swaps makes it match.
  *  Routes a failing candidate to "unreadable" (advisory) instead of "malformed" (red flag).
@@ -139,7 +154,7 @@ export function checkGst(text: string, page: number | null = null): RedFlagFindi
   const cand = labeledCandidate(text, /\bGSTIN\b|\bGST\s*(?:no|reg)/i, /\b[0-9]{2}[A-Z0-9]{13}\b/);
   if (!cand) return [];
   if (GST_RE.test(cand)) return [];
-  if (ocrAdjacent(cand, GST_RE)) return [warn('REDFLAG_GST_UNREADABLE', `Possible GSTIN "${cand}" too OCR-garbled to verify`, page)];
+  if ((cand.length === 15 && GST_RE.test(gstFold(cand))) || ocrAdjacent(cand, GST_RE)) return [warn('REDFLAG_GST_UNREADABLE', `Possible GSTIN "${cand}" too OCR-garbled to verify`, page)];
   const why = cand.length !== 15 ? `is ${cand.length} chars, not 15` : cand[13] !== 'Z' ? 'is missing the mandatory Z at position 14' : 'has an invalid format';
   return [err('REDFLAG_GST_FORMAT', `GSTIN "${cand}" ${why}`, page, { gst: cand })];
 }
@@ -151,13 +166,13 @@ export function checkDl(text: string, page: number | null = null): RedFlagFindin
   if (!cand) return [];
   if (DL_RE.test(cand)) return [];
   if (ocrAdjacent(cand, DL_RE)) return [warn('REDFLAG_DL_UNREADABLE', `Possible DL number "${cand}" too OCR-garbled to verify`, page)];
-  // The sheet's "16 digits" counts the space printed after the RTO code: "MH14 20110062821"
+  // The sheet's "16 digits" counts the space printed after the RTO code: "MH14 20110012345"
   // (decision of 2026-09-24). `cand` has its separators stripped, so the message states the
   // rule it is actually checked against and shows the printed 16-character form beside it.
   return [
     err(
       'REDFLAG_DL_FORMAT',
-      `DL number "${cand}" is not 2 letters + 13 digits (printed as 16 with the space, e.g. "MH14 20110062821")`,
+      `DL number "${cand}" is not 2 letters + 13 digits (printed as 16 with the space, e.g. "MH14 20110012345")`,
       page,
       { dl: cand }
     ),
@@ -218,6 +233,9 @@ export function checkPassportPages(pages: { page: number; text: string }[]): Red
 
 /** Label-anchored digit run following an Aadhaar/VID label. Group 1 = the text between
  *  label and number (used to reject a number that actually belongs to a nearby label). */
+/** Every VID label and its digit run, for checkVid; same shape as labelledDigits. */
+const VID_LABEL_RE = /\b(?:V\.?I\.?D|virtual\s*id)\b([^0-9]{0,24})((?:\d[ \t-]?){7,20}\d)/gi;
+
 const labelledDigits = (text: string, label: string): RegExpExecArray | null =>
   // Separators are spaces/hyphens on the SAME line: with \\s the run crossed a line break
   // and swallowed the first digit of whatever was printed below the VID (a date, the
@@ -249,17 +267,27 @@ export function checkAadhaarFormat(text: string, page: number | null = null): Re
 const VID_DIGITS = 16;
 
 /** Virtual ID (VID) printed beside the Aadhaar number must be VID_DIGITS long. */
-export function checkVid(text: string, page: number | null = null): RedFlagFinding[] {
-  const m = labelledDigits(text, 'V\\.?I\\.?D|virtual\\s*id');
-  if (!m) return [];
-  let raw = m[2].trim();
-  // Printed as four groups of four. A trailing extra group is a neighbouring number on the
-  // same line, not part of the VID.
+/** A VID as read, with a stray one- or two-digit tail dropped: the card edge or the
+ *  Aadhaar line beside it OCRs as " 1" / " 4" after a correct 16 ("9123456789012345 1",
+ *  "91234567 89012345 4", client QA 2026-10). A 4-digit fifth group
+ *  is a neighbouring number on the same line, not part of the VID. */
+function vidRead(raw: string): string {
   const grouped = /^\d{4}[ \t-]\d{4}[ \t-]\d{4}[ \t-]\d{4}(?=[ \t-]|$)/.exec(raw);
-  if (grouped) raw = grouped[0];
+  if (grouped) return grouped[0];
+  const tail = /^(.*\d)[ \t-]+\d{1,2}$/.exec(raw);
+  return tail && stripSep(tail[1]).length === VID_DIGITS ? tail[1] : raw;
+}
+
+export function checkVid(text: string, page: number | null = null): RedFlagFinding[] {
+  const reads = [...text.matchAll(VID_LABEL_RE)].map((m) => vidRead(m[2].trim()));
+  if (reads.length === 0) return [];
+  // The page prints the VID more than once (front and back of an e-Aadhaar): one clean
+  // 16-digit read settles it, however garbled the other is ("11122223333 4444"
+  // above a clean "9111 2222 3333 4444").
+  if (reads.some((r) => stripSep(r).length === VID_DIGITS)) return [];
+  const raw = reads[0];
   const digits = stripSep(raw);
-  if (digits.length === VID_DIGITS) return [];
-  // Irregular grouping ("9150 6457 226 08544") is an OCR misread, not a forged VID: say
+  // Irregular grouping ("9876 5432 109 87654") is an OCR misread, not a forged VID: say
   // it could not be read rather than failing the claim on it.
   const groups = raw.split(/[ \t-]+/);
   if (groups.length > 1 && groups.some((g) => g.length !== 4) && Math.abs(digits.length - VID_DIGITS) <= 1) {
@@ -296,19 +324,43 @@ export function aadhaarNumbers(text: string): string[] {
 }
 
 /** Aadhaar 12-digit + front/back consistency, across the pages of ONE file. */
+/**
+ * `pages` must be the Aadhaar card's own pages (the caller filters): a bundle's invoice,
+ * UAN and employee code are 12 digits too (client QA 2026-10, #4).
+ *
+ * Numbers are compared within one card: the same page, or two ADJACENT pages (a front and
+ * back scanned separately). Two cards further apart are two people — 648914 carries the
+ * customer's (p7) and a relative's (p11) — and differing is what they should do. Two
+ * reads one digit apart are flagged too, worded as a possible misread ("967…" vs "067…" on 004536).
+ */
 export function checkAadhaar(pages: { page: number; text: string }[]): RedFlagFinding[] {
-  const seen: { page: number; num: string }[] = [];
-  for (const p of pages) for (const n of aadhaarNumbers(p.text)) seen.push({ page: p.page, num: n });
-  if (seen.length === 0) return [];
-  const distinct = new Set(seen.map((s) => s.num));
-  if (distinct.size > 1) {
-    return [
-      err('REDFLAG_AADHAAR_MISMATCH', `Aadhaar number differs across pages (${[...distinct].join(', ')})`, seen[0].page, {
-        values: seen,
-      }),
-    ];
+  const seen: { page: number; num: string; dob: string | null }[] = [];
+  for (const p of pages) {
+    // The holder's birth date, so two cards far apart can still be told to be ONE person.
+    const dob = /(?:dob|date\s*of\s*birth|year\s*of\s*birth)[^0-9]{0,12}(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{4}|\d{4})/i.exec(p.text);
+    for (const n of aadhaarNumbers(p.text)) seen.push({ page: p.page, num: n, dob: dob?.[1] ?? null });
   }
-  return [];
+  const out: RedFlagFinding[] = [];
+  const reported = new Set<string>();
+  for (const a of seen) {
+    for (const b of seen) {
+      // Same card (same or adjacent page), or the same person by birth date wherever the
+      // pages sit: one holder's card bearing two numbers is the forgery this check exists
+      // for, and adjacency alone would let it hide across a bundle.
+      const samePerson = a.dob !== null && a.dob === b.dob;
+      if (a.num >= b.num || (Math.abs(a.page - b.page) > 1 && !samePerson)) continue;
+      const key = `${a.num}|${b.num}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
+      const oneOff = [...a.num].filter((c, i) => c !== b.num[i]).length === 1;
+      out.push(
+        oneOff
+          ? err('REDFLAG_AADHAAR_MISMATCH', `Aadhaar reads ${a.num} and ${b.num} — possibly one scan misread, please confirm visually`, a.page, { values: [a, b] })
+          : err('REDFLAG_AADHAAR_MISMATCH', `Aadhaar number differs across pages (${a.num}, ${b.num})`, a.page, { values: [a, b] })
+      );
+    }
+  }
+  return out;
 }
 
 /** Voter ID (EPIC) number must match on the back side if present. EPIC = 3 letters + 7 digits. */
@@ -327,6 +379,14 @@ export function checkVoterId(pages: { page: number; text: string }[]): RedFlagFi
     return [info('REDFLAG_VOTER_BACK_NA', 'Back side NA — Voter ID back side not available to cross-check', firstPage)];
   }
   if (epics.size <= 1) return [];
+  // Two reads one digit apart are likely one card misread, not two cards: "ABX1234565" vs
+  // "ABX1234569" is a 9 the rotated scan turned into a 5 (client QA 2026-10).
+  const [a, b] = [...epics];
+  if (epics.size === 2 && a.slice(0, 3) === b.slice(0, 3) && [...a].filter((c, i) => c !== b[i]).length === 1) {
+    // An ERROR still: warnings are hidden, and one altered digit is also what a forgery
+    // looks like. The message says which it probably is.
+    return [err('REDFLAG_VOTER_MISMATCH', `Voter ID reads ${a} and ${b} — possibly one scan misread, please confirm visually`, firstPage, { values: [a, b] })];
+  }
   return [err('REDFLAG_VOTER_MISMATCH', `Voter ID differs across sides (${[...epics].join(', ')})`, firstPage, { values: [...epics] })];
 }
 
@@ -521,6 +581,9 @@ export function checkDates(fileText: string, page: number | null = null): RedFla
   const seen = new Set<string>();
   for (const m of fileText.matchAll(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,5})\b/g)) {
     const raw = m[0];
+    // Starting mid-number is not a date: a payslip's "LWP 0.00/0.00" matched as "00/0.00"
+    // and failed the claim on an impossible date (client QA 2026-10, #6).
+    if (/[\d.,]/.test(fileText[(m.index ?? 0) - 1] ?? '')) continue;
     if (seen.has(raw)) continue;
     seen.add(raw);
     const day = +m[1];
