@@ -510,8 +510,21 @@ export const qrValidator: Validator = {
       } else {
         // The extra passes cost up to six full decodes, and most images in a claim carry
         // no QR: they share the PDF path's per-document retry budget, counted per run.
-        hits = await decodeQrImage(doc.readablePath, { retry: imageRetries < MAX_QR_RETRY_PAGES });
+        const retry = imageRetries < MAX_QR_RETRY_PAGES;
+        hits = await decodeQrImage(doc.readablePath, { retry });
         imageRetries++;
+        // Same as a PDF page past the budget: not looked at closely is not "no QR".
+        if (!retry && hits.length === 0) {
+          truncated.push({
+            documentId: doc.id,
+            code: 'QR_RETRY_BUDGET_EXHAUSTED',
+            severity: 'ERROR',
+            message:
+              `${doc.fileName} showed no QR at its own resolution and was not retried at a higher ` +
+              `one (budget is ${MAX_QR_RETRY_PAGES} images per claim). A small card QR needs that pass.`,
+            data: { skippedRetries: 1, retryBudget: MAX_QR_RETRY_PAGES },
+          });
+        }
       }
       if (hits.length > 0) {
         for (const h of hits) {
