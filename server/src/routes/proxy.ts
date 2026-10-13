@@ -563,7 +563,6 @@ async function proxyRequest(
   const isJS = pathLower.endsWith('.js');
   const isImage = /\.(png|jpg|jpeg|gif|ico|svg|webp|bmp)$/i.test(pathLower);
   const isFont = /\.(woff|woff2|ttf|eot|otf)$/i.test(pathLower);
-  const isDocument = !isCSS && !isJS && !isImage && !isFont;
 
   // Set appropriate Accept and Sec-Fetch headers based on resource type
   let acceptHeader = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
@@ -858,7 +857,7 @@ router.get('/health/headless', async (_req: Request, res: Response) => {
   }
 });
 
-router.all('/:opaqueId/*', async (req: Request, res: Response, next: NextFunction) => {
+router.all('/:opaqueId/*', async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const userId = await validateSession(req, res);
     if (!userId) return;
@@ -945,7 +944,7 @@ router.all('/:opaqueId/*', async (req: Request, res: Response, next: NextFunctio
 });
 
 // Initial proxy route (no sub-path)
-router.all('/:opaqueId', async (req: Request, res: Response, next: NextFunction) => {
+router.all('/:opaqueId', async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const startTime = Date.now();
     const userId = await validateSession(req, res);
@@ -1094,7 +1093,7 @@ async function handleHeadlessProxy(
     // Rewrite URLs in the HTML so sub-resources go through the proxy
     const finalUrl = result.url || targetUrl;
     const parsedUrl = new URL(finalUrl);
-    let rewrittenHtml = rewriteHtml(result.html || '', parsedUrl, opaqueId);
+    const rewrittenHtml = rewriteHtml(result.html || '', parsedUrl, opaqueId);
 
     // Then wrap with headless indicator
     const wrappedHtml = wrapHeadlessContent(rewrittenHtml, opaqueId, session.id);

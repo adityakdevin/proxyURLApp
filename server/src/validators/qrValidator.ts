@@ -1,4 +1,3 @@
-import path from 'path';
 import { promises as fs } from 'fs';
 import { Jimp } from 'jimp';
 import jsQR from 'jsqr';
@@ -36,6 +35,7 @@ export function qrValue(text: string, bytes?: Uint8Array): string {
   // PrintLetterBarcodeData XML carrying a Devanagari or accented name is perfectly
   // renderable text; the old ASCII-only whitelist turned it into a base64 blob that the
   // UI's XML field parser then never got to see.
+  // eslint-disable-next-line no-control-regex -- detecting control bytes is the point
   if (text && !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(text)) return text.trim();
   return bytes && bytes.length > 0 ? `binary:${Buffer.from(bytes).toString('base64')}` : text.trim();
 }

@@ -115,7 +115,7 @@ describe('ClaimService — scope & assignee security', () => {
     await disconnectTestPrisma();
   });
 
-  async function defaultStatus(subCategoryId: string) {
+  async function defaultStatus(_subCategoryId: string) {
     return statusService.create(
       { name: 'Pending', isDefault: true },
       adminId

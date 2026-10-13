@@ -172,7 +172,6 @@ export const dupValidator: Validator = {
     for (const m of mine) byField.set(m.field, [...(byField.get(m.field) ?? []), m]);
 
     const findings: FindingInput[] = [];
-    let hardHits = 0;
     for (const [field, items] of byField) {
       const hard = DUP_FIELDS.find((f) => f.field === field)!.hard;
       const rows = await ctx.prisma.claimFieldValue.findMany({
@@ -196,7 +195,6 @@ export const dupValidator: Validator = {
       for (const item of items) {
         const claims = others.get(item.norm);
         if (!claims || claims.size === 0) continue;
-        if (hard) hardHits++;
         const list = [...claims].slice(0, 5).join(', ');
         findings.push({
           documentId: item.documentId,

@@ -1,8 +1,5 @@
-import { PrismaClient, Prisma, Role } from '@prisma/client';
+import { PrismaClient, Role, Session } from '@prisma/client';
 import crypto from 'crypto';
-
-// Get Session type from Prisma
-type Session = Prisma.SessionGetPayload<{}>;
 
 /**
  * Idle timeout: how long a session survives with NO requests on it. Refreshed on every
