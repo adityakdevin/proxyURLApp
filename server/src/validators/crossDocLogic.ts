@@ -77,7 +77,7 @@ function pageType(p: CrossPage): DocTypeCode | 'UNKNOWN' {
 }
 
 // ── Name handling ────────────────────────────────────────────────────────────────
-const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'shri', 'smt', 'sri', 'thiru', 'dr', 'master', 'kum', 'm/s', 'ms/']);
+const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'shri', 'smt', 'sri', 'thiru', 'dr', 'master', 'kum', 'm/s', 'ms/', 'lt', 'late']);
 
 /** The same list as a leading-run stripper, for the places that need the name with its
  *  original casing rather than nameTokens' lowercased split. `(?![A-Za-z])` rather than
@@ -85,7 +85,9 @@ const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'shri', 'smt', 'sri', 'thiru', 'd
  *  the underscore of "MR_RAVI SHANKAR", the form OCR produces when it fuses the two. The
  *  lookahead stops at the underscore, the dot and the end of the string alike, and still
  *  refuses to bite into a name like "MSINGH". */
-const HONORIFIC_RE = /^(?:M\/S|MS\/|MRS|MR|MS|SHRI|SMT|SRI|THIRU|DR|MASTER|KUM)(?![A-Za-z])[_.\s]*/i;
+// LT / LATE: a deceased father is printed "Lt. Harisunder" on one document and plain on
+// the next (client QA 2026-10, #25).
+const HONORIFIC_RE = /^(?:M\/S|MS\/|MRS|MR|MS|SHRI|SMT|SRI|THIRU|DR|MASTER|KUM|LATE|LT)(?![A-Za-z])[_.\s]*/i;
 export const dropHonorific = (v: string) => v.replace(HONORIFIC_RE, '').trim();
 
 /** Lowercase alnum tokens, honorifics dropped. "Mr. Rajesh Kumar" → ["rajesh","kumar"]. */
@@ -94,8 +96,11 @@ export function nameTokens(raw: string): string[] {
     .toLowerCase()
     .replace(/[^a-z\s.]/g, ' ')
     .split(/[\s.]+/)
-    .filter((t) => t && !HONORIFICS.has(t));
+    .filter((t) => t && !HONORIFICS.has(t))
+    // "MD Shahabuddin" on the invoice, "MOHD Shahabuddin" on the policy: one name.
+    .map((t) => (MOHD.has(t) ? 'mohd' : t));
 }
+const MOHD = new Set(['md', 'mohd', 'mohammed', 'mohammad', 'mohamed', 'muhammad', 'muhammed']);
 
 /**
  * Same person? Token-set alignment, order-independent, initial-aware — NOT edit
@@ -111,7 +116,16 @@ export function nameMatches(a: string, b: string): boolean {
   // OCR token merge/split: "Rajeshkumar Sharma" vs "Rajesh Kumar Sharma" — compare the
   // whitespace-free forms (order-preserving, which is how OCR joins/splits words).
   if (sa.join('') === sb.join('')) return true;
+  // Joined/split AND one letter off at once: "RAJESH V G" vs "RAJEESHV G" (client QA
+  // 2026-10). Whole-name forms of 8+ letters only, so short names keep the strict rules.
+  if (Math.min(sa.join('').length, sb.join('').length) >= 8 && within1(sa.join(''), sb.join(''))) return true;
   if (sa.length > sb.length) [sa, sb] = [sb, sa];
+  // The shorter name written as one word for consecutive tokens of the longer, surname
+  // left off: "Harisunder" vs "Hari Sunder Mishra" (client QA 2026-10, #25).
+  const joined = sa.join('');
+  for (let i = 0; i < sb.length; i++) {
+    for (let j = i + 2; j <= sb.length; j++) if (sb.slice(i, j).join('') === joined) return true;
+  }
   const used = new Array(sb.length).fill(false);
   const aligns = (x: string, y: string) =>
     x === y ||
@@ -119,7 +133,11 @@ export function nameMatches(a: string, b: string): boolean {
     (y.length === 1 && x[0] === y) ||
     // OCR drift inside a longer token ("Kumar" vs "Kumr"): tolerate one edit. Bounded to
     // 4+ char tokens so genuinely-distinct short tokens don't collapse.
-    (x.length >= 4 && y.length >= 4 && within1(x, y));
+    (x.length >= 4 && y.length >= 4 && within1(x, y)) ||
+    // Two letters on a long token: "SURENTHS" / "SUREJNITHS", "GOPARADDI" / "GOPAREDDY".
+    (Math.min(x.length, y.length) >= 8 && editDistanceCapped(x, y, 2) <= 2) ||
+    // A clipped last letter: "Son" for "Soni" (#23). One letter, at the end, 3+ kept.
+    (Math.min(x.length, y.length) >= 3 && Math.abs(x.length - y.length) === 1 && (x.startsWith(y) || y.startsWith(x)));
   for (const t of sa) {
     const i = sb.findIndex((u, idx) => !used[idx] && aligns(t, u));
     if (i < 0) return false;
@@ -286,9 +304,9 @@ function isLabelValue(v: string): boolean {
  * Words that START the next field on a form, where a value read off a flattened line runs on
  * into it. Every one of these was stored as part of a value on a real claim, and each such
  * value produced a false duplicate or mismatch finding:
- *   "Gaurav Kumar Singh Date of"            (payslip: "... Date of Joining:")
- *   "PRADEEP KUMAR IFSC"                     (bank details)
- *   "KANNAPIRAN BABURAJ Period of Third Pa"  (policy schedule, next column)
+ *   "Sanjay Kumar Singh Date of"            (payslip: "... Date of Joining:")
+ *   "MOHAN KUMAR IFSC"                       (bank details)
+ *   "RAMESH KUMAR Period of Third Pa"        (policy schedule, next column)
  *   "... 387002 Vehicle Particulars", "... TAMIL NADU-608601 Previous TP Policy No."
  * Deliberately NOT here: words that genuinely occur inside an address (village, district,
  * state, city, pin, road, bank colony) — ADDRESS is cut with this set too.
@@ -355,6 +373,9 @@ const NOT_A_PERSON_WORD = new Set([
   // "PARASAVNATH AUTOWHEELS", "DRIVE N RIDE".
   'autowheels', 'wheels', 'automotive', 'agency', 'agencies', 'traders', 'trading',
   'enterprise', 'enterprises', 'industries', 'ride', 'rides',
+  // "DIRECT BUSINESS" (a policy's sales channel), "THE AREA MANAGER CANTEEN STORES" (an
+  // invoice billed to the CSD canteen) — read as the customer on the 570-claim re-run.
+  'business', 'manager', 'canteen', 'stores',
 ]);
 
 function cleanPersonName(raw: string): string | null {
@@ -417,25 +438,34 @@ const NON_PERSON_NAME_LABEL = new Set([
   // "Payer Name : DRIVE N RIDE" — whoever paid the premium, often the dealer; and the
   // payslip's "Authorised Signatory Name" — HR, not the employee (client QA 2026-10).
   'payer', 'signatory', 'authorised', 'authorized', 'issuer',
-  // The broker's "Designated Person Name : GAURAV KUMAR" on Go Digit / Reliance schedules
+  // The broker's "Designated Person Name : SANJAY KUMAR" on Go Digit / Reliance schedules
   // (also "Contact Person Name"): an intermediary's staff member, never the customer. It
-  // surfaced once "Bill To" made the invoice's name readable (MZBB1811LSN014084).
+  // surfaced once "Bill To" made the invoice's name readable (claim …014084).
   'person',
+  // "Issue Office Name : BO NEAR GHADI CHOWK" — the insurer's branch (client QA 2026-10).
+  'office',
 ]);
 
 // Group 1 = the single word immediately before "Name" (if any); group 2 = the value.
 // The `(?:'?s)?` after the label word catches the possessive form — without it
 // "Nominee's Name: X" captured a bare "s" as the label, which is in no blocklist, so
 // the nominee leaked through as the customer's name.
-// "Bill To" is how Kia dealer invoices label the customer ("Bill To : JAGJEET SINGH"); without
+// "Bill To" is how Kia dealer invoices label the customer ("Bill To : KARAN SINGH"); without
 // it no name was read off those invoices, so the DMS-vs-invoice check had nothing to compare.
 // The gap after the label word is [ \t]+, not \s+: with \s+ a heading on the line above
 // became the label word ("Nominee Details\nName : X" took "Details", "Authorised
-// Signatory\nName : Mayank" took "Signatory"), and the nominee or the HR signatory was read
+// Signatory\nName : Deepak" took "Signatory"), and the nominee or the HR signatory was read
 // as the customer (client QA 2026-10). Headings are handled by sectionHeadingBefore.
 // The label word allows digits so an OCR'd "M1SP" still reaches the blocklist.
+// Separator `\.?\s*[:\-+]`: OCR prints a policy's "Insured's Name :" as "Name +" or
+// "Name. +", and with only [:\-] no insured name was read off those schedules (client QA
+// 2026-10, #20, #35). "M/S" may lead the value: "M/S A B C PLASTIC" stopped at the "/".
 const NAME_RE =
-  /(?:(?:([A-Za-z][A-Za-z0-9]*)(?:'?s)?[ \t]+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?|\bbill(?:ed)?\s+to)\s*[:\-]\s*([A-Za-z][A-Za-z. ]{2,40})/gi;
+  /(?:(?:([A-Za-z][A-Za-z0-9]*)(?:'?s)?[ \t]+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?|\bbill(?:ed)?\s+to)\.?\s*[:\-+]\s*((?:M\/S\.?\s*)*[A-Za-z][A-Za-z. ]{2,40})/gi;
+
+/** "Bill To" as OCR misreads it with no separator ("Bil 10 PREM Customer Id"): the capitals
+ *  that follow, up to the first word with a lower-case letter (#20). */
+const BILL_TO_LOOSE = /\b[Bb][Ii][Ll]{1,2}\s*[Tt1][Oo0]\b\s*[:\-]?\s*([A-Z][A-Z. ]{2,40}?)(?=\s+[A-Z]?[a-z]|\s*$)/gm;
 
 /** Customer/employee names, with non-person "X Name" labels and relation names removed. */
 /** A heading on the line just above a bare "Name :" that says whose name it is. */
@@ -451,7 +481,7 @@ function sectionHeadingBefore(text: string, at: number): boolean {
   const prev = [...lines].reverse().find((l) => l.trim() !== '') ?? '';
   if (NON_PERSON_SECTION.test(prev)) return true;
   // A signature block runs several lines: "Authorized Signatory, / For, National Medical
-  // College … / (Managing …) / Name: Mayank Joshi" read the signatory as the employee and
+  // College … / (Managing …) / Name: Deepak Rao" read the signatory as the employee and
   // failed the claim (client QA 2026-10, #25). Only this unmistakable heading reaches back.
   return /\bauthori[sz]ed\s+signator/i.test(
     text.slice(Math.max(0, at - 300), at).split('\n').slice(-7).join('\n')
@@ -476,17 +506,21 @@ export function extractNames(text: string): string[] {
     if (!m[1] && RELATION_INITIAL_BEFORE.test(text.slice(Math.max(0, (m.index ?? 0) - 4), m.index ?? 0))) continue;
     let v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
     // The value runs until a character the name class rejects, and ':' is one — so when OCR
-    // puts two fields on one line ("Employee Name: Rajesh Dass profesion: Engineer") the
+    // puts two fields on one line ("Employee Name: Rajesh Das profesion: Engineer") the
     // NEXT field's label is the last word of this "name". A colon right after the match is
     // what identifies it; drop that word rather than carry a label into a person's name.
     if (/^\s*:/.test(text.slice((m.index ?? 0) + m[0].length))) {
       v = v.split(' ').slice(0, -1).join(' ');
     }
-    // A salutation is no part of a name: reviewers compare "Lalit Mohan" against the salary
-    // slip, not "Mr. Lalit Mohan", and nameMatches already drops honorifics on both sides.
+    // A salutation is no part of a name: reviewers compare "Anil Mehra" against the salary
+    // slip, not "Mr. Anil Mehra", and nameMatches already drops honorifics on both sides.
     v = dropHonorific(v);
     if (!v || isLabelValue(v)) continue;
     const name = cleanPersonName(v);
+    if (name) out.push(name);
+  }
+  for (const m of text.matchAll(BILL_TO_LOOSE)) {
+    const name = cleanPersonName(m[1].trim());
     if (name) out.push(name);
   }
   return [...new Set(out)].filter((n) => !relations.some((r) => nameMatches(n, r)));
@@ -539,7 +573,7 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   // The label is required: a bare date on a page is an invoice/issue date far more often
   // than a birth date, and comparing those would flag every honest claim.
   DOB: /(?:date\s*of\s*birth|d\.?o\.?b\.?|birth\s*date)\s*[:\-]?\s*(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})/gi,
-  // Word-bounded, and no bare "act": that form matched the tail of "Contact No: 7088007037",
+  // Word-bounded, and no bare "act": that form matched the tail of "Contact No: 9000000001",
   // so a dealer's phone on every policy was read as an account number and failed the
   // Duplicate check on every claim from that dealer.
   // "A/c No. : 1234…" and "Account No 1234…" (dot, or no separator) read nothing, so a
@@ -547,7 +581,7 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   // optional only when "No"/"Number" is present, so "Account 2024-25" is not a number.
   ACCOUNT_NO:
     // A space may split the digit groups, but not lead into the next table column: Infosys
-    // payslips print "Bank A/C No 05451610146036 31.00" (days payable), and swallowing "31"
+    // payslips print "Bank A/C No 09876543210987 31.00" (days payable), and swallowing "31"
     // split one shared account into two duplicate groups (client QA 2026-10, #16).
     /\b(?:a\/c|acct|account)\.?\s*(?:(?:no|number|#)\.?\s*[:\-]?|[:\-])\s*([0-9](?:[0-9\-]| (?!\d+[.,]\d)){5,22}[0-9])/gi,
   RECEIPT_NO: /receipt\s*(?:no|number|#)?\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/gi,
@@ -679,11 +713,55 @@ interface Val {
  * pages still take part — type-blind fallback — but any flag they cause is a WARNING,
  * not a hard red flag, and the page is separately noted as unclassified.
  */
-export function crossDocFieldFindings(pages: CrossPage[]): FindingInput[] {
+/** VIN-shaped codes on a page (17 chars, 5+ digits), labelled or not. I, O and Q are no VIN
+ *  letters but are what OCR prints for 1 and 0 ("MZBEB8I2TTN100005"); idMatches folds them. */
+const pageVins = (text: string) =>
+  [...text.toUpperCase().matchAll(/\b[A-Z0-9]{17}\b/g)].map((m) => m[0]).filter((v) => (v.match(/\d/g) ?? []).length >= 5);
+
+/** Whose relation this is on a KYC card: the person-shaped text just before "S/O"-style
+ *  prefix on its line, else the line above. Null when none reads as a name. */
+function relationHolder(text: string, value: string): string | null {
+  const at = text.indexOf(value);
+  if (at < 0) return null;
+  const lines = text.slice(0, at).split('\n');
+  const own = (lines.pop() ?? '').replace(/(?:[sdwc]\s*\/\s*o|son\s+of|daughter\s+of|wife\s+of)\s*[:\-]?\s*$/i, '').trim();
+  const prev = [...lines].reverse().find((l) => l.trim() !== '') ?? '';
+  for (const cand of [own, prev]) {
+    const v = cleanPersonName(dropHonorific(cand.replace(/^(?:to|name)\s*[:\-]?\s*/i, '').replace(/[^A-Za-z. ]/g, ' ').replace(/\s+/g, ' ').trim()));
+    if (v && v.split(' ').length >= 2) return v;
+  }
+  return null;
+}
+
+export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): FindingInput[] {
   const classified = pages.map((p) => ({ ...p, docType: pageType(p) }));
   const findings: FindingInput[] = [];
   const seen = new Set<string>();
   const unknownContributed = new Set<string>();
+  // This claim's car: the claim's own VIN, else what its invoice prints.
+  const claimVins = claimVin && pageVins(claimVin).length > 0
+    ? [claimVin.toUpperCase()]
+    : classified.filter((p) => p.docType === 'INVOICE').flatMap((p) => pageVins(p.text));
+
+  // Two vehicles, not two values for one customer: an exchange or loyalty claim holds the
+  // OLD car's policy, or a family member's RC and policy for THEIR car. 325042 compared
+  // the old car's registration (client QA 2026-10, #32); 063751 (spouse's Kia), 050310
+  // (brother's), 048259 (father's) and 618543 (old Alto) compared their owners' names, on
+  // the 570-claim re-run. Pages naming different VINs are about different cars.
+  // Only an RC or policy is set aside: a VIN-shaped string on a payslip, KYC card or
+  // invoice must not buy it out of the comparison.
+  // Judged against THIS claim's car — its VIN — not against whichever
+  // cluster is larger, so a family car's papers outnumbering the customer's own cannot
+  // set the customer's own RC or policy aside.
+  const otherCar = (v: Val) => {
+    if (v.docType !== 'RC' && v.docType !== 'INSURANCE') return false;
+    const vins = pageVins(classified.find((p) => p.documentId === v.documentId && p.page === v.page)?.text ?? '');
+    // Same car when the serial — the last six — agrees within one misread: OCR mangles a
+    // VIN's front ("MZBBISHILSN100007" on a customer's own policy) far more than a different
+    // car shares its serial.
+    const sameCar = (x: string, y: string) => idMatches(x, y) || within1(idNorm(x).slice(-6), idNorm(y).slice(-6));
+    return vins.length > 0 && claimVins.length > 0 && !vins.some((x) => claimVins.some((y) => sameCar(x, y)));
+  };
 
   for (const check of CHECKS) {
     const vals: Val[] = [];
@@ -696,6 +774,39 @@ export function crossDocFieldFindings(pages: CrossPage[]): FindingInput[] {
         if (isUnknown) unknownContributed.add(`${p.documentId}:${p.page}`);
       }
     }
+    // One page has one father. When it yields two and one agrees with another document, the
+    // other is the Hindi line read as English: the Aadhaar back's "S/O FAL fig" beside
+    // "S/O Gurdeep Singh", or "WHY Oram TER J" beside "Rakesh Arora" (client QA 2026-10,
+    // #26-27). Dropped rather than reported.
+    if (check.field.startsWith('RELATION_')) {
+      // Only the customer's own relation: a family member's KYC in the bundle prints THEIR
+      // father ("Pradeep Jain / S/O Mohanlal Jain" in Ankit Jain's claim), and
+      // comparing it failed the claim (client QA 2026-10, #30). The holder is the name on
+      // the line the "S/O" opens or the line above it; skipped when it is clearly someone
+      // else. No holder found, or no customer name to judge by: kept, as before.
+      const customers = classified
+        .filter((p) => p.docType === 'INVOICE')
+        .flatMap((p) => extractNames(p.text));
+      if (customers.length > 0) {
+        for (let i = vals.length - 1; i >= 0; i--) {
+          const p = classified.find((c) => c.documentId === vals[i].documentId && c.page === vals[i].page);
+          // A card names its holder above the S/O line; a policy or invoice names the
+          // customer under its own label, already in scope.
+          const card = p && (p.docType === 'KYC' || p.docType === 'UNKNOWN');
+          const holder = card ? relationHolder(p.text, vals[i].value) : null;
+          if (holder && !customers.some((c) => nameMatches(c, holder))) vals.splice(i, 1);
+        }
+      }
+      const pageOf = (v: Val) => `${v.documentId}:${v.page}`;
+      const agrees = (v: Val) => vals.some((o) => pageOf(o) !== pageOf(v) && check.match(o.value, v.value));
+      const settled = new Set(vals.filter(agrees).map(pageOf));
+      for (let i = vals.length - 1; i >= 0; i--) {
+        if (settled.has(pageOf(vals[i])) && !agrees(vals[i])) vals.splice(i, 1);
+      }
+    }
+    // Set aside before choosing what counts as "expected", so the other car's papers neither
+    // get compared nor outvote the customer's own.
+    for (let i = vals.length - 1; i >= 0; i--) if (otherCar(vals[i])) vals.splice(i, 1);
     if (vals.length < 2) continue;
 
     // Greedy equivalence clusters by the field's matcher.

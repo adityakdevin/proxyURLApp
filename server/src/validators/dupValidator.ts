@@ -118,9 +118,12 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
           // a home: it "matched" unrelated claims from the same town as a hard duplicate
           // (client QA 2026-10, #18). Skip a town-and-state line: no number besides the PIN and
           // three words or fewer. A village address ("VILLAGE BIJAURI, DISTRICT JABALPUR")
-          // has no house number either, but says more than a town.
+          // has no house number either, but says more than a town. With no number at all, not
+          // even a PIN, it is a town, district and state ("RAJAHMUNDRY, EAST GODAVARI, ANDHRA
+          // PRADESH"), however many words.
           if (field === 'ADDRESS') {
             const rest = value.replace(/\b\d{3}\s?\d{3}\b/g, '');
+            if (!/\d/.test(value)) continue;
             if (!/\d/.test(rest) && (rest.match(/[A-Za-z]{2,}/g) ?? []).length <= 3) continue;
           }
           const norm = normValue(field, value);
@@ -215,7 +218,10 @@ export const dupValidator: Validator = {
       }
     }
 
-    if (findings.length === 0) {
+    // A shared name or birth date is a WARNING, hidden from reviewers: it neither fails the
+    // claim nor counts in the summary. Only the hard data points are reported.
+    const shown = findings.filter((f) => f.severity !== 'WARNING').length;
+    if (shown === 0) {
       return {
         status: 'PASSED' as const,
         summary: `No duplicates found across ${mine.length} unique data point(s).`,
@@ -223,13 +229,9 @@ export const dupValidator: Validator = {
       };
     }
     return {
-      // Only a hard data point (a reference number, or an address) fails the claim. A shared
-      // name or birth date is reported and left to the reviewer — deriveCheckStatus turns
-      // warning-only into DOUBTFUL rather than a pass.
-      status: hardHits > 0 ? ('FAILED' as const) : ('PASSED' as const),
-      summary:
-        `${findings.length} duplicate data point(s) shared with other claims` +
-        `${hardHits > 0 ? `, ${hardHits} of them a red flag` : ''}.`,
+      // Only a hard data point (a reference number, or an address) fails the claim.
+      status: 'FAILED' as const,
+      summary: `${shown} duplicate data point(s) shared with other claims, all red flags.`,
       findings,
     };
   },
