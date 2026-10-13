@@ -114,6 +114,22 @@ describe('FULL + INTRA validators', () => {
     expect(plain.findings!.find((f) => f.code === 'FULL_MISSING_TYPE')!.message).toBe('Missing docs - Aadhar Card');
   });
 
+  // Value: protects=pages past the scan cap are reported as unread, visibly; fails_when=FULL
+  // stops reading ctx.truncatedPages or reports it as a hidden WARNING; why_new=only META,
+  // a hidden check, recorded it; seam=none; no_claim=META filling truncatedPages
+  it('Missing Docs names pages the scan cap left unread', async () => {
+    const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
+    const docs = [doc({ id: 'd1', fileName: 'bundle.pdf', documentTypeId: typeBId })];
+    const out = await fullValidator.run({
+      ...ctxFor(prisma, claim, docs, new Map()),
+      truncatedPages: new Map([['d1', { scanned: 60, total: 75 }]]),
+    });
+    const f = out.findings!.find((x) => x.code === 'FULL_PAGES_NOT_READ')!;
+    expect(f).toMatchObject({ severity: 'ERROR', documentId: 'd1' });
+    expect(f.message).toContain('Pages 61-75 of bundle.pdf');
+    expect(out.status).toBe('FAILED');
+  });
+
   it('Missing Docs no longer carries the cross-document comparison', async () => {
     const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
     const docs = [doc({ id: 'd1', documentTypeId: typeAId }), doc({ id: 'd2', documentTypeId: typeBId })];

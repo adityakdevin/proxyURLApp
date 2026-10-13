@@ -32,8 +32,9 @@ export function collapseValidationStatus(
 ): 'PASSED' | 'FAILED' | 'DOUBTFUL' | 'DOCS N/A' {
   if (raw === 'FAILED') return 'FAILED';
   if (raw === 'DOCS_NOT_AVAILABLE' || raw === 'DOCS N/A') return 'DOCS N/A';
-  // Like DOCS N/A, DOUBTFUL keeps its own state: warning-level findings need a human
-  // decision, so the check satisfies neither "= PASSED" nor "= FAILED".
+  // Like DOCS N/A, DOUBTFUL keeps its own state: since 2026-10-12 it means a check that did
+  // not run (or a claim last validated before Doubtful was hidden), so it satisfies neither
+  // "= PASSED" nor "= FAILED". The UI labels it "Not run / Doubtful".
   if (raw === 'DOUBTFUL') return 'DOUBTFUL';
   return 'PASSED';
 }

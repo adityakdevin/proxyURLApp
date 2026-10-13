@@ -19,8 +19,9 @@ export const intraValidator: Validator = {
         found++;
         continue;
       }
-      // Found only through a likely scan misread: present, but the reviewer confirms it.
-      // Recorded as a WARNING, which reviewers do not see (Doubtful is hidden, 2026-10-12).
+      // Found only through a likely scan misread. Counted as found: fuzzyClaimIdMatch never
+      // tolerates a difference in the VIN serial, so this is the claim's own car. The WARNING
+      // is kept for the record; reviewers do not see it (Doubtful is hidden, 2026-10-12).
       const seen = fuzzyClaimIdMatch(text, ctx.claim.claimId);
       if (seen) {
         found++;

@@ -144,7 +144,9 @@ export function checkPan(text: string, page: number | null = null): RedFlagFindi
       ? [info('REDFLAG_PAN_OK', `PAN "${cand}" format is valid; 4th letter '${cand[3]}' = ${cat}`, page, { pan: cand, category: cat })]
       : [err('REDFLAG_PAN_CATEGORY', `PAN 4th letter '${cand[3]}' is not a valid holder category`, page, { pan: cand })];
   }
-  if (ocrAdjacent(cand, PAN_RE)) return [warn('REDFLAG_PAN_UNREADABLE', `Possible PAN "${cand}" too OCR-garbled to verify`, page)];
+  // Visible, worded as a possible misread: warnings are hidden, and an unverifiable ID must
+  // not pass silently (security review, 2026-10-13). Same for DL and passport below.
+  if (ocrAdjacent(cand, PAN_RE)) return [err('REDFLAG_PAN_UNREADABLE', `PAN "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page)];
   return [err('REDFLAG_PAN_FORMAT', `PAN "${cand}" is not a valid 10-char format (AAAAA9999A)`, page, { pan: cand })];
 }
 
@@ -165,7 +167,7 @@ export function checkDl(text: string, page: number | null = null): RedFlagFindin
   const cand = labeledCandidate(text, /\bD\.?L\.?\s*(?:no|number)?\b|driving\s+licen[cs]e/i, /\b[A-Z]{2}[0-9]{2}\s?[0-9]{11}\b/);
   if (!cand) return [];
   if (DL_RE.test(cand)) return [];
-  if (ocrAdjacent(cand, DL_RE)) return [warn('REDFLAG_DL_UNREADABLE', `Possible DL number "${cand}" too OCR-garbled to verify`, page)];
+  if (ocrAdjacent(cand, DL_RE)) return [err('REDFLAG_DL_UNREADABLE', `DL number "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page)];
   // The sheet's "16 digits" counts the space printed after the RTO code: "MH14 20110012345"
   // (decision of 2026-09-24). `cand` has its separators stripped, so the message states the
   // rule it is actually checked against and shows the printed 16-character form beside it.
@@ -197,7 +199,7 @@ export function checkPassportNumber(text: string, page: number | null = null): R
   const cand = labeledCandidate(text, /\bpassport\s*(?:no|number)\b/i, /\b[A-PR-WYa-pr-wy][0-9]{7}\b/);
   if (!cand) return [];
   if (PASSPORT_NO_RE.test(cand)) return [];
-  if (ocrAdjacent(cand, PASSPORT_NO_RE)) return [warn('REDFLAG_PASSPORT_UNREADABLE', `Possible passport no. "${cand}" too OCR-garbled to verify`, page)];
+  if (ocrAdjacent(cand, PASSPORT_NO_RE)) return [err('REDFLAG_PASSPORT_UNREADABLE', `Passport no. "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page)];
   return [err('REDFLAG_PASSPORT_FORMAT', `Passport number "${cand}" is not 1 letter + 7 digits`, page, { passport: cand })];
 }
 

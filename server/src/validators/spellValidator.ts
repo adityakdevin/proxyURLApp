@@ -73,7 +73,7 @@ function indexBoxes(boxes: WordBox[]): Map<string, WordBox[]> {
  * ponytail: whole-document ratio, so one unreadable page inside a readable PDF is not caught;
  * score per page (ctx.pageTexts) if that shows up.
  */
-const UNREADABLE_REAL_WORD_RATIO = 0.35;
+export const UNREADABLE_REAL_WORD_RATIO = 0.35;
 const UNREADABLE_MIN_WORDS = 12;
 
 /** Tesseract word confidence (0-100) below which a hit is treated as doubtful rather
@@ -211,9 +211,9 @@ export const spellValidator: Validator = {
       }
     }
 
-    // Only CONFIDENT misspellings FAIL the check — a poor scan must not fail a claim.
-    // Doubtful hits are WARNINGs, hidden from reviewers: they neither fail the check nor
-    // appear in its summary.
+    // FAILS on a confident misspelling, or when a document could not be read at all (nothing
+    // was checked). Doubtful hits are WARNINGs, hidden from reviewers: they neither fail the
+    // check nor appear in its summary.
     const unread = findings.filter((f) => f.code === 'SPELL_UNREADABLE').length;
     const status = distinct.size >= SPELL_MIN_TERM_HITS || unread > 0 ? 'FAILED' : 'PASSED';
     const parts: string[] = [];

@@ -34,6 +34,9 @@ describe('client QA 2026-10 — QR', () => {
   it('#37/38 a QR keyed "Vehicle Model" is compared against the model', () => {
     const cmp = compareQrToFields('Vehicle Model:SONET', [{ label: 'Model', value: 'SONET HTK' }] as never);
     expect(cmp).toHaveLength(1);
+    expect(cmp[0].verdict).toBe('MATCH');
+    const other = compareQrToFields('Vehicle Model:CRETA', [{ label: 'Model', value: 'SONET HTK' }] as never);
+    expect(other[0]?.verdict).toBe('MISMATCH');
   });
   // Value: protects=a NEW-car policy QR naming another chassis is flagged, and only that;
   // fails_when=the "New" registration gate, VIN shape or glyph-tolerant match is dropped;

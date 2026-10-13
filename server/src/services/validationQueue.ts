@@ -115,8 +115,12 @@ async function worker(prisma: PrismaClient, svc: ValidationService): Promise<voi
   for (;;) {
     // No reservation here: runOne claims the row atomically and returns immediately if
     // another worker got there first, so the worst case is a wasted lookup.
+    // Never a claim that is already running: a duplicate partner re-queued mid-run gets a
+    // fresh QUEUED run behind it, and two workers on one claim would double its OCR memory
+    // and let the older snapshot commit last (review, 2026-10-13). The worker that finishes
+    // the running one picks this up on its next pass.
     const next = await prisma.validationRun.findFirst({
-      where: { status: 'QUEUED' },
+      where: { status: 'QUEUED', claim: { validationRuns: { none: { status: 'RUNNING' } } } },
       orderBy: { createdAt: 'asc' },
       select: { id: true, claimId: true },
     });
