@@ -759,6 +759,10 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   // and a serial one digit off is the next car of the batch, as Intra's claim-ID match also
   // holds (security review, 2026-10-13).
   const sameCar = (x: string, y: string) => idNorm(x).slice(-6) === idNorm(y).slice(-6);
+  // Setting a page aside is the riskier call (its names leave the comparison), so it takes a
+  // VIN not even close to the claim's: an own RC with one serial digit misread stays compared,
+  // and so does the next car of the batch, whose different owner then fails as a name mismatch.
+  const nearCar = (x: string, y: string) => sameCar(x, y) || idMatches(x, y);
   const vehiclePaper = (p: { docType: DocTypeCode | 'UNKNOWN' }) => p.docType === 'RC' || p.docType === 'INSURANCE';
   const vinsOn = (documentId: string, page: number | null) =>
     pageVins(classified.find((p) => p.documentId === documentId && p.page === page)?.text ?? '');
@@ -771,7 +775,7 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   const otherCar = (v: Val) => {
     if (!ownCarPapers || !vehiclePaper(v)) return false;
     const vins = vinsOn(v.documentId, v.page);
-    return vins.length > 0 && !vins.some((x) => claimVins.some((y) => sameCar(x, y)));
+    return vins.length > 0 && !vins.some((x) => claimVins.some((y) => nearCar(x, y)));
   };
   const setAside = new Map<string, Val>(); // documentId:page -> one value from that page
 
