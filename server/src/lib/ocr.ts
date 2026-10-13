@@ -378,7 +378,9 @@ export class TesseractOcrPort implements OcrPort {
             if (index >= pages.length) return;
             const pg = pages[index];
             const recognizeStartedAt = Date.now();
-            let { data, rotation, skew, score } = await recognize(worker, pg.png);
+            const recognized = await recognize(worker, pg.png);
+            const { rotation, skew } = recognized;
+            let { data, score } = recognized;
             recognizeMs += Date.now() - recognizeStartedAt;
             let dims = { w: pg.width, h: pg.height };
 
