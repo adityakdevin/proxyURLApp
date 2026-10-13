@@ -110,6 +110,11 @@ describe('client QA 2026-10 — Data Compare', () => {
     const f = crossDocFieldFindings([inv, own, blurred], 'MZBEA813LTN100003');
     expect(f.filter((x) => x.page === 5 && /MISMATCH/.test(x.code))).toEqual([]);
     expect(f.find((x) => x.code === 'CROSS_OTHER_VEHICLE')).toMatchObject({ page: 5 });
+    // An unlabelled 17-character code (a policy number) does not set a page aside.
+    const unlabelled = { documentId: 'd', page: 6, text: 'Owner Name : SALMA BEGUM\nRef 3005A202600012345' };
+    const g = crossDocFieldFindings([inv, own, unlabelled], 'MZBEA813LTN100003');
+    expect(g.find((x) => x.code === 'CROSS_OTHER_VEHICLE')).toBeUndefined();
+    expect(g.find((x) => x.page === 6 && x.code === 'CROSS_NAME_MISMATCH')).toBeDefined();
   });
   it('an own policy with one serial digit misread still holds the bundle\'s own-car papers', () => {
     const inv = { documentId: 'd', page: 1, text: 'Vehicle Tax Invoice\nBill To : IMRAN KHAN\nVin No. MZBEA813LTN100003' };
