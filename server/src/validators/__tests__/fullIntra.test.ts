@@ -119,7 +119,8 @@ describe('FULL + INTRA validators', () => {
   // a hidden check, recorded it; seam=none; no_claim=META filling truncatedPages
   it('Missing Docs names pages the scan cap left unread', async () => {
     const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
-    const docs = [doc({ id: 'd1', fileName: 'bundle.pdf', documentTypeId: typeBId })];
+    // Every required type present, so the unread pages are the only reason to fail.
+    const docs = [doc({ id: 'd1', fileName: 'bundle.pdf', documentTypeId: typeBId }), doc({ id: 'd2', documentTypeId: typeAId })];
     const out = await fullValidator.run({
       ...ctxFor(prisma, claim, docs, new Map()),
       truncatedPages: new Map([['d1', { scanned: 60, total: 75 }]]),

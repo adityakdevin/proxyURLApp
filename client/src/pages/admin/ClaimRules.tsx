@@ -176,7 +176,7 @@ export default function ClaimRules() {
     {
       id: 'rule',
       header: 'Rule',
-      cell: ({ row }) => `${FIELD_LABELS[row.original.field]} ${OP_LABELS[row.original.operator]} ${row.original.value}`,
+      cell: ({ row }) => `${FIELD_LABELS[row.original.field]} ${OP_LABELS[row.original.operator]} ${row.original.value === 'DOUBTFUL' ? 'Not run / Doubtful' : row.original.value}`,
     },
     {
       accessorKey: 'status',

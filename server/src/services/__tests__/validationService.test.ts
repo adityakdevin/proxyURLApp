@@ -576,8 +576,8 @@ describe('ValidationService + drainer', () => {
     }) as never);
     try {
       await enqueue(prisma, quick, a.id, 'AUTO');
+      // No drained() poll: B must be done when kickDrain's own promise settles.
       await kickDrain(prisma, quick);
-      await drained();
       const runB = await real({ where: { claimId: b.id } });
       expect(runB?.status).toBe('COMPLETED');
     } finally {
