@@ -226,7 +226,9 @@ const SERIAL_LEN = 6;
  * Exact matching failed 164 of 570 sample claims, nearly all on an invoice whose VIN reads
  * "MZBGESISVIN701510" for MZBGE815VTN701510 (client QA 2026-10, #39-40); this recovers 138.
  * One extra difference, not two, and never in the serial: a document for another car of the
- * same series differs only in the last digit or two, and that must still fail.
+ * same series differs only in the last digit or two, and that must still fail. (Data
+ * Compare's sameCar in crossDocLogic deliberately tolerates one serial edit: it only decides
+ * whether a page is set aside, and keeping a page in the comparison is the safe side.)
  */
 export function fuzzyClaimIdMatch(text: string, claimId: string): string | null {
   const id = idFold(claimId);

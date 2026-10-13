@@ -766,7 +766,10 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
     pageVins(classified.find((p) => p.documentId === documentId && p.page === page)?.text ?? '');
   // Another car's papers are set aside only when the customer's OWN RC or policy is in the
   // bundle too: then the other set is the old or family car. Without it, a policy for a
-  // different VIN is the fraud this check exists for, and it is compared as before.
+  // different VIN is the fraud this check exists for, and it is compared as before. "Own"
+  // uses the same loose sameCar, so the next car of the batch counts as own paper too: a
+  // bundle of that car's policy plus a family car's sets the family car aside (still shown,
+  // as CROSS_OTHER_VEHICLE). Accepted: the stricter rule failed real claims on one misread.
   const ownCarPapers =
     claimVins.length > 0 &&
     classified.some((p) => vehiclePaper(p) && pageVins(p.text).some((x) => claimVins.some((y) => sameCar(x, y))));
@@ -854,14 +857,19 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
       // lists every KYC row as "Red Flag" (decision of 2026-09-24). It was a WARNING because
       // a KYC card is often a relative's; relation names are compared separately, so a
       // relative's KYC still disagrees here and the reviewer judges it.
-      // Unclassifiable (UNKNOWN) pages stay soft. Address is always soft: the matcher is
-      // deliberately loose, and the sheet does not compare addresses within a claim.
-      const soft = o.docType === 'UNKNOWN' || expType === 'UNKNOWN' || check.field === 'ADDRESS';
+      // Address is always soft: the matcher is deliberately loose, and the sheet does not
+      // compare addresses within a claim. An unclassifiable (UNKNOWN) page is NOT softened:
+      // warnings are hidden, so a substituted page scanned too poorly to classify would hide
+      // its mismatch (review, 2026-10-13). It is worded for a check by eye instead.
+      const soft = check.field === 'ADDRESS';
+      const blind = o.docType === 'UNKNOWN' || expType === 'UNKNOWN';
       findings.push({
         documentId: o.documentId,
         code: `CROSS_${check.field}_MISMATCH`,
         severity: soft ? 'WARNING' : 'ERROR',
-        message: `${FIELD_LABEL[check.field]} "${o.value}" (${o.docType}) does not match "${expVal}" (${expType}) found elsewhere in this claim.`,
+        message:
+          `${FIELD_LABEL[check.field]} "${o.value}" (${o.docType}) does not match "${expVal}" (${expType}) found elsewhere in this claim.` +
+          (blind ? ' One page could not be classified; please confirm by eye.' : ''),
         page: o.page,
         data: { field: check.field, expected: expVal, actual: o.value, expectedType: expType, actualType: o.docType },
       });
@@ -884,15 +892,14 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   }
 
   // Record every page we could not classify but that carried a comparable field — the flag
-  // above ran type-blind. A WARNING, so stored for the record but hidden from reviewers
-  // (Doubtful is hidden, 2026-10-12); its type-blind mismatches are hidden with it.
+  // above ran type-blind. INFO: shown to the reviewer, never a red flag on its own.
   for (const p of classified) {
     if (p.docType !== 'UNKNOWN') continue;
     if (!unknownContributed.has(`${p.documentId}:${p.page}`)) continue;
     findings.push({
       documentId: p.documentId,
       code: 'CROSS_UNCLASSIFIED',
-      severity: 'WARNING',
+      severity: 'INFO',
       message: 'Could not classify this document type; cross-document checks ran without type scoping.',
       page: p.page,
     });

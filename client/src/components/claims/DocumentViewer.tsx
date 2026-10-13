@@ -167,6 +167,10 @@ export function DocumentViewerPanel({
   const [imgLoaded, setImgLoaded] = useState(false);
   const [renderedPages, setRenderedPages] = useState(0);
   const failedPages = useRef(new Set<number>());
+  const pageFailed = (page: number) => {
+    failedPages.current.add(page);
+    setRenderedPages((n) => n + 1);
+  };
   const [missing, setMissing] = useState(false);
   const [fitWidth, setFitWidth] = useState(0);
   const [zoom, setZoom] = useState(1);
@@ -431,10 +435,9 @@ export function DocumentViewerPanel({
                       renderTextLayer={false}
                       renderAnnotationLayer={false}
                       onRenderSuccess={() => setRenderedPages((n) => n + 1)}
-                      onRenderError={() => {
-                        failedPages.current.add(page);
-                        setRenderedPages((n) => n + 1);
-                      }}
+                      // A page that fails to load never renders either: both count as done.
+                      onLoadError={() => pageFailed(page)}
+                      onRenderError={() => pageFailed(page)}
                     />
                     <Highlights
                       findings={pageFindings}

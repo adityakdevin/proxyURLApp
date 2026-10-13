@@ -199,8 +199,8 @@ const IMAGE_RETRY_MAX_PIXELS = 25_000_000;
 export async function decodeQrImage(
   absolutePath: string,
   retry: boolean
-): Promise<{ hits: QrHit[]; retried: boolean; tooLarge: boolean }> {
-  const done = (hits: QrHit[], retried = true, tooLarge = false) => ({ hits, retried, tooLarge });
+): Promise<{ hits: QrHit[]; retried: boolean; tooLarge: boolean; unreadable: boolean }> {
+  const done = (hits: QrHit[], retried = true, tooLarge = false, unreadable = false) => ({ hits, retried, tooLarge, unreadable });
   try {
     const img = await Jimp.read(absolutePath);
     const decode = async (j: { bitmap: { data: Buffer | Uint8Array; width: number; height: number } }) =>
@@ -236,7 +236,7 @@ export async function decodeQrImage(
     }
     return done([]);
   } catch {
-    return done([], false);
+    return done([], false, false, true);
   }
 }
 
@@ -527,18 +527,21 @@ export const qrValidator: Validator = {
         if (scan.retried) imageRetries++;
         const cardLike = ['KYC', 'INSURANCE', 'RC'].includes(classifyDocType(ctx.shared.get(doc.id) ?? '') ?? '');
         if (hits.length === 0 && !scan.retried && cardLike) {
-          // Same as a PDF page past the budget: a card photo not looked at closely is not
-          // "no QR". Only card-like images: a vehicle photo or a JPG invoice carries none.
+          // A card photo not looked at closely is not "no QR": past the budget, too large to
+          // retry, or not openable at all. Only card-like images: a vehicle photo or a JPG
+          // invoice carries none.
           truncated.push({
             documentId: doc.id,
             code: 'QR_RETRY_BUDGET_EXHAUSTED',
             severity: 'ERROR',
-            message: scan.tooLarge
+            message: scan.unreadable
+              ? `${doc.fileName} could not be opened to scan for a QR code. Please check it by eye.`
+              : scan.tooLarge
               ? `${doc.fileName} showed no QR at its own resolution and is too large to retry at a ` +
                 `higher one. A small card QR needs that pass: please check it by eye.`
               : `${doc.fileName} showed no QR at its own resolution and was not retried at a higher ` +
                 `one (budget is ${MAX_QR_RETRY_PAGES} images per claim). A small card QR needs that pass.`,
-            data: { skippedRetries: 1, retryBudget: MAX_QR_RETRY_PAGES, tooLarge: scan.tooLarge },
+            data: { skippedRetries: 1, retryBudget: MAX_QR_RETRY_PAGES, tooLarge: scan.tooLarge, unreadable: scan.unreadable },
           });
         }
       }
