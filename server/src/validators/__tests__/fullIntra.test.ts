@@ -167,14 +167,14 @@ describe('FULL + INTRA validators', () => {
 
   // Client QA 2026-10, #39-40: the invoice prints the VIN, OCR reads 8→S, 1→I, 5→S, T→I.
   it('INTRA finds a VIN through OCR misreads, but only as a warning', async () => {
-    const claim = { id: 'c', claimId: 'MZBGE815VTN301510', subCategoryId };
+    const claim = { id: 'c', claimId: 'MZBGE815VTN701510', subCategoryId };
     const run = (text: string) => intraValidator.run(ctxFor(prisma, claim, [], new Map([['d1', text]])));
-    const misread = await run('Vin No. Chassis No.\nMZBGESISVIN3OISI0 MZBGESISVIN301510 GALHSMS96025');
+    const misread = await run('Vin No. Chassis No.\nMZBGESISVIN7OISI0 MZBGESISVIN701510 GALHSMS11111');
     expect(misread.status).toBe('PASSED');
     expect(misread.findings).toEqual([
       expect.objectContaining({ code: 'INTRA_CLAIMID_MISREAD', severity: 'WARNING' }),
     ]);
     // Another car of the same series, two digits off: still not this claim's document.
-    expect((await run('Chassis No. MZBGE815VTN301528')).status).toBe('FAILED');
+    expect((await run('Chassis No. MZBGE815VTN701528')).status).toBe('FAILED');
   });
 });

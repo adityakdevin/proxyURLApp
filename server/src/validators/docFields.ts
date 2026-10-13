@@ -124,8 +124,8 @@ const isBoilerplate = (v: string) => v.split(/\s+/).every((w) => CARD_BOILERPLAT
 
 // Salutations arrive fused to the name by OCR ("MR_RAVI SHANKAR"), and where the dot
 // survives it ends the caps run instead, so "MR. LALIT MOHAN" was read as the name "MR".
-// A salutation is no part of a name — reviewers compare "Lalit Mohan" against the salary
-// slip, not "Mr. Lalit Mohan" — so drop it from EVERY reading, not just the policy
+// A salutation is no part of a name — reviewers compare "Anil Mehra" against the salary
+// slip, not "Mr. Anil Mehra" — so drop it from EVERY reading, not just the policy
 // schedule's. The trailing separator is optional so a bare "MR" reduces to nothing and
 // falls through to the next candidate rather than standing in as the holder's name.
 // Salutations arrive fused to the name by OCR ("MR_RAVI SHANKAR"), and where the dot
@@ -388,7 +388,7 @@ export function documentFields(text: string, type: FieldDocType): DocField[] {
         // FORM whose labels OCR into one run — "1. Legal Name 2. Trade Name, if any
         // 3. Constitution of Business ..." — with the values in a separate column. A
         // label-anchored regex captures the FOLLOWING LABELS as the value: on claim
-        // MZBEU813LSN749087 p.6 "Legal Name" returned "2. Trade Name, if any 3. Constitution
+        // Claim …749087 p.6 "Legal Name" returned "2. Trade Name, if any 3. Constitution
         // of Business Partnership 4. Address of Prin". Showing that to a reviewer is worse
         // than showing nothing. Reinstate only with a layout-aware extractor tested against
         // real OCR text, not a hand-written fixture.

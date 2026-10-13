@@ -78,8 +78,8 @@ function labelled(text: string, re: RegExp): string[] {
  *
  * A schedule's table cell wraps a long number: "0G-26-1021-1825-" on one line, "00036132" on
  * the next. Read alone, the first half is the insurer's product prefix — identical on every
- * Bajaj policy — and two unrelated claims "shared a policy number" (MZBB2814LSN010383 and
- * MZBFB812LSN575194). A value ending in a separator is continued from the next line; one that
+ * Bajaj policy — and two unrelated claims "shared a policy number" (claims …010383 and
+ * …575194). A value ending in a separator is continued from the next line; one that
  * still ends in a separator is dropped rather than compared as a fragment.
  */
 function policyNumbers(text: string): string[] {
