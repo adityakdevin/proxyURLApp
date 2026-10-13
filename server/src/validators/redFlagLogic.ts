@@ -32,13 +32,6 @@ const err = (code: string, message: string, page: number | null, data?: Record<s
   page,
   data,
 });
-const warn = (code: string, message: string, page: number | null, data?: Record<string, unknown>): RedFlagFinding => ({
-  code,
-  message,
-  severity: 'WARNING',
-  page,
-  data,
-});
 /** A check that PASSED, recorded so a reviewer can see it ran — reviewers reported
  *  "basic checks are not getting identified" when a valid document produced no output. */
 const info = (code: string, message: string, page: number | null, data?: Record<string, unknown>): RedFlagFinding => ({
@@ -437,6 +430,11 @@ export function checkNominee(text: string, page: number | null = null): RedFlagF
 // it is edited." In a bundle that is otherwise scanned (image pages with no visible text),
 // a page carrying real text was typed or pasted in, not scanned. Advisory, not a red flag
 // (decision of 2026-09-24): genuine digital insurer policies merged into a scan trip it too.
+// INFO, not WARNING: warnings are hidden, and a forgery signal must stay in front of the
+// reviewer (review, 2026-10-13).
+/** INFO findings that are advisories a reviewer should look at, not checks that passed. */
+export const ADVISORY_CODES = new Set(['REDFLAG_EDITABLE_TEXT', 'REDFLAG_NO_SIGNATURE', 'REDFLAG_SIGNATORY_UNREADABLE']);
+
 export function checkEditableText(
   stats: { image: boolean; visibleText: boolean }[],
   fileName: string
@@ -445,7 +443,7 @@ export function checkEditableText(
   const pages = stats.flatMap((s, i) => (s.visibleText ? [i + 1] : []));
   if (pages.length === 0) return [];
   const where = pages.length === 1 ? `p.${pages[0]}` : `pages ${pages.join(', ')}`;
-  return [warn('REDFLAG_EDITABLE_TEXT', `Editable doc - Text insertable in "${fileName}" (${where})`, pages[0])];
+  return [info('REDFLAG_EDITABLE_TEXT', `Editable doc - Text insertable in "${fileName}" (${where})`, pages[0])];
 }
 
 // ── Every-doc rules (run at FILE level, spec decision 3) ─────────────────────────
@@ -454,7 +452,7 @@ export function checkSignature(fileText: string): RedFlagFinding[] {
   // employer paperwork actually carries; without it every such document raised a
   // spurious "no signature" advisory.
   if (/authoris(ed|ing)|signator|signature|\bsign(ed)?\b|sign\s*here/i.test(fileText)) return [];
-  return [warn('REDFLAG_NO_SIGNATURE', 'No signature / authorised-signatory wording found in the document', null)];
+  return [info('REDFLAG_NO_SIGNATURE', 'No signature / authorised-signatory wording found in the document', null)];
 }
 
 // The word a signature stamp is allowed to use, in any of its correct forms.
@@ -491,7 +489,7 @@ export function checkSignatoryWord(fileText: string, page: number | null = null)
     const quote = m[0].trim().replace(/\s+/g, ' ');
     out.push(
       isDoubtfulHit(w, best.term, best.d)
-        ? warn('REDFLAG_SIGNATORY_UNREADABLE', `Signature block "${quote}" is too garbled to confirm`, page)
+        ? info('REDFLAG_SIGNATORY_UNREADABLE', `Signature block "${quote}" is too garbled to confirm`, page)
         : err('REDFLAG_SIGNATORY_TYPO', `Signature block reads "${quote}" — "${word}" is not "${best.term}"`, page, {
             word,
             expected: best.term,

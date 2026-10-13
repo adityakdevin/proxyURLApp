@@ -100,6 +100,17 @@ describe('client QA 2026-10 — Data Compare', () => {
     const spouse2 = { ...spouse, page: 5 };
     expect(crossDocFieldFindings([inv, own, spouse, spouse2]).filter((x) => /NAME/.test(x.code) && x.page === 2)).toHaveLength(1);
   });
+  // Value: protects=an own policy whose serial OCR misread by one digit still counts as the
+  // customer's own paper, so the family car's policy is set aside; fails_when=own-car papers
+  // need an exact serial (the dd164f4 rule, which failed a real claim)
+  it('an own policy with one serial digit misread still holds the bundle\'s own-car papers', () => {
+    const inv = { documentId: 'd', page: 1, text: 'Vehicle Tax Invoice\nBill To : IMRAN KHAN\nVin No. MZBEA813LTN100003' };
+    const ownMisread = { documentId: 'd', page: 2, text: "CERTIFICATE OF INSURANCE premium\nInsured's Name : MR. IMRAN KHAN\nChassis No. MZBEA813LTN100008" };
+    const spouse = { documentId: 'd', page: 4, text: "CERTIFICATE OF INSURANCE premium\nInsured's Name : MR. SALMA BEGUM\nChassis No. MZBET813MSN200004" };
+    const f = crossDocFieldFindings([inv, ownMisread, spouse], 'MZBEA813LTN100003');
+    expect(f.filter((x) => /NAME/.test(x.code))).toEqual([]);
+    expect(f.find((x) => x.code === 'CROSS_OTHER_VEHICLE')).toMatchObject({ page: 4 });
+  });
   it('a scan-misread invoice VIN still identifies the claim\'s own car (OCR-read VIN)', () => {
     const inv = { documentId: 'd', page: 1, text: 'Vehicle Tax Invoice\nBill To : MEHTA NEHA RAJESH\nMZBEB8I2TTN100005 MZBEB8I12TTN100005' };
     const brother = { documentId: 'd', page: 8, text: 'CERTIFICATE OF INSURANCE premium\nInsured\'s Name : MR. SHAH ROHAN KIRIT\nGJ 03 MR 1111 RAJKOT MZBET813MPN200006' };

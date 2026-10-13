@@ -35,6 +35,7 @@ import {
   checkDates,
   checkNominee,
   checkEditableText,
+  ADVISORY_CODES,
   RedFlagFinding,
 } from './redFlagLogic.js';
 import { classifyDocType } from './crossDocLogic.js';
@@ -287,7 +288,8 @@ export const redFlagValidator: Validator = {
       .join(', ');
     // INFO findings record checks that PASSED (e.g. a valid PAN and its holder category);
     // they are never a red flag, but they are what tells a reviewer the check ran.
-    const notes = findings.length - errors - warnings;
+    const advisories = findings.filter((f) => ADVISORY_CODES.has(f.code)).length;
+    const notes = findings.length - errors - warnings - advisories;
     if (errors > 0) {
       return {
         status: 'FAILED',
@@ -299,9 +301,9 @@ export const redFlagValidator: Validator = {
     }
     return {
       status: 'PASSED',
-      summary: notes
-        ? `No red flags; ${notes} check(s) verified.`
-        : 'No red flags found.',
+      summary:
+        (notes ? `No red flags; ${notes} check(s) verified.` : 'No red flags found.') +
+        (advisories ? ` ${advisories} note(s) to look at.` : ''),
       findings: findings.length > 0 ? findings : undefined,
     };
   },

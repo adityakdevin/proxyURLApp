@@ -569,10 +569,11 @@ export class ValidationService {
           id: { not: claim.id },
           subCategoryId: claim.subCategoryId,
           status: 'ACTIVE',
-          // A QUEUED run has not started and will see this claim. A RUNNING one may have read
-          // the index before this claim wrote to it (concurrent bulk runs), so it still gets a
-          // fresh run behind it — enqueue adds one rather than joining a frozen snapshot.
-          validationRuns: { none: { status: 'QUEUED' } },
+          // A QUEUED run that includes DUP has not started and will see this claim. One narrowed
+          // to other checks would not, so it is widened by enqueue below. A RUNNING one may have
+          // read the index before this claim wrote to it (concurrent bulk runs), so it still gets
+          // a fresh run behind it — enqueue adds one rather than joining a frozen snapshot.
+          validationRuns: { none: { status: 'QUEUED', OR: [{ checks: null }, { checks: { contains: 'DUP' } }] } },
         },
         select: {
           id: true,

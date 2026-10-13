@@ -543,6 +543,46 @@ describe('ValidationService + drainer', () => {
     expect(f?.severity).toBe('ERROR');
   });
 
+  // Value: protects=a run whose runOne throws after claiming it is failed, so the claim's
+  // later runs are not blocked behind a RUNNING row until restart; fails_when=the worker's
+  // catch stops failing the run; why_new=no test made runOne throw; seam=runOne spy
+  it('fails a run that threw while RUNNING, and the claim\'s next run still drains', async () => {
+    const quick: Validator[] = [
+      { key: 'FULL', column: 'fullScanStatus', run: async () => ({ status: 'PASSED', summary: 'ok' }) },
+    ];
+    const c = await makeClaim(`C-THROW-${SUF}`);
+    await prisma.document.create({
+      data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-throw.pdf`, createdBy: adminId },
+    });
+    const real = ValidationService.prototype.runOne;
+    let thrown = false;
+    // Only this claim's first run throws: other tests' leftover runs may drain first.
+    const spy = jest.spyOn(ValidationService.prototype, 'runOne').mockImplementation(async function (this: ValidationService, id: string) {
+      const run = await prisma.validationRun.findUnique({ where: { id } });
+      if (thrown || run?.claimId !== c.id) return real.call(this, id);
+      // Claimed atomically, as runOne does, so a second worker cannot run it too.
+      const claimed = await prisma.validationRun.updateMany({
+        where: { id, status: 'QUEUED' },
+        data: { status: 'RUNNING', startedAt: new Date() },
+      });
+      if (claimed.count === 0) return false;
+      thrown = true;
+      throw new Error('boom');
+    });
+    try {
+      await enqueue(prisma, quick, c.id, 'AUTO');
+      await kickDrain(prisma, quick);
+      const first = await prisma.validationRun.findFirst({ where: { claimId: c.id }, orderBy: { createdAt: 'asc' } });
+      expect(first?.status).toBe('FAILED');
+      await enqueue(prisma, quick, c.id, 'MANUAL', adminId);
+      await kickDrain(prisma, quick);
+      const latest = await prisma.validationRun.findFirst({ where: { claimId: c.id }, orderBy: { createdAt: 'desc' } });
+      expect(latest?.status).toBe('COMPLETED');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   // Value: protects=a run queued while every worker is busy is still drained, and the
   // caller's promise waits for it; fails_when=the rearm/chaining in kickDrain regresses;
   // why_new=only the top-up path was tested; seam=none; no_claim=multi-process drains
@@ -625,6 +665,31 @@ describe('ValidationService + drainer', () => {
       // B's latest names A, so nothing more is queued.
       expect(await runsOf(a.id)).toBe(1);
       expect(await runsOf(b.id)).toBe(1);
+    });
+
+    it('widens a partner\'s queued run that does not include DUP', async () => {
+      const prev = process.env.VALIDATION_CONCURRENCY;
+      process.env.VALIDATION_CONCURRENCY = '1';
+      try {
+        const a = await withDoc(`C-RQG-${SUF}`);
+        const b = await withDoc(`C-RQH-${SUF}`);
+        const v = dupNaming((me) => [me === a.claimId ? b.claimId : a.claimId]);
+        // B first, then A queued for SPELL only: one worker runs B, whose requeue must not
+        // trust A's queued run to see the duplicate.
+        await prisma.validationRun.create({ data: { claimId: b.id, trigger: 'AUTO' } });
+        await prisma.validationRun.create({ data: { claimId: a.id, trigger: 'MANUAL', checks: 'SPELL' } });
+        await kickDrain(prisma, v);
+        await drained();
+        // A skipped check is stored as not run; widened, A's DUP really ran and found B.
+        const latest = await prisma.validationResult.findFirst({
+          where: { claimId: a.id, validatorKey: 'DUP' },
+          orderBy: { createdAt: 'desc' },
+        });
+        expect(latest?.status).toBe('FAILED');
+      } finally {
+        if (prev === undefined) delete process.env.VALIDATION_CONCURRENCY;
+        else process.env.VALIDATION_CONCURRENCY = prev;
+      }
     });
 
     it('still re-queues a partner whose capped list is about a different value', async () => {

@@ -126,14 +126,18 @@ describe('crossDocFieldFindings (consistency engine)', () => {
     expect(f.filter((x) => x.code === 'CROSS_VEHICLE_NO_MISMATCH')).toHaveLength(0);
   });
 
-  it('downgrades to WARNING and notes unclassified pages', () => {
+  // Value: protects=a mismatch on a page too poorly scanned to classify stays a visible red
+  // flag; fails_when=UNKNOWN pages are softened to a hidden WARNING again; why_new=hidden
+  // warnings let a bad scan hide a substituted document (review, 2026-10-13)
+  it('keeps an unclassified-page mismatch red, worded for a check by eye, and notes the page', () => {
     const f = crossDocFieldFindings([
       page('d1', 'TAX INVOICE Invoice No 1\nCustomer Name: Rajesh Kumar'),
       page('d2', 'a plain scanned page\nName: Suresh Kumar'), // unclassifiable
     ]);
     const mm = f.find((x) => x.code === 'CROSS_NAME_MISMATCH');
-    expect(mm!.severity).toBe('WARNING');
-    expect(f.some((x) => x.code === 'CROSS_UNCLASSIFIED')).toBe(true);
+    expect(mm!.severity).toBe('ERROR');
+    expect(mm!.message).toContain('confirm by eye');
+    expect(f.find((x) => x.code === 'CROSS_UNCLASSIFIED')!.severity).toBe('INFO');
   });
 
   it('is silent when a required doc type is simply absent', () => {

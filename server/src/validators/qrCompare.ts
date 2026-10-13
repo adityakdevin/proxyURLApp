@@ -253,6 +253,7 @@ export function qrForeignChassis(qrValue: string, claimId: string): string | nul
   if (!chassis || !reg || !/^new\b/i.test(reg.trim())) return null;
   // The serial (last six) must agree exactly: one digit off there is the next car of the
   // batch, which idMatches' one-edit tolerance would otherwise wave through (review, 2026-10-13).
+  // A QR is machine-read, so no OCR misread to allow for (unlike crossDocLogic's sameCar).
   const sameSerial = idNorm(chassis).slice(-6) === idNorm(claimId).slice(-6);
   if (!VIN_SHAPE.test(claimId) || (sameSerial && idMatches(chassis, claimId))) return null;
   return chassis;

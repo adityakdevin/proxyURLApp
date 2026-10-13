@@ -46,7 +46,7 @@ describe('PAN', () => {
     for (const garbled of ['Authorised Sighatopy', 'Authorised Signotiry']) {
       const fs = checkSignatoryWord(garbled);
       expect(codes(fs)).toEqual(['REDFLAG_SIGNATORY_UNREADABLE']);
-      expect(fs[0].severity).toBe('WARNING');
+      expect(fs[0].severity).toBe('INFO');
     }
   });
 
@@ -244,7 +244,7 @@ describe('Every-doc rules', () => {
   it('warns (not fails) when no signature wording is found', () => {
     const fs = checkSignature('plain body text');
     expect(codes(fs)).toEqual(['REDFLAG_NO_SIGNATURE']);
-    expect(fs[0].severity).toBe('WARNING');
+    expect(fs[0].severity).toBe('INFO');
   });
   it('flags an editor/AI watermark from the Producer', () => {
     expect(codes(checkEditorWatermark('iLovePDF; modified using iText 5.5.9'))).toEqual([
@@ -371,7 +371,7 @@ describe('Editable text in a scanned PDF', () => {
   it('notes pages with real text inside an otherwise-scanned bundle', () => {
     const f = checkEditableText([scan, typed, typed], 'claim.pdf');
     expect(codes(f)).toEqual(['REDFLAG_EDITABLE_TEXT']);
-    expect(f[0].severity).toBe('WARNING');
+    expect(f[0].severity).toBe('INFO');
     expect(f[0].message).toBe('Editable doc - Text insertable in "claim.pdf" (pages 2, 3)');
   });
   it('ignores a wholly digital PDF and a wholly scanned one', () => {
