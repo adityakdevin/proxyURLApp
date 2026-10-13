@@ -135,6 +135,14 @@ async function worker(prisma: PrismaClient, svc: ValidationService): Promise<voi
       // A throw means this worker DID have the run, so it still counts as executed.
       ran = true;
       console.error(`[validationQueue] run ${next.id} threw:`, e);
+      // A run left RUNNING would block every later run for its claim (the RUNNING exclusion
+      // above) until a restart sweeps it.
+      await prisma.validationRun
+        .updateMany({
+          where: { id: next.id, status: 'RUNNING' },
+          data: { status: 'FAILED', message: 'Validation error', finishedAt: new Date() },
+        })
+        .catch((err) => console.error(`[validationQueue] could not fail run ${next.id}:`, err));
     }
     // Nothing to report when another worker claimed it first. Logging that as a completion
     // is how a 114-claim production drain printed `done in 0s` lines beside the real ones

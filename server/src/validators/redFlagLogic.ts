@@ -3,14 +3,15 @@
  * every function takes plain text and returns findings, so each is unit-testable with
  * string fixtures (spec decision 2: no extraction in this module).
  *
- * Three-outcome discipline (spec decision 9): a rule only RED-FLAGS a clean candidate
- * that fails its format. A candidate that is merely OCR-garbled is ADVISORY (WARNING),
- * never a hard fail — that separation is the top defence against false positives. No
- * candidate at all → the rule stays silent (this document simply doesn't carry that field).
+ * Three outcomes (spec decision 9): a clean candidate that fails its format is "malformed".
+ * A candidate that is merely OCR-adjacent is "unreadable", also ERROR since warnings are
+ * hidden from reviewers, but worded as a possible scan misread to confirm by eye (client QA
+ * 2026-10). No candidate at all → the rule stays silent (this document simply doesn't
+ * carry that field).
  *
  *   text ──> extract label-anchored candidate ──> classify
  *                                                   ├─ valid format      → ok (no finding, maybe category)
- *                                                   ├─ OCR-adjacent      → WARNING "unreadable"
+ *                                                   ├─ OCR-adjacent      → ERROR   "unreadable" (possible misread)
  *                                                   └─ clean but invalid → ERROR   "malformed" (red flag)
  */
 import { editDistanceCapped, isDoubtfulHit } from './logic.js';

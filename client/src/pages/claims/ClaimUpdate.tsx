@@ -687,7 +687,7 @@ export default function ClaimUpdate() {
                   })}
                 </ul>
                 )}
-                {(res.findings ?? []).length > 0 && qrButton && (
+                {findings.length > 0 && qrButton && (
                   <div className="-mt-3 px-6 pb-6">{qrButton}</div>
                 )}
               </details>

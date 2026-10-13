@@ -758,7 +758,7 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   // a VIN's front ("MZBBISHILSN100007" on a customer's own policy) far more than its serial,
   // and a serial one digit off is the next car of the batch, as Intra's claim-ID match also
   // holds (security review, 2026-10-13).
-  const sameCar = (x: string, y: string) => idMatches(x, y) || idNorm(x).slice(-6) === idNorm(y).slice(-6);
+  const sameCar = (x: string, y: string) => idNorm(x).slice(-6) === idNorm(y).slice(-6);
   const vehiclePaper = (p: { docType: DocTypeCode | 'UNKNOWN' }) => p.docType === 'RC' || p.docType === 'INSURANCE';
   const vinsOn = (documentId: string, page: number | null) =>
     pageVins(classified.find((p) => p.documentId === documentId && p.page === page)?.text ?? '');

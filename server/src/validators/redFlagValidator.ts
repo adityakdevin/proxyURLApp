@@ -172,6 +172,9 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_NOMINEE_NO_NAME: 'Nominee without name',
   REDFLAG_BAD_DATE: 'Impossible date',
   REDFLAG_VID_UNREADABLE: 'VID unreadable',
+  REDFLAG_PAN_UNREADABLE: 'PAN unreadable',
+  REDFLAG_DL_UNREADABLE: 'DL unreadable',
+  REDFLAG_PASSPORT_UNREADABLE: 'Passport no. unreadable',
 };
 
 export const redFlagValidator: Validator = {

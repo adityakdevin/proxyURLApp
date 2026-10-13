@@ -15,7 +15,7 @@
  */
 import { DocField } from './docFields.js';
 import { isUnreadableQrPayload } from './aadhaarSecureQr.js';
-import { idMatches, nameMatches } from './crossDocLogic.js';
+import { idMatches, idNorm, nameMatches } from './crossDocLogic.js';
 import { editDistanceCapped } from './logic.js';
 
 export type QrVerdict = 'MATCH' | 'MISMATCH';
@@ -191,13 +191,6 @@ export function parseQrPayload(value: string): Map<string, string> {
   return out;
 }
 
-/**
- * Compare one QR payload against one document's field pane.
- *
- * Only fields present on BOTH sides are compared — a QR key the pane has no row for (a
- * policy QR's registration number, its URL) is not evidence of anything, and neither is a
- * pane row the QR does not carry.
- */
 /** One model, written fuller on one side: "SONET" in the QR, "SONET HTK" on the policy
  *  (client QA 2026-10, #37/38). Same first word, and every word of the shorter one present
  *  in the longer; a different model name ("CRETA") still mismatches. */
@@ -207,6 +200,13 @@ function modelMatches(a: string, b: string): boolean {
   return short.length > 0 && short[0] === long[0] && short.every((w) => long.includes(w));
 }
 
+/**
+ * Compare one QR payload against one document's field pane.
+ *
+ * Only fields present on BOTH sides are compared — a QR key the pane has no row for (a
+ * policy QR's registration number, its URL) is not evidence of anything, and neither is a
+ * pane row the QR does not carry.
+ */
 export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldComparison[] {
   const payload = parseQrPayload(qrValue);
   if (payload.size === 0) return [];
@@ -251,7 +251,10 @@ export function qrForeignChassis(qrValue: string, claimId: string): string | nul
   const chassis = qr.get('chassisno') ?? qr.get('chassis');
   const reg = qr.get('regno') ?? qr.get('regnno') ?? qr.get('registrationno') ?? qr.get('registrationnumber');
   if (!chassis || !reg || !/^new\b/i.test(reg.trim())) return null;
-  if (!VIN_SHAPE.test(claimId) || idMatches(chassis, claimId)) return null;
+  // The serial (last six) must agree exactly: one digit off there is the next car of the
+  // batch, which idMatches' one-edit tolerance would otherwise wave through (review, 2026-10-13).
+  const sameSerial = idNorm(chassis).slice(-6) === idNorm(claimId).slice(-6);
+  if (!VIN_SHAPE.test(claimId) || (sameSerial && idMatches(chassis, claimId))) return null;
   return chassis;
 }
 

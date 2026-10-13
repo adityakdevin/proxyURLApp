@@ -193,9 +193,14 @@ const IMAGE_RETRY_MAX_PIXELS = 25_000_000;
  * codes a phone reads at once (client QA 2026-10, #33/#34) — PDFs already got a second,
  * higher-resolution pass; images got none. Retries, cheapest first, stopping at the first
  * hit: upscaled; upscaled + greyscale + contrast; then each quadrant upscaled, for a QR that
- * is a small corner of a large photo.
+ * is a small corner of a large photo. `retried` says whether those passes ran, so the caller
+ * counts its budget and flags a card the retries never looked at (too large, or no budget).
  */
-export async function decodeQrImage(absolutePath: string, retry: boolean): Promise<QrHit[]> {
+export async function decodeQrImage(
+  absolutePath: string,
+  retry: boolean
+): Promise<{ hits: QrHit[]; retried: boolean; tooLarge: boolean }> {
+  const done = (hits: QrHit[], retried = true, tooLarge = false) => ({ hits, retried, tooLarge });
   try {
     const img = await Jimp.read(absolutePath);
     const decode = async (j: { bitmap: { data: Buffer | Uint8Array; width: number; height: number } }) =>
@@ -203,7 +208,8 @@ export async function decodeQrImage(absolutePath: string, retry: boolean): Promi
     const first = await decode(img);
     // Retries copy and upscale the bitmap several times: not for an image so large that the
     // copies alone would strain memory beside other workers' scans.
-    if (first.length > 0 || !retry || img.bitmap.width * img.bitmap.height > IMAGE_RETRY_MAX_PIXELS) return first;
+    if (first.length > 0 || !retry) return done(first, false);
+    if (img.bitmap.width * img.bitmap.height > IMAGE_RETRY_MAX_PIXELS) return done(first, false, true);
 
     const { width, height } = img.bitmap;
     const factor = (w: number, h: number) => Math.min(3, IMAGE_RETRY_MAX_EDGE / Math.max(w, h));
@@ -212,12 +218,12 @@ export async function decodeQrImage(absolutePath: string, retry: boolean): Promi
       // Scaled once and reused: each copy of a 4000px bitmap is ~64 MB.
       const scaled = img.clone().scale(f);
       const up = await decode(scaled);
-      if (up.length > 0) return up.map(withoutBox);
+      if (up.length > 0) return done(up.map(withoutBox));
       const enhanced = await decode(scaled.greyscale().contrast(0.4));
-      if (enhanced.length > 0) return enhanced.map(withoutBox);
+      if (enhanced.length > 0) return done(enhanced.map(withoutBox));
     } else {
       const enhanced = await decode(img.clone().greyscale().contrast(0.4));
-      if (enhanced.length > 0) return enhanced;
+      if (enhanced.length > 0) return done(enhanced);
     }
     // Quadrants, overlapping by a quarter so a QR on a seam is whole in one of them.
     const qw = Math.ceil(width * 0.625);
@@ -226,11 +232,11 @@ export async function decodeQrImage(absolutePath: string, retry: boolean): Promi
       const tile = img.clone().crop({ x, y, w: qw, h: qh });
       const tf = factor(qw, qh);
       const hits = await decode(tf > 1.2 ? tile.scale(tf).greyscale() : tile.greyscale());
-      if (hits.length > 0) return hits.map(withoutBox);
+      if (hits.length > 0) return done(hits.map(withoutBox));
     }
-    return [];
+    return done([]);
   } catch {
-    return [];
+    return done([], false);
   }
 }
 
@@ -513,26 +519,26 @@ export const qrValidator: Validator = {
           });
         }
       } else {
-        // The extra passes cost up to six full decodes, and most images in a claim carry
-        // no QR: they share the PDF path's per-document retry budget, counted per run.
         // One plain decode; the costly retries (up to six more decodes) only for an image the
-        // first pass missed, within their own per-run budget, the same size as the PDF one.
-        hits = await decodeQrImage(doc.readablePath, false);
+        // first pass missed, within a per-run budget the same size as the PDF one. Counted only
+        // when they ran: an image too large to retry spends no budget.
+        const scan = await decodeQrImage(doc.readablePath, imageRetries < MAX_QR_RETRY_PAGES);
+        hits = scan.hits;
+        if (scan.retried) imageRetries++;
         const cardLike = ['KYC', 'INSURANCE', 'RC'].includes(classifyDocType(ctx.shared.get(doc.id) ?? '') ?? '');
-        if (hits.length === 0 && imageRetries < MAX_QR_RETRY_PAGES) {
-          imageRetries++;
-          hits = await decodeQrImage(doc.readablePath, true);
-        } else if (hits.length === 0 && cardLike) {
+        if (hits.length === 0 && !scan.retried && cardLike) {
           // Same as a PDF page past the budget: a card photo not looked at closely is not
           // "no QR". Only card-like images: a vehicle photo or a JPG invoice carries none.
           truncated.push({
             documentId: doc.id,
             code: 'QR_RETRY_BUDGET_EXHAUSTED',
             severity: 'ERROR',
-            message:
-              `${doc.fileName} showed no QR at its own resolution and was not retried at a higher ` +
-              `one (budget is ${MAX_QR_RETRY_PAGES} images per claim). A small card QR needs that pass.`,
-            data: { skippedRetries: 1, retryBudget: MAX_QR_RETRY_PAGES },
+            message: scan.tooLarge
+              ? `${doc.fileName} showed no QR at its own resolution and is too large to retry at a ` +
+                `higher one. A small card QR needs that pass: please check it by eye.`
+              : `${doc.fileName} showed no QR at its own resolution and was not retried at a higher ` +
+                `one (budget is ${MAX_QR_RETRY_PAGES} images per claim). A small card QR needs that pass.`,
+            data: { skippedRetries: 1, retryBudget: MAX_QR_RETRY_PAGES, tooLarge: scan.tooLarge },
           });
         }
       }

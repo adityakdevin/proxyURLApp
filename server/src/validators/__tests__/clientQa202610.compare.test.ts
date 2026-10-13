@@ -81,6 +81,10 @@ describe('client QA 2026-10 — Data Compare', () => {
     expect(f.filter((x) => /NAME/.test(x.code))).toEqual([]);
     // Shown, not silent: the reviewer sees the page was another vehicle's.
     expect(f.find((x) => x.code === 'CROSS_OTHER_VEHICLE')).toMatchObject({ page: 4, severity: 'INFO' });
+    // The next car of the batch (serial one digit off) is another vehicle too, not this one.
+    const sibling = { ...spouse, page: 5, text: spouse.text.replace('MZBET813MSN200004', 'MZBEA813LTN100004') };
+    expect(crossDocFieldFindings([inv, ownPolicy, sibling], 'MZBEA813LTN100003').find((x) => x.code === 'CROSS_OTHER_VEHICLE'))
+      .toMatchObject({ page: 5 });
     // Without the customer's own RC or policy, another car's policy is the fraud: compared.
     expect(crossDocFieldFindings([inv, spouse], 'MZBEA813LTN100003').filter((x) => /NAME/.test(x.code) && x.page === 4)).toHaveLength(1);
     // No chassis on the page: still compared (an annexure for another employee).

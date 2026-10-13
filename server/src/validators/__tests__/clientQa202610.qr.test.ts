@@ -46,6 +46,8 @@ describe('client QA 2026-10 — QR', () => {
     ['Chassis No:MZBXX000000000001,Reg No:NEW', 'MZBEP812LSN100008', 'MZBXX000000000001'],
     ['Chassis No:MZBEP812LSN100008,Reg No:NEW', 'MZBEP812LSN100008', null],
     ['Chassis No:MZBEP8I2LSN100008,Reg No:New', 'MZBEP812LSN100008', null],
+    // The next car of the batch: one digit off in the serial is another vehicle.
+    ['Chassis No:MZBEP812LSN100009,Reg No:NEW', 'MZBEP812LSN100008', 'MZBEP812LSN100009'],
     ['Chassis No:MZBXX000000000001,Reg No:MH12AB1234', 'MZBEP812LSN100008', null],
     ['Chassis No:MZBXX000000000001,Reg No:NEW', 'CLM-1', null],
     ['Chassis No:MZBXX000000000001', 'MZBEP812LSN100008', null],

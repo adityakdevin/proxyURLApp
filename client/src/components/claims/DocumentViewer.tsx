@@ -113,14 +113,12 @@ function pageRendered(pageEl: Element): boolean {
 }
 
 /** Have pages 1..n all painted, so a scroll to page n lands where it will stay? An
- *  unpainted page above the target has no height yet and shifts it. Once every page has
- *  reported a render (`allRendered`), stop waiting: a page that failed to render would
- *  otherwise hold the scroll back for good. */
-function pagesPaintedThrough(root: Element | null, n: number, allRendered: boolean): boolean {
-  if (allRendered) return true;
+ *  unpainted page above the target has no height yet and shifts it. A page that failed to
+ *  render counts as done: it would otherwise hold the scroll back for good. */
+function pagesPaintedThrough(root: Element | null, n: number, failed: Set<number>): boolean {
   for (let pg = 1; pg <= n; pg++) {
     const p = root?.querySelector(`[data-page="${pg}"]`);
-    if (p && !pageRendered(p)) return false;
+    if (p && !failed.has(pg) && !pageRendered(p)) return false;
   }
   return true;
 }
@@ -168,6 +166,7 @@ export function DocumentViewerPanel({
   const [imgFailed, setImgFailed] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [renderedPages, setRenderedPages] = useState(0);
+  const failedPages = useRef(new Set<number>());
   const [missing, setMissing] = useState(false);
   const [fitWidth, setFitWidth] = useState(0);
   const [zoom, setZoom] = useState(1);
@@ -182,6 +181,7 @@ export function DocumentViewerPanel({
     setImgFailed(false);
     setImgLoaded(false);
     setRenderedPages(0);
+    failedPages.current = new Set();
     setZoom(1);
     setRotation(0);
     setImgSize({ w: 0, h: 0 });
@@ -222,7 +222,7 @@ export function DocumentViewerPanel({
     // place; wait for the render that follows rather than scroll there.
     // And every page up to its own must have painted.
     const upTo = Number(el.closest('[data-page]')?.getAttribute('data-page') ?? 0);
-    if (!pagesPaintedThrough(scrollRef.current, upTo, numPages > 0 && renderedPages >= numPages)) return;
+    if (!pagesPaintedThrough(scrollRef.current, upTo, failedPages.current)) return;
     scrolledFor.current = key;
     el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
   }, [documentId, activeId, selectNonce, zoom, rotation, numPages, isImage, imgLoaded, renderedPages]);
@@ -249,7 +249,7 @@ export function DocumentViewerPanel({
     const el = scrollRef.current?.querySelector(`[data-page="${gotoPage}"]`);
     if (!el) return;
     // Pages above it may not have painted yet, so the jump would land short.
-    if (!pagesPaintedThrough(scrollRef.current, gotoPage, numPages > 0 && renderedPages >= numPages)) return;
+    if (!pagesPaintedThrough(scrollRef.current, gotoPage, failedPages.current)) return;
     jumpedFor.current = key;
     el.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }, [documentId, gotoPage, gotoNonce, numPages, renderedPages]);
@@ -431,6 +431,10 @@ export function DocumentViewerPanel({
                       renderTextLayer={false}
                       renderAnnotationLayer={false}
                       onRenderSuccess={() => setRenderedPages((n) => n + 1)}
+                      onRenderError={() => {
+                        failedPages.current.add(page);
+                        setRenderedPages((n) => n + 1);
+                      }}
                     />
                     <Highlights
                       findings={pageFindings}
