@@ -115,6 +115,19 @@ describe('spellValidator', () => {
     });
   });
 
+  // A clear scan promotes a one-letter miss off a form word, nothing looser: "enquire"
+  // (two letters off "require") failed 107 claims when two-edit hits were promoted.
+  it('promotes only a confidently read one-letter miss to a misspelling', async () => {
+    const text = 'Degination Clerk please enquire at the office';
+    const c = ctx(text);
+    c.wordBoxes = new Map([
+      ['d1', text.split(' ').map((w, i) => ({ text: w, page: 1, conf: 93, bbox: { x: i / 10, y: 0, w: 0.05, h: 0.02 } }))],
+    ]);
+    const res = await spellValidator.run(c);
+    const shown = (res.findings ?? []).filter((f) => f.severity === 'ERROR').map((f) => f.data?.word);
+    expect(shown).toEqual(['degination']);
+  });
+
   it('PASSES (N/A) when there is no text', async () => {
     expect((await spellValidator.run(ctx(''))).status).toBe('PASSED');
   });
