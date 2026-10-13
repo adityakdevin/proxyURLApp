@@ -3,7 +3,9 @@ import { Validator } from '../validators/types.js';
 import { ValidationService } from './validationService.js';
 
 let draining: Promise<void> | null = null;
+let settle: (() => void) | null = null;
 let rearm = false;
+let active = 0;
 
 /**
  * How many validation runs execute at once.
@@ -68,68 +70,81 @@ export async function enqueue(
 }
 
 /** Singleton drainer: processes QUEUED runs, up to CONCURRENCY at a time. Resolves when the
- *  queue is empty. */
+ *  queue is empty.
+ *
+ *  A kick mid-drain tops the pool back up to CONCURRENCY. Workers exit as soon as they find
+ *  the queue empty, and a bulk validate enqueues one claim at a time: the first enqueue
+ *  started five workers, four found nothing and left, and the remaining one then drained the
+ *  whole batch alone — 224 claims at a fifth of the speed (client QA re-run, 2026-10-13). */
 export function kickDrain(prisma: PrismaClient, validators: Validator[]): Promise<void> {
-  // Re-arm if a kick arrives mid-drain, so a run queued during it is re-polled.
-  if (draining) {
-    rearm = true;
-    return draining;
-  }
-  return startDrain(prisma, validators);
-}
-
-function startDrain(prisma: PrismaClient, validators: Validator[]): Promise<void> {
-  rearm = false;
-  draining = drainLoop(prisma, validators)
-    // Log a transient drain error so it neither wedges the queue nor escapes as unhandledRejection.
-    .catch((e) => {
-      console.error('[validationQueue] drain loop error:', e);
-    })
-    .finally(() => {
-      draining = null;
-      if (rearm) void startDrain(prisma, validators);
+  if (!draining) {
+    rearm = false;
+    draining = new Promise<void>((resolve) => {
+      settle = resolve;
     });
-  return draining;
+  }
+  const done = draining;
+  // Every worker busy: one may be past its empty-queue check and about to leave, so poll
+  // again once the pool empties rather than strand this run.
+  if (active >= concurrency()) rearm = true;
+  const svc = new ValidationService(prisma, validators);
+  while (active < concurrency()) {
+    active++;
+    void worker(prisma, svc)
+      // Log a transient drain error so it neither wedges the queue nor escapes as unhandledRejection.
+      .catch((e) => {
+        console.error('[validationQueue] drain loop error:', e);
+      })
+      .finally(() => {
+        if (--active > 0) return;
+        const resolve = settle;
+        draining = null;
+        settle = null;
+        if (rearm) {
+          // Chain the waiting callers onto the follow-up drain.
+          void kickDrain(prisma, validators).then(() => resolve?.());
+        } else {
+          resolve?.();
+        }
+      });
+  }
+  return done;
 }
 
-async function drainLoop(prisma: PrismaClient, validators: Validator[]): Promise<void> {
-  const svc = new ValidationService(prisma, validators);
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      // No reservation here: runOne claims the row atomically and returns immediately if
-      // another worker got there first, so the worst case is a wasted lookup.
-      const next = await prisma.validationRun.findFirst({
-        where: { status: 'QUEUED' },
-        orderBy: { createdAt: 'asc' },
-        select: { id: true, claimId: true },
-      });
-      if (!next) return;
-      const startedAt = Date.now();
-      let ran = false;
-      try {
-        ran = await svc.runOne(next.id);
-      } catch (e) {
-        // One bad claim must not take the worker down and strand the rest of the queue.
-        // runOne already marks its own run FAILED; this is the belt for anything it missed.
-        // A throw means this worker DID have the run, so it still counts as executed.
-        ran = true;
-        console.error(`[validationQueue] run ${next.id} threw:`, e);
-      }
-      // Nothing to report when another worker claimed it first. Logging that as a completion
-      // is how a 114-claim production drain printed `done in 0s` lines beside the real ones
-      // for the same claim id — phantom work, in the one line whose job is to tell a slow
-      // queue from a wedged one. Skipping is right rather than logging a skip: with two
-      // workers the losing side collides on the head of the queue constantly, and a line per
-      // collision would bury the progress it sits next to.
-      if (!ran) continue;
-      // Progress, because a queue with no output cannot be told apart from a wedged one —
-      // which cost real time diagnosing exactly that.
-      const remaining = await prisma.validationRun.count({ where: { status: 'QUEUED' } });
-      console.log(
-        `[validationQueue] claim ${next.claimId} done in ${Math.round((Date.now() - startedAt) / 1000)}s, ` +
-          `${remaining} queued`
-      );
+async function worker(prisma: PrismaClient, svc: ValidationService): Promise<void> {
+  for (;;) {
+    // No reservation here: runOne claims the row atomically and returns immediately if
+    // another worker got there first, so the worst case is a wasted lookup.
+    const next = await prisma.validationRun.findFirst({
+      where: { status: 'QUEUED' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, claimId: true },
+    });
+    if (!next) return;
+    const startedAt = Date.now();
+    let ran = false;
+    try {
+      ran = await svc.runOne(next.id);
+    } catch (e) {
+      // One bad claim must not take the worker down and strand the rest of the queue.
+      // runOne already marks its own run FAILED; this is the belt for anything it missed.
+      // A throw means this worker DID have the run, so it still counts as executed.
+      ran = true;
+      console.error(`[validationQueue] run ${next.id} threw:`, e);
     }
-  };
-  await Promise.all(Array.from({ length: concurrency() }, () => worker()));
+    // Nothing to report when another worker claimed it first. Logging that as a completion
+    // is how a 114-claim production drain printed `done in 0s` lines beside the real ones
+    // for the same claim id — phantom work, in the one line whose job is to tell a slow
+    // queue from a wedged one. Skipping is right rather than logging a skip: with two
+    // workers the losing side collides on the head of the queue constantly, and a line per
+    // collision would bury the progress it sits next to.
+    if (!ran) continue;
+    // Progress, because a queue with no output cannot be told apart from a wedged one —
+    // which cost real time diagnosing exactly that.
+    const remaining = await prisma.validationRun.count({ where: { status: 'QUEUED' } });
+    console.log(
+      `[validationQueue] claim ${next.claimId} done in ${Math.round((Date.now() - startedAt) / 1000)}s, ` +
+        `${remaining} queued`
+    );
+  }
 }
