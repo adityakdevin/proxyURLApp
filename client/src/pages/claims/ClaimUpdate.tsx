@@ -404,7 +404,10 @@ export default function ClaimUpdate() {
     const byKey = new Map<string, Map<string | null, Finding[]>>();
     for (const res of valResults) {
       const groups = new Map<string | null, Finding[]>();
-      for (const f of res.findings ?? []) {
+      // Red flags only: an INFO note (a QR read, "this policy is another vehicle's") is no
+      // finding against the claim, and on a passed card it read as one. The viewer shows
+      // notes in their own section (review, 2026-10-13).
+      for (const f of (res.findings ?? []).filter((x) => x.severity === 'ERROR')) {
         const list = groups.get(f.documentId);
         if (list) list.push(f);
         else groups.set(f.documentId, [f]);
@@ -590,7 +593,7 @@ export default function ClaimUpdate() {
           {VALIDATORS.map((v) => {
             const res = resultFor(v.key);
             if (!res) return null;
-            const findings = res.findings ?? [];
+            const findings = (res.findings ?? []).filter((f) => f.severity === 'ERROR');
             const groups = findingsByValidator.get(v.key) ?? new Map<string | null, Finding[]>();
             const cardClass = validationStatusCardClass(String(claim[v.column]));
             // QR shows a popup with the decoded QR values (old runs only stored bare values).
@@ -684,7 +687,7 @@ export default function ClaimUpdate() {
                   })}
                 </ul>
                 )}
-                {findings.length > 0 && qrButton && (
+                {(res.findings ?? []).length > 0 && qrButton && (
                   <div className="-mt-3 px-6 pb-6">{qrButton}</div>
                 )}
               </details>

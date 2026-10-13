@@ -112,6 +112,19 @@ function pageRendered(pageEl: Element): boolean {
   return !!canvas && canvas.getBoundingClientRect().height > 0;
 }
 
+/** Have pages 1..n all painted, so a scroll to page n lands where it will stay? An
+ *  unpainted page above the target has no height yet and shifts it. Once every page has
+ *  reported a render (`allRendered`), stop waiting: a page that failed to render would
+ *  otherwise hold the scroll back for good. */
+function pagesPaintedThrough(root: Element | null, n: number, allRendered: boolean): boolean {
+  if (allRendered) return true;
+  for (let pg = 1; pg <= n; pg++) {
+    const p = root?.querySelector(`[data-page="${pg}"]`);
+    if (p && !pageRendered(p)) return false;
+  }
+  return true;
+}
+
 /**
  * Document viewer with highlight overlays, sized to fill whatever container holds it.
  * Images and PDFs render with normalized ([0..1]) highlight boxes drawn as CSS % (so they
@@ -207,13 +220,9 @@ export function DocumentViewerPanel({
     if (!el) return;
     // Before its page renders, the page box has no height and the target sits in the wrong
     // place; wait for the render that follows rather than scroll there.
-    // Same for every page above it: an unpainted page has no height yet and shifts the target.
-    const pageEl = el.closest('[data-page]');
-    const upTo = Number(pageEl?.getAttribute('data-page') ?? 0);
-    for (let pg = 1; pg <= upTo; pg++) {
-      const p = scrollRef.current?.querySelector(`[data-page="${pg}"]`);
-      if (p && !pageRendered(p)) return;
-    }
+    // And every page up to its own must have painted.
+    const upTo = Number(el.closest('[data-page]')?.getAttribute('data-page') ?? 0);
+    if (!pagesPaintedThrough(scrollRef.current, upTo, numPages > 0 && renderedPages >= numPages)) return;
     scrolledFor.current = key;
     el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
   }, [documentId, activeId, selectNonce, zoom, rotation, numPages, isImage, imgLoaded, renderedPages]);
@@ -239,15 +248,11 @@ export function DocumentViewerPanel({
     if (jumpedFor.current === key) return;
     const el = scrollRef.current?.querySelector(`[data-page="${gotoPage}"]`);
     if (!el) return;
-    // Pages above it may not have painted yet, so their boxes have no height and the jump
-    // lands short. Wait until every page up to the target has rendered.
-    for (let pg = 1; pg <= gotoPage; pg++) {
-      const p = scrollRef.current?.querySelector(`[data-page="${pg}"]`);
-      if (p && !pageRendered(p)) return;
-    }
+    // Pages above it may not have painted yet, so the jump would land short.
+    if (!pagesPaintedThrough(scrollRef.current, gotoPage, numPages > 0 && renderedPages >= numPages)) return;
     jumpedFor.current = key;
     el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, [documentId, gotoPage, gotoNonce, renderedPages]);
+  }, [documentId, gotoPage, gotoNonce, numPages, renderedPages]);
 
   // Keep the cursor's document point fixed while Ctrl/Cmd-wheel zooming.
   useLayoutEffect(() => {

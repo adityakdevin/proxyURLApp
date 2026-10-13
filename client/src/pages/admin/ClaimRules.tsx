@@ -311,7 +311,8 @@ export default function ClaimRules() {
                   <SelectContent>
                     {valueOptions.map((v) => (
                       <SelectItem key={v} value={v}>
-                        {v}
+                        {/* Same wording as the list filter and badges; the stored value is unchanged. */}
+                        {v === 'DOUBTFUL' ? 'Not run / Doubtful' : v}
                       </SelectItem>
                     ))}
                   </SelectContent>
