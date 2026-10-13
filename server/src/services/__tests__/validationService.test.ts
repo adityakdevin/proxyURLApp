@@ -476,6 +476,40 @@ describe('ValidationService + drainer', () => {
     }
   });
 
+  // A bulk validate enqueues claims one after another. The first enqueue's spare workers
+  // found nothing and left, so the batch ran on a single worker (client QA re-run).
+  it('runs a one-by-one enqueued batch on more than one worker', async () => {
+    const prev = process.env.VALIDATION_CONCURRENCY;
+    process.env.VALIDATION_CONCURRENCY = '4';
+    try {
+      let inFlight = 0;
+      let peak = 0;
+      const slow: Validator[] = [
+        {
+          key: 'FULL',
+          column: 'fullScanStatus',
+          run: async () => {
+            peak = Math.max(peak, ++inFlight);
+            await new Promise((r) => setTimeout(r, 60));
+            inFlight--;
+            return { status: 'PASSED', summary: 'ok' };
+          },
+        },
+      ];
+      for (let i = 0; i < 6; i++) {
+        const c = await makeClaim(`C-BW${i}`);
+        await prisma.document.create({
+          data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-C-BW${i}.pdf`, createdBy: adminId },
+        });
+        await enqueue(prisma, slow, c.id, 'AUTO');
+      }
+      await drained();
+      expect(peak).toBeGreaterThan(1);
+    } finally {
+      process.env.VALIDATION_CONCURRENCY = prev;
+    }
+  });
+
   it('moves a claim off the default status once validation completes, once only', async () => {
     const target = await prisma.statusMaster.create({
       data: { name: `vs-next-${SUF}`, isDefault: false, createdBy: adminId, updatedBy: adminId },
