@@ -711,6 +711,9 @@ interface Val {
   docType: DocTypeCode | 'UNKNOWN';
 }
 
+/** A VIN printed after its label: "Chassis No. X", "VIN: X", "Chassis Number - X". */
+const LABELLED_VIN_RE = /\b(?:chassis|vin)\s*(?:no|number)?\.?\s*[:\-.]?\s*([A-Z0-9]{17})\b/gi;
+
 /** VIN-shaped codes on a page (17 chars, 5+ digits), labelled or not. I, O and Q are no VIN
  *  letters but are what OCR prints for 1 and 0 ("MZBEB8I2TTN100005"); idMatches folds them. */
 const pageVins = (text: string) =>
@@ -776,11 +779,16 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   const ownCarPapers =
     claimVins.length > 0 &&
     classified.some((p) => vehiclePaper(p) && pageVins(p.text).some((x) => claimVins.some((y) => sameCar(x, y))));
-  // An unclassifiable page that prints a VIN is judged the same way: a family car's RC too
-  // poorly scanned to classify is still another car's paper.
+  // An unclassifiable page is judged the same way, but only on a LABELLED chassis number: a
+  // family car's RC too poorly scanned to classify is still another car's paper, while any
+  // 17-character code (a policy or account number) must not take a page out of the
+  // comparison (review, 2026-10-13).
+  const labelledVins = (documentId: string, page: number | null) =>
+    [...(classified.find((p) => p.documentId === documentId && p.page === page)?.text ?? '').matchAll(LABELLED_VIN_RE)]
+      .flatMap((m) => pageVins(m[1]));
   const otherCar = (v: Val) => {
     if (!ownCarPapers || !(vehiclePaper(v) || v.docType === 'UNKNOWN')) return false;
-    const vins = vinsOn(v.documentId, v.page);
+    const vins = v.docType === 'UNKNOWN' ? labelledVins(v.documentId, v.page) : vinsOn(v.documentId, v.page);
     return vins.length > 0 && !vins.some((x) => claimVins.some((y) => sameCar(x, y)));
   };
   const setAside = new Map<string, Val>(); // documentId:page -> one value from that page
