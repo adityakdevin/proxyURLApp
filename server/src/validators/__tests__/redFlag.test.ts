@@ -98,11 +98,15 @@ describe('redFlagValidator', () => {
     expect(out.findings!.some((f) => f.code === 'REDFLAG_AADHAAR_MISMATCH')).toBe(true);
   });
 
-  it('PASSES with only advisory warnings (no signature keyword)', async () => {
+  // Value: protects=an advisory (no signature) is a visible note the card summary points at,
+  // not counted as a verified check; fails_when=advisories are hidden or counted as passes
+  it('PASSES with only an advisory, and the summary points at it (no signature keyword)', async () => {
     const c = ctx({ pageTexts: new Map([['d1', ['permanent account number ABCPD1234E']]]) });
     const out = await redFlagValidator.run(c);
     expect(out.status).toBe('PASSED');
-    expect(out.findings!.some((f) => f.code === 'REDFLAG_NO_SIGNATURE')).toBe(true);
+    expect(out.findings!.find((f) => f.code === 'REDFLAG_NO_SIGNATURE')!.severity).toBe('INFO');
+    expect(out.summary).toContain('1 note(s) to look at');
+    expect(out.summary).not.toMatch(/2 check\(s\) verified/);
   });
 });
 

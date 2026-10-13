@@ -683,6 +683,9 @@ const CHECKS: Check[] = [
   { field: 'DOB', scope: ALL_TYPES, match: dateMatches },
 ];
 
+/** Fields still red when a page could not be classified: label-anchored vehicle IDs. */
+const BLIND_RED_FIELDS = new Set<CrossField>(['CHASSIS', 'ENGINE', 'VEHICLE_NO']);
+
 const FIELD_LABEL: Record<CrossField, string> = {
   NAME: 'Customer name',
   RELATION_FATHER: "Father's name",
@@ -773,8 +776,10 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   const ownCarPapers =
     claimVins.length > 0 &&
     classified.some((p) => vehiclePaper(p) && pageVins(p.text).some((x) => claimVins.some((y) => sameCar(x, y))));
+  // An unclassifiable page that prints a VIN is judged the same way: a family car's RC too
+  // poorly scanned to classify is still another car's paper.
   const otherCar = (v: Val) => {
-    if (!ownCarPapers || !vehiclePaper(v)) return false;
+    if (!ownCarPapers || !(vehiclePaper(v) || v.docType === 'UNKNOWN')) return false;
     const vins = vinsOn(v.documentId, v.page);
     return vins.length > 0 && !vins.some((x) => claimVins.some((y) => sameCar(x, y)));
   };
@@ -858,15 +863,18 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
       // a KYC card is often a relative's; relation names are compared separately, so a
       // relative's KYC still disagrees here and the reviewer judges it.
       // Address is always soft: the matcher is deliberately loose, and the sheet does not
-      // compare addresses within a claim. An unclassifiable (UNKNOWN) page is NOT softened:
-      // warnings are hidden, so a substituted page scanned too poorly to classify would hide
-      // its mismatch (review, 2026-10-13). It is worded for a check by eye instead.
+      // compare addresses within a claim. An unclassifiable (UNKNOWN) page compares type-blind:
+      // its vehicle IDs are read precisely and are what a substituted document changes, so
+      // they stay red (a poor scan must not hide a swapped policy); its names, dates and codes
+      // are mostly stray text ("Address" as a father, the dealer as the customer), so they are
+      // INFO notes the reviewer still sees, not red flags (review, 2026-10-13).
       const soft = check.field === 'ADDRESS';
       const blind = o.docType === 'UNKNOWN' || expType === 'UNKNOWN';
+      const note = blind && !BLIND_RED_FIELDS.has(check.field);
       findings.push({
         documentId: o.documentId,
         code: `CROSS_${check.field}_MISMATCH`,
-        severity: soft ? 'WARNING' : 'ERROR',
+        severity: soft ? 'WARNING' : note ? 'INFO' : 'ERROR',
         message:
           `${FIELD_LABEL[check.field]} "${o.value}" (${o.docType}) does not match "${expVal}" (${expType}) found elsewhere in this claim.` +
           (blind ? ' One page could not be classified; please confirm by eye.' : ''),
@@ -884,7 +892,7 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
       code: 'CROSS_OTHER_VEHICLE',
       severity: 'INFO',
       message:
-        `This ${v.docType === 'RC' ? 'RC' : 'policy'} is for another vehicle ` +
+        `This ${v.docType === 'RC' ? 'RC' : v.docType === 'INSURANCE' ? 'policy' : 'page'} is for another vehicle ` +
         `(${vinsOn(v.documentId, v.page)[0]}), not this claim's; it was not compared with the customer's documents.`,
       page: v.page,
       data: { vins: vinsOn(v.documentId, v.page) },

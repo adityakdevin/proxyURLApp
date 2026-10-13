@@ -1,7 +1,7 @@
 /** Regressions from the client QA summary report of 2026-10: QR points #35-38. */
 import { docFieldGroups } from '../docFields.js';
 import { compareQrToFields, panCarriesQr, qrForeignChassis } from '../qrCompare.js';
-import { classifyQrOutcome } from '../qrValidator.js';
+import { classifyQrOutcome, decodeQrImage } from '../qrValidator.js';
 
 const valueOf = (fields: { label: string; value: string | null }[], label: string) =>
   fields.find((f) => f.label === label)?.value ?? null;
@@ -59,4 +59,11 @@ describe('client QA 2026-10 — QR', () => {
     expect(panCarriesQr('INCOME TAX DEPARTMENT Permanent Account Number ABCPK1234E')).toBe(false);
     expect(panCarriesQr('TAX INVOICE Invoice No 1')).toBe(false);
   });
+});
+
+// Value: protects=an image that cannot be opened is reported as such, not as "budget spent";
+// fails_when=the read failure is folded into the retry-budget wording; seam=none (Jimp throws
+// before zxing's dynamic import, so Jest reaches it)
+it('an image that cannot be opened is marked unreadable, not retried', async () => {
+  expect(await decodeQrImage('/nonexistent/qa-card.jpg', true)).toEqual({ hits: [], retried: false, tooLarge: false, unreadable: true });
 });
