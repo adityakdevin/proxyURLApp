@@ -15,7 +15,7 @@
  */
 import { DocField } from './docFields.js';
 import { isUnreadableQrPayload } from './aadhaarSecureQr.js';
-import { nameMatches } from './crossDocLogic.js';
+import { idMatches, nameMatches } from './crossDocLogic.js';
 import { editDistanceCapped } from './logic.js';
 
 export type QrVerdict = 'MATCH' | 'MISMATCH';
@@ -225,4 +225,27 @@ export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldC
     }
   }
   return out;
+}
+
+const VIN_SHAPE = /^[A-HJ-NPR-Z0-9]{17}$/i;
+
+/**
+ * The chassis a NEW-car policy QR names, when it is not this claim's VIN; else null.
+ * A claim's ID is its VIN, so such a QR is another vehicle's policy whatever the page around
+ * it says (client QA 2026-10, #35). Only a QR whose registration reads "New": an exchange
+ * claim legitimately carries the OLD car's policy, whose QR names the old chassis.
+ */
+export function qrForeignChassis(qrValue: string, claimId: string): string | null {
+  const qr = parseQrPayload(qrValue);
+  const chassis = qr.get('chassisno') ?? qr.get('chassis');
+  const reg = qr.get('regno') ?? qr.get('regnno') ?? qr.get('registrationno') ?? qr.get('registrationnumber');
+  if (!chassis || !reg || !/^new\b/i.test(reg.trim())) return null;
+  if (!VIN_SHAPE.test(claimId) || idMatches(chassis, claimId)) return null;
+  return chassis;
+}
+
+/** The current PAN design prints "Permanent Account Number Card" and always carries a QR;
+ *  the older one says "Permanent Account Number" and has none (client QA 2026-10, #33). */
+export function panCarriesQr(pageText: string): boolean {
+  return /account\s+number\s+card/i.test(pageText);
 }

@@ -1,20 +1,4 @@
-import { CheckStatus, FindingInput, ValidatorOutcome } from './types.js';
-
-/**
- * Final stored status for a check, given what the validator decided and the evidence it
- * produced. Kept as the one place all checks route through: warning-only runs used to be
- * derived DOUBTFUL here, and that tier is now hidden from reviewers.
- */
-export function deriveCheckStatus(
-  status: 'PASSED' | 'FAILED',
-  findings: FindingInput[] | undefined
-): CheckStatus {
-  // Doubtful is hidden from reviewers (decision of 2026-10-12): a warning-only run reads
-  // PASSED and its warnings are not shown. Anything that must not pass silently is raised
-  // as an ERROR by its validator instead.
-  void findings;
-  return status;
-}
+import { ValidatorOutcome } from './types.js';
 
 /** A document FAILS the SPELL check on the FIRST distinct expected-term misspelling.
  *  Human reviewers flag a form on a single genuine typo ("enginear", "Cleark",
@@ -232,6 +216,8 @@ const ID_GLYPH: Record<string, string> = { o: '0', q: '0', d: '0', i: '1', l: '1
 const idFold = (s: string) => [...normalizeText(s)].map((c) => ID_GLYPH[c] ?? c).join('');
 /** Claim IDs at least this long (a VIN is 17) may be matched through OCR misreads. */
 export const INTRA_FUZZY_MIN_LEN = 10;
+/** A VIN's serial number: its last six characters. */
+const SERIAL_LEN = 6;
 
 /**
  * The claim ID as OCR may have printed it: same glyph-folded form with at most one other
@@ -239,17 +225,25 @@ export const INTRA_FUZZY_MIN_LEN = 10;
  *
  * Exact matching failed 164 of 570 sample claims, nearly all on an invoice whose VIN reads
  * "MZBGESISVIN701510" for MZBGE815VTN701510 (client QA 2026-10, #39-40); this recovers 138.
- * One extra difference, not two: a document for another car of the same series differs in
- * only the last digit or two, and that must still fail.
+ * One extra difference, not two, and never in the serial: a document for another car of the
+ * same series differs only in the last digit or two, and that must still fail.
  */
 export function fuzzyClaimIdMatch(text: string, claimId: string): string | null {
   const id = idFold(claimId);
   if (id.length < INTRA_FUZZY_MIN_LEN) return null;
   const raw = normalizeText(text);
   const folded = idFold(text);
+  // The serial — the last six — must agree exactly once glyphs are folded: it is what
+  // tells two cars of one series apart, and the misread this recovers ("VIN" for "VTN")
+  // sits in the model code, never there.
+  const serialFrom = id.length - SERIAL_LEN;
   for (let i = 0; i + id.length <= folded.length; i++) {
     let diff = 0;
-    for (let j = 0; j < id.length && diff <= 1; j++) if (folded[i + j] !== id[j]) diff++;
+    for (let j = 0; j < id.length && diff <= 1; j++) {
+      if (folded[i + j] === id[j]) continue;
+      if (j >= serialFrom) diff = 2;
+      else diff++;
+    }
     if (diff <= 1) return raw.slice(i, i + id.length).toUpperCase();
   }
   return null;

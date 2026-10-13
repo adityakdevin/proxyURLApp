@@ -127,7 +127,7 @@ export function nameMatches(a: string, b: string): boolean {
     for (let j = i + 2; j <= sb.length; j++) if (sb.slice(i, j).join('') === joined) return true;
   }
   const used = new Array(sb.length).fill(false);
-  const aligns = (x: string, y: string) =>
+  const aligns = (x: string, y: string, surnames: boolean) =>
     x === y ||
     (x.length === 1 && y[0] === x) ||
     (y.length === 1 && x[0] === y) ||
@@ -136,10 +136,11 @@ export function nameMatches(a: string, b: string): boolean {
     (x.length >= 4 && y.length >= 4 && within1(x, y)) ||
     // Two letters on a long token: "SURENTHS" / "SUREJNITHS", "GOPARADDI" / "GOPAREDDY".
     (Math.min(x.length, y.length) >= 8 && editDistanceCapped(x, y, 2) <= 2) ||
-    // A clipped last letter: "Son" for "Soni" (#23). One letter, at the end, 3+ kept.
-    (Math.min(x.length, y.length) >= 3 && Math.abs(x.length - y.length) === 1 && (x.startsWith(y) || y.startsWith(x)));
-  for (const t of sa) {
-    const i = sb.findIndex((u, idx) => !used[idx] && aligns(t, u));
+    // A clipped last letter on the surname only: "Son" for "Soni" (#23). One letter, at the
+    // end, 3+ kept. On a given name it would make "Kumar" and "Kumari" one person.
+    (surnames && Math.min(x.length, y.length) >= 3 && Math.abs(x.length - y.length) === 1 && (x.startsWith(y) || y.startsWith(x)));
+  for (const [ti, t] of sa.entries()) {
+    const i = sb.findIndex((u, idx) => !used[idx] && aligns(t, u, ti === sa.length - 1 && idx === sb.length - 1));
     if (i < 0) return false;
     used[i] = true;
   }
@@ -433,6 +434,8 @@ const NON_PERSON_NAME_LABEL = new Set([
   // this the dealership was reported as the insured — the one name on the page that is
   // certainly NOT the customer.
   'misp',
+  // ...and as OCR prints that label: "MIS Name", "MSP Name" (client QA 2026-10, #18, #24, #28).
+  'mis', 'msp',
   // RC "Maker's Name : TOYOTA KIRLOSKAR MOTOR" — the manufacturer, not the owner.
   'maker', 'manufacturer',
   // "Payer Name : DRIVE N RIDE" — whoever paid the premium, often the dealer; and the
@@ -467,7 +470,6 @@ const NAME_RE =
  *  that follow, up to the first word with a lower-case letter (#20). */
 const BILL_TO_LOOSE = /\b[Bb][Ii][Ll]{1,2}\s*[Tt1][Oo0]\b\s*[:\-]?\s*([A-Z][A-Z. ]{2,40}?)(?=\s+[A-Z]?[a-z]|\s*$)/gm;
 
-/** Customer/employee names, with non-person "X Name" labels and relation names removed. */
 /** A heading on the line just above a bare "Name :" that says whose name it is. */
 const NON_PERSON_SECTION =
   /\b(?:nominee|m[i1l]sp|payer|signatory|authori[sz]ed|financier|hypothecat\w*|broker|agent|intermediary|dealer|employer|appointee|guardian)\b/i;
@@ -491,17 +493,16 @@ function sectionHeadingBefore(text: string, at: number): boolean {
 /** "F.Name" / "M.Name": a staff ID card's father's / mother's name, not the holder's (#24). */
 const RELATION_INITIAL_BEFORE = /\b[FM]\.\s*$/i;
 
-/** The selling dealer's "MISP Name" as OCR prints it: "MIS Name", "MSP Name" (#18, #24, #28). */
-const MISP_OCR = new Set(['mis', 'msp']);
 
 /** "M1SP" → "misp": OCR swaps in a label word must not slip past the blocklist. */
 const labelWord = (w: string) => w.toLowerCase().replace(/1/g, 'i').replace(/0/g, 'o');
 
+/** Customer/employee names, with non-person "X Name" labels and relation names removed. */
 export function extractNames(text: string): string[] {
   const relations = extractRelationNames(text);
   const out: string[] = [];
   for (const m of text.matchAll(NAME_RE)) {
-    if (m[1] && (NON_PERSON_NAME_LABEL.has(labelWord(m[1])) || MISP_OCR.has(labelWord(m[1])))) continue;
+    if (m[1] && NON_PERSON_NAME_LABEL.has(labelWord(m[1]))) continue;
     if (!m[1] && /^name/i.test(m[0]) && sectionHeadingBefore(text, m.index ?? 0)) continue;
     if (!m[1] && RELATION_INITIAL_BEFORE.test(text.slice(Math.max(0, (m.index ?? 0) - 4), m.index ?? 0))) continue;
     let v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
@@ -707,12 +708,6 @@ interface Val {
   docType: DocTypeCode | 'UNKNOWN';
 }
 
-/**
- * Compare each field across the claim's classified pages and emit a red flag when a
- * value disagrees across doc types (or documents). Values from UNKNOWN (unclassifiable)
- * pages still take part — type-blind fallback — but any flag they cause is a WARNING,
- * not a hard red flag, and the page is separately noted as unclassified.
- */
 /** VIN-shaped codes on a page (17 chars, 5+ digits), labelled or not. I, O and Q are no VIN
  *  letters but are what OCR prints for 1 and 0 ("MZBEB8I2TTN100005"); idMatches folds them. */
 const pageVins = (text: string) =>
@@ -733,6 +728,12 @@ function relationHolder(text: string, value: string): string | null {
   return null;
 }
 
+/**
+ * Compare each field across the claim's classified pages and emit a red flag when a
+ * value disagrees across doc types (or documents). Values from UNKNOWN (unclassifiable)
+ * pages still take part — type-blind fallback — but any flag they cause is a WARNING,
+ * not a hard red flag, and the page is separately noted as unclassified.
+ */
 export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): FindingInput[] {
   const classified = pages.map((p) => ({ ...p, docType: pageType(p) }));
   const findings: FindingInput[] = [];
@@ -753,15 +754,25 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
   // Judged against THIS claim's car — its VIN — not against whichever
   // cluster is larger, so a family car's papers outnumbering the customer's own cannot
   // set the customer's own RC or policy aside.
+  // Same car when the serial — the last six — agrees within one misread: OCR mangles a
+  // VIN's front ("MZBBISHILSN100007" on a customer's own policy) far more than a different
+  // car shares its serial.
+  const sameCar = (x: string, y: string) => idMatches(x, y) || within1(idNorm(x).slice(-6), idNorm(y).slice(-6));
+  const vehiclePaper = (p: { docType: DocTypeCode | 'UNKNOWN' }) => p.docType === 'RC' || p.docType === 'INSURANCE';
+  const vinsOn = (documentId: string, page: number | null) =>
+    pageVins(classified.find((p) => p.documentId === documentId && p.page === page)?.text ?? '');
+  // Another car's papers are set aside only when the customer's OWN RC or policy is in the
+  // bundle too: then the other set is the old or family car. Without it, a policy for a
+  // different VIN is the fraud this check exists for, and it is compared as before.
+  const ownCarPapers =
+    claimVins.length > 0 &&
+    classified.some((p) => vehiclePaper(p) && pageVins(p.text).some((x) => claimVins.some((y) => sameCar(x, y))));
   const otherCar = (v: Val) => {
-    if (v.docType !== 'RC' && v.docType !== 'INSURANCE') return false;
-    const vins = pageVins(classified.find((p) => p.documentId === v.documentId && p.page === v.page)?.text ?? '');
-    // Same car when the serial — the last six — agrees within one misread: OCR mangles a
-    // VIN's front ("MZBBISHILSN100007" on a customer's own policy) far more than a different
-    // car shares its serial.
-    const sameCar = (x: string, y: string) => idMatches(x, y) || within1(idNorm(x).slice(-6), idNorm(y).slice(-6));
-    return vins.length > 0 && claimVins.length > 0 && !vins.some((x) => claimVins.some((y) => sameCar(x, y)));
+    if (!ownCarPapers || !vehiclePaper(v)) return false;
+    const vins = vinsOn(v.documentId, v.page);
+    return vins.length > 0 && !vins.some((x) => claimVins.some((y) => sameCar(x, y)));
   };
+  const setAside = new Map<string, Val>(); // documentId:page -> one value from that page
 
   for (const check of CHECKS) {
     const vals: Val[] = [];
@@ -806,7 +817,11 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
     }
     // Set aside before choosing what counts as "expected", so the other car's papers neither
     // get compared nor outvote the customer's own.
-    for (let i = vals.length - 1; i >= 0; i--) if (otherCar(vals[i])) vals.splice(i, 1);
+    for (let i = vals.length - 1; i >= 0; i--) {
+      if (!otherCar(vals[i])) continue;
+      setAside.set(`${vals[i].documentId}:${vals[i].page}`, vals[i]);
+      vals.splice(i, 1);
+    }
     if (vals.length < 2) continue;
 
     // Greedy equivalence clusters by the field's matcher.
@@ -848,6 +863,21 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
         data: { field: check.field, expected: expVal, actual: o.value, expectedType: expType, actualType: o.docType },
       });
     }
+  }
+
+  // Say which pages were set aside as another vehicle's, so a reviewer can see it was a
+  // judgement, not a silent skip. INFO: shown, never a red flag on its own.
+  for (const v of setAside.values()) {
+    findings.push({
+      documentId: v.documentId,
+      code: 'CROSS_OTHER_VEHICLE',
+      severity: 'INFO',
+      message:
+        `This ${v.docType === 'RC' ? 'RC' : 'policy'} is for another vehicle ` +
+        `(${vinsOn(v.documentId, v.page)[0]}), not this claim's; it was not compared with the customer's documents.`,
+      page: v.page,
+      data: { vins: vinsOn(v.documentId, v.page) },
+    });
   }
 
   // Surface every page we could not classify but that carried a comparable field —

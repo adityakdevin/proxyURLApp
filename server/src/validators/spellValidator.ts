@@ -147,7 +147,6 @@ export const spellValidator: Validator = {
       const isRealWord = (w: string) =>
         dictHasWord(s, w) || glossary.has(w.toLowerCase()) || KNOWN_LOCAL_WORDS.has(w.toLowerCase());
       // Finding no misspelling in OCR noise is not a pass — nothing was actually checked.
-      // Say so, as a WARNING, so the check reads DOUBTFUL rather than a green tick.
       if (words.length >= UNREADABLE_MIN_WORDS) {
         const real = words.filter(isRealWord).length;
         if (real / words.length < UNREADABLE_REAL_WORD_RATIO) {
@@ -155,7 +154,7 @@ export const spellValidator: Validator = {
           findings.push({
             documentId,
             code: 'SPELL_UNREADABLE',
-            severity: 'WARNING',
+            severity: 'ERROR',
             message:
               `${name} could not be read reliably (only ${Math.round((100 * real) / words.length)}% ` +
               `of its words are real words), so its spelling was not checked — please check it visually`,
@@ -215,14 +214,16 @@ export const spellValidator: Validator = {
     // Only CONFIDENT misspellings FAIL the check — a poor scan must not fail a claim.
     // Doubtful hits are WARNINGs, hidden from reviewers: they neither fail the check nor
     // appear in its summary.
-    const status = distinct.size >= SPELL_MIN_TERM_HITS ? 'FAILED' : 'PASSED';
+    const unread = findings.filter((f) => f.code === 'SPELL_UNREADABLE').length;
+    const status = distinct.size >= SPELL_MIN_TERM_HITS || unread > 0 ? 'FAILED' : 'PASSED';
     const parts: string[] = [];
     if (distinct.size) parts.push(`${distinct.size} expected-term misspelling(s): ${sample.slice(0, 8).join(', ')}`);
+    if (unread) parts.push(`${unread} document(s) could not be read reliably — please check them visually`);
     return {
       status,
       summary: parts.length ? parts.join('. ') : 'No expected-term misspellings found.',
       details: { suspect: sample, doubtful: doubtfulSample },
-      // Both tiers surface: a doubtful word still needs the reviewer's eye on the page.
+      // Doubtful (WARNING) hits are stored but hidden from reviewers; only SUSPECT shows.
       findings: findings.slice(0, 200),
     };
   },

@@ -25,7 +25,7 @@ export function classify(fileName: string, docTypes: ClassifiableType[]): string
 
 /** Short type codes fused onto a following word that still name the document:
  *  "PANCARD.pdf", "dl_front", "pancopy". */
-const FUSED_SUFFIX = /^(?:card|no|number|copy|front|back|doc|scan|\d)/;
+const FUSED_SUFFIX = /^(?:card|book|no|number|copy|front|back|doc|scan|\d)/;
 
 /** Does `fileName` carry `tok` as a word, not merely as letters inside one? A bare substring
  *  match typed "Insurance Company.pdf" and "Pankaj_salary.pdf" as PAN cards, and Missing Docs
@@ -42,5 +42,8 @@ function nameHasToken(fileName: string, tok: string): boolean {
     const after = words[i].slice(tok.length);
     if (after === '' || FUSED_SUFFIX.test(after)) return true;
   }
-  return false;
+  // A long type name may also END a run-together word ("taxinvoice.pdf",
+  // "vehicleinsurance.pdf"). Long only: a short code at a word's end is too often letters
+  // of another word ("Japan" ends in "pan").
+  return tok.length > 4 && words.some((w) => w.length > tok.length && w.endsWith(tok));
 }

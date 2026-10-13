@@ -154,7 +154,7 @@ export function checkGst(text: string, page: number | null = null): RedFlagFindi
   const cand = labeledCandidate(text, /\bGSTIN\b|\bGST\s*(?:no|reg)/i, /\b[0-9]{2}[A-Z0-9]{13}\b/);
   if (!cand) return [];
   if (GST_RE.test(cand)) return [];
-  if ((cand.length === 15 && GST_RE.test(gstFold(cand))) || ocrAdjacent(cand, GST_RE)) return [warn('REDFLAG_GST_UNREADABLE', `Possible GSTIN "${cand}" too OCR-garbled to verify`, page)];
+  if ((cand.length === 15 && GST_RE.test(gstFold(cand))) || ocrAdjacent(cand, GST_RE)) return [err('REDFLAG_GST_UNREADABLE', `GSTIN "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page)];
   const why = cand.length !== 15 ? `is ${cand.length} chars, not 15` : cand[13] !== 'Z' ? 'is missing the mandatory Z at position 14' : 'has an invalid format';
   return [err('REDFLAG_GST_FORMAT', `GSTIN "${cand}" ${why}`, page, { gst: cand })];
 }
@@ -231,11 +231,11 @@ export function checkPassportPages(pages: { page: number; text: string }[]): Red
   ];
 }
 
-/** Label-anchored digit run following an Aadhaar/VID label. Group 1 = the text between
- *  label and number (used to reject a number that actually belongs to a nearby label). */
 /** Every VID label and its digit run, for checkVid; same shape as labelledDigits. */
 const VID_LABEL_RE = /\b(?:V\.?I\.?D|virtual\s*id)\b([^0-9]{0,24})((?:\d[ \t-]?){7,20}\d)/gi;
 
+/** Label-anchored digit run following an Aadhaar/VID label. Group 1 = the text between
+ *  label and number (used to reject a number that actually belongs to a nearby label). */
 const labelledDigits = (text: string, label: string): RegExpExecArray | null =>
   // Separators are spaces/hyphens on the SAME line: with \\s the run crossed a line break
   // and swallowed the first digit of whatever was printed below the VID (a date, the
@@ -266,7 +266,6 @@ export function checkAadhaarFormat(text: string, page: number | null = null): Re
 // 2026-07-28 and red-flagged every real VID.
 const VID_DIGITS = 16;
 
-/** Virtual ID (VID) printed beside the Aadhaar number must be VID_DIGITS long. */
 /** A VID as read, with a stray one- or two-digit tail dropped: the card edge or the
  *  Aadhaar line beside it OCRs as " 1" / " 4" after a correct 16 ("9123456789012345 1",
  *  "91234567 89012345 4", client QA 2026-10). A 4-digit fifth group
@@ -278,6 +277,7 @@ function vidRead(raw: string): string {
   return tail && stripSep(tail[1]).length === VID_DIGITS ? tail[1] : raw;
 }
 
+/** Virtual ID (VID) printed beside the Aadhaar number must be VID_DIGITS long. */
 export function checkVid(text: string, page: number | null = null): RedFlagFinding[] {
   const reads = [...text.matchAll(VID_LABEL_RE)].map((m) => vidRead(m[2].trim()));
   if (reads.length === 0) return [];
@@ -287,11 +287,12 @@ export function checkVid(text: string, page: number | null = null): RedFlagFindi
   if (reads.some((r) => stripSep(r).length === VID_DIGITS)) return [];
   const raw = reads[0];
   const digits = stripSep(raw);
-  // Irregular grouping ("9876 5432 109 87654") is an OCR misread, not a forged VID: say
-  // it could not be read rather than failing the claim on it.
+  // Irregular grouping ("9876 5432 109 87654") is most likely an OCR misread, not a forged
+  // VID. Still a red flag, worded as a possible misread: warnings are hidden from reviewers,
+  // and a malformed ID must not pass silently (security review, 2026-10-13).
   const groups = raw.split(/[ \t-]+/);
   if (groups.length > 1 && groups.some((g) => g.length !== 4) && Math.abs(digits.length - VID_DIGITS) <= 1) {
-    return [warn('REDFLAG_VID_UNREADABLE', `VID "${raw}" could not be read reliably (${digits.length} digits)`, page, { vid: digits })];
+    return [err('REDFLAG_VID_UNREADABLE', `VID "${raw}" could not be read reliably (${digits.length} digits) — possibly a scan misread, please confirm visually`, page, { vid: digits })];
   }
   return [
     err('REDFLAG_VID_FORMAT', `VID "${raw}" is ${digits.length} digits, not ${VID_DIGITS}`, page, { vid: digits }),
@@ -340,6 +341,12 @@ export function checkAadhaar(pages: { page: number; text: string }[]): RedFlagFi
     const dob = /(?:dob|date\s*of\s*birth|year\s*of\s*birth)[^0-9]{0,12}(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{4}|\d{4})/i.exec(p.text);
     for (const n of aadhaarNumbers(p.text)) seen.push({ page: p.page, num: n, dob: dob?.[1] ?? null });
   }
+  // A back side prints no birth date. Pair it with the nearest front before it, so a back
+  // several pages from its front is still compared (review, 2026-10-13).
+  const frontOf = (back: { page: number; dob: string | null }) =>
+    back.dob !== null
+      ? null
+      : Math.max(-1, ...seen.filter((x) => x.dob !== null && x.page < back.page).map((x) => x.page));
   const out: RedFlagFinding[] = [];
   const reported = new Set<string>();
   for (const a of seen) {
@@ -347,7 +354,7 @@ export function checkAadhaar(pages: { page: number; text: string }[]): RedFlagFi
       // Same card (same or adjacent page), or the same person by birth date wherever the
       // pages sit: one holder's card bearing two numbers is the forgery this check exists
       // for, and adjacency alone would let it hide across a bundle.
-      const samePerson = a.dob !== null && a.dob === b.dob;
+      const samePerson = (a.dob !== null && a.dob === b.dob) || frontOf(a) === b.page || frontOf(b) === a.page;
       if (a.num >= b.num || (Math.abs(a.page - b.page) > 1 && !samePerson)) continue;
       const key = `${a.num}|${b.num}`;
       if (reported.has(key)) continue;
@@ -583,7 +590,9 @@ export function checkDates(fileText: string, page: number | null = null): RedFla
     const raw = m[0];
     // Starting mid-number is not a date: a payslip's "LWP 0.00/0.00" matched as "00/0.00"
     // and failed the claim on an impossible date (client QA 2026-10, #6).
-    if (/[\d.,]/.test(fileText[(m.index ?? 0) - 1] ?? '')) continue;
+    // Mid-number only: a digit before it, or a '.'/',' that itself follows a digit. A dot
+    // after a label ("Dt.31/02/2024", "No.") is not inside a number and must be checked.
+    if (/\d[.,]?$/.test(fileText.slice(Math.max(0, (m.index ?? 0) - 2), m.index ?? 0))) continue;
     if (seen.has(raw)) continue;
     seen.add(raw);
     const day = +m[1];

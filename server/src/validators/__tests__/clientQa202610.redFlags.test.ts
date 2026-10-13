@@ -9,7 +9,7 @@ describe('client QA 2026-10 — Red Flags', () => {
     expect(checkVid('VID : 9876 5432 1098 7654\n1 Jan 1990')).toEqual([]);
     expect(checkVid('VID: 9876 5432 1098 7654 12/03/2024')).toEqual([]);
   });
-  it('#1 an irregularly grouped VID one digit off is unreadable, not a red flag', () => {
+  it('#1 an irregularly grouped VID one digit off with 16 digits is accepted', () => {
     const [f] = checkVid('VID : 9876 5432 109 87654 3');
     expect(f?.severity ?? 'none').not.toBe('ERROR');
   });
@@ -22,6 +22,11 @@ describe('client QA 2026-10 — Red Flags', () => {
   it('#1 one clean VID line on the page settles it', () => {
     // OCR garbled the first VID line and read the second cleanly.
     expect(checkVid('VID; 11122223333 4444 H security\n7000 1111 2222 3] VID : 9111 2222 3333 4444')).toEqual([]);
+  });
+  it('#1 a 15- or 17-digit VID with odd grouping is a visible possible misread', () => {
+    const [f] = checkVid('VID : 9876 5432 109 8765');
+    expect(f).toMatchObject({ code: 'REDFLAG_VID_UNREADABLE', severity: 'ERROR' });
+    expect(f.message).toContain('possibly a scan misread');
   });
   it('#1 a genuinely short, regularly grouped VID is still flagged', () => {
     expect(checkVid('VID : 9876 5432 1098')[0].code).toBe('REDFLAG_VID_FORMAT');
@@ -44,6 +49,17 @@ describe('client QA 2026-10 — Red Flags', () => {
       { page: 12, text: 'DOB: 15/06/1985 Male 6789 2345 0123' },
     ])[0].code).toBe('REDFLAG_AADHAAR_MISMATCH');
   });
+  it('#4 a back side far from its front is still compared with it', () => {
+    expect(checkAadhaar([
+      { page: 2, text: 'DOB: 15/06/1985 Male 5678 1234 9012' },
+      { page: 6, text: 'Address UIDAI 6789 2345 0123' },
+    ])[0]?.code).toBe('REDFLAG_AADHAAR_MISMATCH');
+    // Two people's fronts, each with its own birth date, are still not paired.
+    expect(checkAadhaar([
+      { page: 2, text: 'DOB: 15/06/1985 Male 5678 1234 9012' },
+      { page: 6, text: 'DOB: 20/03/1987 Male 6789 2345 0123' },
+    ])).toEqual([]);
+  });
   it('#4 a one-digit difference on one card is flagged, worded as a possible misread', () => {
     const [f] = checkAadhaar([{ page: 9, text: '9871 2345 6012 Aadhaar 0871 2345 6012' }]);
     expect(f.severity).toBe('ERROR');
@@ -51,10 +67,14 @@ describe('client QA 2026-10 — Red Flags', () => {
   });
   it('#2 a GSTIN with a 7 read as T is a misread, not malformed', () => {
     expect(checkGst('GSTIN: 36AAACKT904GIZO', 3)[0].code).toBe('REDFLAG_GST_UNREADABLE');
+    // Shown as a red flag worded as a possible misread: hidden warnings would let it pass.
+    expect(checkGst('GSTIN: 36AAACKT904GIZO', 3)[0].severity).toBe('ERROR');
   });
   it('#6 a money amount is not a date', () => {
     expect(checkDates('LWP 0.00/0.00 Basic 25,000.00')).toEqual([]);
     expect(checkDates('DOB 31/02/1990')[0].code).toBe('REDFLAG_BAD_DATE');
+    // A dot after a label is not inside a number: the date is still checked.
+    expect(checkDates('Dt.31/02/2024')[0]?.code).toBe('REDFLAG_BAD_DATE');
   });
   it('#3 two EPIC reads one digit apart are flagged, worded as a possible misread', () => {
     const [f] = checkVoterId([
@@ -119,5 +139,17 @@ describe('client QA 2026-10 — Missing Docs', () => {
   });
   it('filename aadhaar_card.pdf is still an Aadhaar card', () => {
     expect(classify('aadhar_card.pdf', types)).toBe('aadhar');
+  });
+  // Review 2026-10-13: run-together lower-case names still classify by a long type name.
+  const more: ClassifiableType[] = [
+    ...types,
+    { id: 'inv', name: 'Invoice', category: 'CUSTOM', govtCode: null, displayOrder: 5 },
+    { id: 'rc', name: 'Registration Certificate', category: 'GOVT', govtCode: 'RC', displayOrder: 4 },
+  ];
+  it.each([['taxinvoice.pdf', 'inv'], ['customerinvoice.pdf', 'inv'], ['RCBook.pdf', 'rc']])('filename %s is classified', (f, id) => {
+    expect(classify(f, more)).toBe(id);
+  });
+  it('a short code at the end of another word still does not classify', () => {
+    expect(classify('Japan.pdf', more)).toBeNull();
   });
 });
