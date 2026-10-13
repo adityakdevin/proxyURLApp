@@ -53,8 +53,8 @@ const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlag
 // offending value in its message and carries it in `data`, and META fills ctx.wordBoxes with
 // coordinates for scanned AND digital PDFs alike — so the box can simply be looked up.
 
-/** Compare on alphanumerics only: a VID prints as "9150 6457 2260 8544" and is recorded as
- *  "9150645722608544", and a PAN may carry stray punctuation from OCR. */
+/** Compare on alphanumerics only: a VID prints as "9876 5432 1098 7654" and is recorded as
+ *  "9876543210987654", and a PAN may carry stray punctuation from OCR. */
 const norm = (s: string) => s.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
 /** Below this a value is too short to identify one place on a page — a 4-character match
@@ -207,14 +207,22 @@ export const redFlagValidator: Validator = {
 
       // Cross-page rules over ALL of this document's pages (a back side may be unclassified).
       const asPages = pages.map((p) => ({ page: p.page ?? 1, text: p.text }));
-      if (codes.has('AADHAR')) for (const f of checkAadhaar(asPages)) findings.push(toFinding(doc.id, f));
+      if (codes.has('AADHAR')) {
+        const aadhaarPages = asPages.filter((_, i) => pages[i].govtCode === 'AADHAR');
+        for (const f of checkAadhaar(aadhaarPages)) findings.push(toFinding(doc.id, f));
+      }
       if (codes.has('VOTER_ID')) {
         // Only the Voter ID's own sides: the bundle's RC or engine-number pages carry
         // AAA9999999-shaped tokens too, and comparing them reported a mismatch on a card
         // whose two sides agree (client QA 2026-10). An unclassified page right after a
         // Voter page is its back side.
+        // …but only when it reads like one: on 648914 the page after the Voter ID was a
+        // Government of Gujarat card whose "GCN1234567" was compared as the EPIC.
+        const voterBack = /elector|election|\bepic\b|voter|मतदाता|निर्वाचन/i;
         const voterPages = asPages.filter(
-          (_, i) => pages[i].govtCode === 'VOTER_ID' || (!pages[i].govtCode && i > 0 && pages[i - 1].govtCode === 'VOTER_ID')
+          (p, i) =>
+            pages[i].govtCode === 'VOTER_ID' ||
+            (!pages[i].govtCode && i > 0 && pages[i - 1].govtCode === 'VOTER_ID' && voterBack.test(p.text))
         );
         for (const f of checkVoterId(voterPages)) findings.push(toFinding(doc.id, f));
       }
@@ -265,16 +273,15 @@ export const redFlagValidator: Validator = {
     if (errors > 0) {
       return {
         status: 'FAILED',
-        summary: `${errors} red flag(s) found: ${perRule}${warnings ? `; ${warnings} advisory` : ''}.`,
+        // Advisories (WARNING) are hidden from reviewers, so the card does not count them.
+        summary: `${errors} red flag(s) found: ${perRule}.`,
         findings,
         details: { counts },
       };
     }
     return {
       status: 'PASSED',
-      summary: warnings
-        ? `No red flags; ${warnings} advisory note(s).`
-        : notes
+      summary: notes
         ? `No red flags; ${notes} check(s) verified.`
         : 'No red flags found.',
       findings: findings.length > 0 ? findings : undefined,
