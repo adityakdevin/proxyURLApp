@@ -20,7 +20,7 @@ export const intraValidator: Validator = {
         continue;
       }
       // Found only through a likely scan misread: present, but the reviewer confirms it.
-      // A WARNING on a PASSED run is what reads DOUBTFUL, not a green tick.
+      // Recorded as a WARNING, which reviewers do not see (Doubtful is hidden, 2026-10-12).
       const seen = fuzzyClaimIdMatch(text, ctx.claim.claimId);
       if (seen) {
         found++;

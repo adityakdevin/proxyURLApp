@@ -7,7 +7,10 @@ import {
   FindingInput,
   CheckStatus,
 } from '../validators/types.js';
-import { deriveCheckStatus } from '../validators/logic.js';
+import { DUP_CLAIMS_CAP } from '../validators/dupValidator.js';
+// A cycle (validationQueue imports this module), safe because enqueue is only called at run
+// time, never while modules load. Static rather than import(): Jest cannot run import().
+import { enqueue } from './validationQueue.js';
 
 /** Bound the rows written per check so a noisy OCR page can't flood the table. */
 const MAX_FINDINGS_PER_RESULT = 200;
@@ -313,9 +316,10 @@ export class ValidationService {
         let ran: Ran;
         try {
           const outcome = await withTimeout(v.run(ctx), checkTimeoutMs(), v.key);
-          // DOUBTFUL is decided here, not per validator: a check that passed but raised
-          // warning-level findings must not show the reviewer a green badge.
-          ran = { ...outcome, v, status: deriveCheckStatus(outcome.status, outcome.findings) };
+          // The validator's own verdict is stored. Warning-only runs used to be downgraded to
+          // DOUBTFUL here; that tier is hidden from reviewers (2026-10-12), so anything that
+          // must not pass silently is raised as an ERROR by its validator instead.
+          ran = { ...outcome, v };
         } catch (e) {
           ran = {
             v,
@@ -384,7 +388,10 @@ export class ValidationService {
                 validatorKey: r.v.key,
                 documentId: f.documentId ?? null,
                 code: f.code,
-                severity: f.severity ?? 'WARNING',
+                // No explicit severity: an ERROR on a failed check, INFO otherwise. It used to
+                // default to WARNING, which reviewers no longer see — every plain "Missing docs"
+                // line was hidden behind a FAILED card (review, 2026-10-13).
+                severity: f.severity ?? (r.status === 'FAILED' ? 'ERROR' : 'INFO'),
                 message: f.message.slice(0, 500),
                 page: f.page ?? null,
                 // Prisma's InputJsonValue rejects named interfaces (no index signature); cast via unknown.
@@ -546,7 +553,10 @@ export class ValidationService {
           id: { not: claim.id },
           subCategoryId: claim.subCategoryId,
           status: 'ACTIVE',
-          validationRuns: { none: { status: { in: ['QUEUED', 'RUNNING'] } } },
+          // A QUEUED run has not started and will see this claim. A RUNNING one may have read
+          // the index before this claim wrote to it (concurrent bulk runs), so it still gets a
+          // fresh run behind it — enqueue adds one rather than joining a frozen snapshot.
+          validationRuns: { none: { status: 'QUEUED' } },
         },
         select: {
           id: true,
@@ -562,12 +572,12 @@ export class ValidationService {
       const namesMe = (p: (typeof partners)[number]) =>
         (p.validationResults[0]?.findings ?? []).some((f) => {
           const c = (f.data as { claims?: unknown } | null)?.claims;
-          return Array.isArray(c) && c.includes(claim.claimId);
+          // A list at the cap may have cut this claim off; treat it as naming us, or a group
+          // of more than DUP_CLAIMS_CAP claims re-queues itself forever (review, 2026-10-13).
+          return Array.isArray(c) && (c.includes(claim.claimId) || c.length >= DUP_CLAIMS_CAP);
         });
       const stale = partners.filter((p) => !namesMe(p));
       if (stale.length === 0) return;
-      // Imported here: validationQueue imports this module.
-      const { enqueue } = await import('./validationQueue.js');
       for (const p of stale) await enqueue(this.prisma, this.validators, p.id, 'AUTO');
     } catch (e) {
       // Best effort: the partner keeps its old result, which is no worse than before.

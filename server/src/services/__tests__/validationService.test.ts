@@ -496,18 +496,136 @@ describe('ValidationService + drainer', () => {
           },
         },
       ];
+      // Set every claim up first, so overlap depends on the drainer, not on how fast the
+      // database round-trips between enqueues are.
+      const ids: string[] = [];
       for (let i = 0; i < 6; i++) {
         const c = await makeClaim(`C-BW${i}`);
         await prisma.document.create({
           data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-C-BW${i}.pdf`, createdBy: adminId },
         });
-        await enqueue(prisma, slow, c.id, 'AUTO');
+        ids.push(c.id);
       }
+      for (const id of ids) await enqueue(prisma, slow, id, 'AUTO');
       await drained();
       expect(peak).toBeGreaterThan(1);
     } finally {
       process.env.VALIDATION_CONCURRENCY = prev;
     }
+  });
+
+  // Value: protects=a finding with no severity on a failed check is stored visible (ERROR);
+  // fails_when=the persistence default goes back to WARNING, which reviewers never see;
+  // why_new=every plain "Missing docs" line was hidden this way; seam=none; no_claim=UI rendering
+  it('stores a finding without a severity as ERROR on a failed check', async () => {
+    const c = await makeClaim(`C-SEV-${SUF}`);
+    await prisma.document.create({
+      data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-sev.pdf`, createdBy: adminId },
+    });
+    const v: Validator[] = [
+      {
+        key: 'FULL',
+        column: 'fullScanStatus',
+        run: async () => ({ status: 'FAILED', summary: 'missing', findings: [{ documentId: null, code: 'FULL_MISSING_TYPE', message: 'Missing docs - PAN Card' }] }),
+      },
+    ];
+    await enqueue(prisma, v, c.id, 'AUTO');
+    await kickDrain(prisma, v);
+    await drained();
+    const f = await prisma.validationFinding.findFirst({ where: { claimId: c.id, code: 'FULL_MISSING_TYPE' } });
+    expect(f?.severity).toBe('ERROR');
+  });
+
+  // Value: protects=a run queued while every worker is busy is still drained, and the
+  // caller's promise waits for it; fails_when=the rearm/chaining in kickDrain regresses;
+  // why_new=only the top-up path was tested; seam=none; no_claim=multi-process drains
+  it('drains a run queued while every worker is busy', async () => {
+    const prev = process.env.VALIDATION_CONCURRENCY;
+    process.env.VALIDATION_CONCURRENCY = '1';
+    try {
+      const slow: Validator[] = [
+        {
+          key: 'FULL',
+          column: 'fullScanStatus',
+          run: async () => {
+            await new Promise((r) => setTimeout(r, 80));
+            return { status: 'PASSED', summary: 'ok' };
+          },
+        },
+      ];
+      const mk = async (id: string) => {
+        const c = await makeClaim(id);
+        await prisma.document.create({
+          data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-${id}.pdf`, createdBy: adminId },
+        });
+        return c;
+      };
+      const a = await mk(`C-RA-${SUF}`);
+      const b = await mk(`C-RB-${SUF}`);
+      await enqueue(prisma, slow, a.id, 'AUTO');
+      await new Promise((r) => setTimeout(r, 20)); // A is RUNNING, the only worker busy
+      await enqueue(prisma, slow, b.id, 'AUTO');
+      await kickDrain(prisma, slow);
+      const runB = await prisma.validationRun.findFirst({ where: { claimId: b.id } });
+      expect(runB?.status).toBe('COMPLETED');
+    } finally {
+      process.env.VALIDATION_CONCURRENCY = prev;
+    }
+  });
+
+  // Value: protects=a duplicate partner is re-validated once and the pair then stops; a
+  // capped partner list never re-queues; fails_when=requeueDuplicatePartners or its namesMe
+  // test is removed or inverted (one-sided duplicate, or an endless re-validation loop);
+  // why_new=no test ran a DUP ERROR through runOne; seam=none; no_claim=real DUP extraction
+  describe('duplicate partners', () => {
+    const withDoc = async (claimId: string) => {
+      const c = await makeClaim(claimId);
+      await prisma.document.create({
+        data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-${claimId}.pdf`, createdBy: adminId },
+      });
+      return c;
+    };
+    const dupNaming = (names: (claimId: string) => string[]): Validator[] => [
+      {
+        key: 'DUP',
+        column: 'duplicateStatus',
+        run: async (ctx) => ({
+          status: 'FAILED',
+          summary: 'dup',
+          findings: [{ documentId: null, code: 'DUP_POLICY_NO', severity: 'ERROR', message: 'm', data: { claims: names(ctx.claim.claimId) } }],
+        }),
+      },
+    ];
+    const runsOf = (id: string) => prisma.validationRun.count({ where: { claimId: id } });
+
+    it('re-validates a partner that does not name this claim yet, once, then stops', async () => {
+      const a = await withDoc(`C-RQA-${SUF}`);
+      const b = await withDoc(`C-RQB-${SUF}`);
+      const v = dupNaming((me) => [me === a.claimId ? b.claimId : a.claimId]);
+      await enqueue(prisma, v, b.id, 'AUTO');
+      // The drainer's own promise, not a DB poll: between B completing and A being queued
+      // nothing is QUEUED or RUNNING, which a poll reads as done.
+      await kickDrain(prisma, v);
+      await drained();
+      // B named A, whose (absent) result did not name B: A ran once. A's run names B, and
+      // B's latest names A, so nothing more is queued.
+      expect(await runsOf(a.id)).toBe(1);
+      expect(await runsOf(b.id)).toBe(1);
+    });
+
+    it('does not re-queue a partner whose list is at the cap', async () => {
+      const a = await withDoc(`C-RQC-${SUF}`);
+      const b = await withDoc(`C-RQD-${SUF}`);
+      const others = Array.from({ length: 20 }, (_, i) => `C-OTHER-${i}-${SUF}`);
+      const v = dupNaming((me) => (me === b.claimId ? others : [b.claimId]));
+      await enqueue(prisma, v, b.id, 'AUTO');
+      await kickDrain(prisma, v);
+      await drained();
+      await enqueue(prisma, v, a.id, 'AUTO');
+      await kickDrain(prisma, v);
+      await drained();
+      expect(await runsOf(b.id)).toBe(1);
+    });
   });
 
   it('moves a claim off the default status once validation completes, once only', async () => {

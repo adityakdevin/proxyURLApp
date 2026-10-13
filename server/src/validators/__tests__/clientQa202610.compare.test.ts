@@ -42,6 +42,8 @@ describe('client QA 2026-10 — Data Compare', () => {
     expect(nameMatches('Lt. Harisunder', 'Shri Hari Sunder Mishra')).toBe(true);
     expect(nameMatches('MAHESH V G', 'MAHEESHV G')).toBe(true);
     expect(nameMatches('Harisunder', 'Ram Sunder Mishra')).toBe(false);
+    // The clipped-letter rule is for a surname: a given name one letter longer is another person.
+    expect(nameMatches('Ram Das', 'Rama Das')).toBe(false);
   });
   it('570-claim re-run: name spellings and labels that are not a different customer', () => {
     expect(nameMatches('MOHD SALEEM', 'MD SALEEM')).toBe(true);
@@ -69,12 +71,18 @@ describe('client QA 2026-10 — Data Compare', () => {
     const rc = { documentId: 'd', page: 7, text: 'CERTIFICATE OF REGISTRATION REGISTRATION NO : CG04QZ1234 Chassis No: MZBGB814LTN100001' };
     const old = { documentId: 'd', page: 8, text: 'Policy No: 1 premium Regn. Number CG-04-NS-5678 Chassis Number MZBGDB13LNN200002' };
     const inv = { documentId: 'd', page: 1, text: 'Vehicle Tax Invoice\nVin No. MZBGB814LTN100001' };
-    expect(crossDocFieldFindings([inv, rc, old]).filter((x) => /VEHICLE/.test(x.code))).toEqual([]);
+    expect(crossDocFieldFindings([inv, rc, old]).filter((x) => /VEHICLE_NO/.test(x.code))).toEqual([]);
   });
   it('a family member\'s car in a loyalty claim is not the customer\'s (loyalty claim)', () => {
     const inv = { documentId: 'd', page: 1, text: 'Vehicle Tax Invoice\nBill To : IMRAN KHAN\nVin No. MZBEA813LTN100003' };
     const spouse = { documentId: 'd', page: 4, text: 'CERTIFICATE OF INSURANCE premium\nInsured\'s Name : MR. SALMA BEGUM\nChassis No. MZBET813MSN200004' };
-    expect(crossDocFieldFindings([inv, spouse]).filter((x) => /NAME/.test(x.code))).toEqual([]);
+    const ownPolicy = { documentId: 'd', page: 2, text: 'CERTIFICATE OF INSURANCE premium\nInsured\'s Name : MR. IMRAN KHAN\nChassis No. MZBEA813LTN100003' };
+    const f = crossDocFieldFindings([inv, ownPolicy, spouse], 'MZBEA813LTN100003');
+    expect(f.filter((x) => /NAME/.test(x.code))).toEqual([]);
+    // Shown, not silent: the reviewer sees the page was another vehicle's.
+    expect(f.find((x) => x.code === 'CROSS_OTHER_VEHICLE')).toMatchObject({ page: 4, severity: 'INFO' });
+    // Without the customer's own RC or policy, another car's policy is the fraud: compared.
+    expect(crossDocFieldFindings([inv, spouse], 'MZBEA813LTN100003').filter((x) => /NAME/.test(x.code) && x.page === 4)).toHaveLength(1);
     // No chassis on the page: still compared (an annexure for another employee).
     const annex = { documentId: 'd', page: 6, text: 'Salary Slip Pay Slip for the month\nEmployee Name : Vivek Kumar Tiwari' };
     expect(crossDocFieldFindings([inv, annex]).filter((x) => /NAME/.test(x.code))).toHaveLength(1);
@@ -89,8 +97,9 @@ describe('client QA 2026-10 — Data Compare', () => {
   it('a scan-misread invoice VIN still identifies the claim\'s own car (OCR-read VIN)', () => {
     const inv = { documentId: 'd', page: 1, text: 'Vehicle Tax Invoice\nBill To : MEHTA NEHA RAJESH\nMZBEB8I2TTN100005 MZBEB8I12TTN100005' };
     const brother = { documentId: 'd', page: 8, text: 'CERTIFICATE OF INSURANCE premium\nInsured\'s Name : MR. SHAH ROHAN KIRIT\nGJ 03 MR 1111 RAJKOT MZBET813MPN200006' };
-    expect(crossDocFieldFindings([inv, brother], 'MZBEB812TTN100005').filter((x) => /NAME/.test(x.code))).toEqual([]);
-    expect(crossDocFieldFindings([inv, brother]).filter((x) => /NAME/.test(x.code))).toEqual([]);
+    const own = { documentId: 'd', page: 9, text: 'CERTIFICATE OF INSURANCE premium\nInsured\'s Name : MRS. MEHTA NEHA RAJESH\nChassis No. MZBEB812TTN100005' };
+    expect(crossDocFieldFindings([inv, own, brother], 'MZBEB812TTN100005').filter((x) => /NAME/.test(x.code))).toEqual([]);
+    expect(crossDocFieldFindings([inv, own, brother]).filter((x) => /NAME/.test(x.code))).toEqual([]);
   });
   it('the customer\'s own policy with a misread VIN is still compared (misread own VIN)', () => {
     const inv = { documentId: 'd', page: 1, text: 'Vehicle Tax Invoice\nBill To : PREM KUMAR\nVin No. MZBB1811LSN100007' };

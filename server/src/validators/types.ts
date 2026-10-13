@@ -93,7 +93,7 @@ export interface FindingInput {
 }
 
 /** What lands in the claim's status column. Validators decide PASSED/FAILED; DOUBTFUL is
- *  derived from their findings by `deriveCheckStatus`. */
+ *  now written only for a check that did not run (see validationService). */
 export type CheckStatus = 'PASSED' | 'FAILED' | 'DOUBTFUL';
 
 export interface ValidatorOutcome {

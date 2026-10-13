@@ -47,10 +47,7 @@ export const compareValidator: Validator = {
       }
     }
     const mismatches = findings.filter((f) => f.severity === 'ERROR').length;
-    const advisories = findings.filter((f) => f.severity === 'WARNING').length;
-
     // Advisory (WARNING) findings are hidden from reviewers, so the card does not count them.
-    void advisories;
     const summary =
       mismatches > 0
         ? `${mismatches} mismatch(es) between documents.`

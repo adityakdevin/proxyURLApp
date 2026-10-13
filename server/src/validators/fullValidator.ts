@@ -6,12 +6,14 @@ import { getSpell, isRealWord } from './dictionary.js';
 import { spellCandidates } from './logic.js';
 
 /**
- * Pages OCR could not make sense of, that no ID-card marker claimed: fewer than 8
- * dictionary words, or under 35% real words (the SPELL check's own unreadable bar). A
- * blank page yields no words at all and is not counted.
+ * Pages OCR could not make sense of, that no ID-card marker claimed: fewer than
+ * MIN_REAL_WORDS dictionary words, or under REAL_WORD_RATIO of its words real (the ratio
+ * SPELL uses for an unreadable document). A blank page yields no words and is not counted.
  * ponytail: dictionary words as the readability measure; use Tesseract confidence if
  * the OCR port starts returning it per page.
  */
+const MIN_REAL_WORDS = 8;
+const REAL_WORD_RATIO = 0.35;
 async function unreadablePages(instances: DocInstance[]): Promise<DocInstance[]> {
   const spell = await getSpell();
   return instances.filter((i) => {
@@ -19,7 +21,7 @@ async function unreadablePages(instances: DocInstance[]): Promise<DocInstance[]>
     const words = spellCandidates(i.text);
     if (words.length === 0) return false;
     const real = words.filter((w) => isRealWord(spell, w)).length;
-    return real < 8 || real / words.length < 0.35;
+    return real < MIN_REAL_WORDS || real / words.length < REAL_WORD_RATIO;
   });
 }
 

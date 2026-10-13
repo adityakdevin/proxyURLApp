@@ -86,6 +86,11 @@ export function normValue(field: DupField, v: string): string {
 
 /** Below this a "value" is too short to be evidence of anything (OCR noise, "NA", "01"). */
 const MIN_NORM_LEN = 4;
+/** How many partner claim ids a finding's data carries. validationService reads a list
+ *  this long as complete-enough: it cannot tell whether this claim was cut off. */
+export const DUP_CLAIMS_CAP = 20;
+/** A digit-less address of this many words or fewer is a town line, not a home. */
+const TOWN_LINE_MAX_WORDS = 5;
 /** Guard against a pathological document flooding the table. */
 const MAX_VALUES_PER_CLAIM = 500;
 
@@ -119,12 +124,14 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
           // (client QA 2026-10, #18). Skip a town-and-state line: no number besides the PIN and
           // three words or fewer. A village address ("VILLAGE BIJAURI, DISTRICT JABALPUR")
           // has no house number either, but says more than a town. With no number at all, not
-          // even a PIN, it is a town, district and state ("RAJAHMUNDRY, EAST GODAVARI, ANDHRA
-          // PRADESH"), however many words.
+          // even a PIN, a short line is a town, district and state ("RAJAHMUNDRY, EAST
+          // GODAVARI, ANDHRA PRADESH"); a longer one names a village, post and tehsil and is
+          // an address like any other.
           if (field === 'ADDRESS') {
             const rest = value.replace(/\b\d{3}\s?\d{3}\b/g, '');
-            if (!/\d/.test(value)) continue;
-            if (!/\d/.test(rest) && (rest.match(/[A-Za-z]{2,}/g) ?? []).length <= 3) continue;
+            const words = (rest.match(/[A-Za-z]{2,}/g) ?? []).length;
+            if (!/\d/.test(value) && words <= TOWN_LINE_MAX_WORDS) continue;
+            if (!/\d/.test(rest) && words <= 3) continue;
           }
           const norm = normValue(field, value);
           if (norm.replace(/\s/g, '').length < MIN_NORM_LEN) continue;
@@ -211,7 +218,7 @@ export const dupValidator: Validator = {
             item.page != null
               ? locate(ctx.wordBoxes.get(item.documentId) ?? [], item.page, item.value)
               : null,
-          data: { field, value: item.value, claims: [...claims].slice(0, 20) },
+          data: { field, value: item.value, claims: [...claims].slice(0, DUP_CLAIMS_CAP) },
         });
       }
     }

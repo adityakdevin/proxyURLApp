@@ -222,7 +222,7 @@ export const metaValidator: Validator = {
       // A scan that stopped at the page cap must not read as a clean scan. SPELL, INTRA and
       // FULL all work off the text this validator stores, so an unread page is a check that
       // never ran — FULL will report a required document "missing" when it is simply past
-      // the cap. WARNING (not INFO) so deriveCheckStatus downgrades META to DOUBTFUL.
+      // the cap. A WARNING: stored, not shown to reviewers (Doubtful is hidden, 2026-10-12).
       const scanned = Math.min(totalPages ?? 0, MAX_PDF_PAGES);
       if (totalPages && totalPages > scanned) {
         truncated.push({

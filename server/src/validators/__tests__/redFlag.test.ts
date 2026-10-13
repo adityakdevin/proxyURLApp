@@ -221,3 +221,32 @@ describe('red flag summary', () => {
     expect(out.summary).toMatch(/^3 red flag\(s\) found: GST format ×1, Impossible date ×2/);
   });
 });
+
+// Value: protects=Aadhaar/Voter cross-page checks only compare the card's own pages in a bundle; fails_when=page filter in redFlagValidator is dropped and bundle pages are compared; why_new=only redFlagLogic unit tests cover this, not the validator's page selection; seam=none; no_claim=classification accuracy on real OCR
+describe('redFlagValidator compares a card only with its own pages (client QA 2026-10)', () => {
+  const codes = async (pages: string[]) =>
+    ((await redFlagValidator.run(ctx({ pageTexts: new Map([['d1', pages]]) }))).findings ?? []).map((f) => f.code);
+
+  it('a payslip next to an Aadhaar card is not read as its other side', async () => {
+    const out = await codes([
+      'UIDAI Aadhaar 2345 6789 0123 signature',
+      'Pay Slip Earnings Deductions Net Pay Ref 9876 5432 1098 signature',
+    ]);
+    expect(out).not.toContain('REDFLAG_AADHAAR_MISMATCH');
+  });
+
+  it('two Aadhaar pages with different numbers in one bundle still mismatch', async () => {
+    expect(
+      await codes(['UIDAI Aadhaar 2345 6789 0123 signature', 'UIDAI Aadhaar 2345 6789 0999 signature'])
+    ).toContain('REDFLAG_AADHAAR_MISMATCH');
+  });
+
+  it("an RC's EPIC-shaped engine number is not the Voter ID's back side", async () => {
+    const voter = 'ELECTION COMMISSION OF INDIA Identity Card ABX1234567 signature';
+    expect(await codes([voter, 'Certificate of Registration Engine No: KMR7654321 signature'])).not.toContain(
+      'REDFLAG_VOTER_MISMATCH'
+    );
+    // An unclassified page that reads like the card's back is still compared.
+    expect(await codes([voter, "Elector's Name RAM KUMAR ABX7654321 signature"])).toContain('REDFLAG_VOTER_MISMATCH');
+  });
+});

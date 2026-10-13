@@ -1,6 +1,6 @@
 /** Regressions from the client QA summary report of 2026-10: QR points #35-38. */
 import { docFieldGroups } from '../docFields.js';
-import { compareQrToFields } from '../qrCompare.js';
+import { compareQrToFields, panCarriesQr, qrForeignChassis } from '../qrCompare.js';
 import { classifyQrOutcome } from '../qrValidator.js';
 
 const valueOf = (fields: { label: string; value: string | null }[], label: string) =>
@@ -34,5 +34,24 @@ describe('client QA 2026-10 — QR', () => {
   it('#37/38 a QR keyed "Vehicle Model" is compared against the model', () => {
     const cmp = compareQrToFields('Vehicle Model:SONET', [{ label: 'Model', value: 'SONET HTK' }] as never);
     expect(cmp).toHaveLength(1);
+  });
+  // Value: protects=a NEW-car policy QR naming another chassis is flagged, and only that;
+  // fails_when=the "New" registration gate, VIN shape or glyph-tolerant match is dropped;
+  // why_new=the rule sat inline in qrValidator (Jimp), unreachable from Jest; seam=none;
+  // no_claim=QR decoding itself
+  it.each([
+    ['Chassis No:MZBXX000000000001,Reg No:NEW', 'MZBEP812LSN100008', 'MZBXX000000000001'],
+    ['Chassis No:MZBEP812LSN100008,Reg No:NEW', 'MZBEP812LSN100008', null],
+    ['Chassis No:MZBEP8I2LSN100008,Reg No:New', 'MZBEP812LSN100008', null],
+    ['Chassis No:MZBXX000000000001,Reg No:MH12AB1234', 'MZBEP812LSN100008', null],
+    ['Chassis No:MZBXX000000000001,Reg No:NEW', 'CLM-1', null],
+    ['Chassis No:MZBXX000000000001', 'MZBEP812LSN100008', null],
+  ])('#35 QR %s vs claim %s → foreign chassis %s', (qr, claimId, expected) => {
+    expect(qrForeignChassis(qr, claimId)).toBe(expected);
+  });
+  it('#33 only the current PAN design is expected to carry a QR', () => {
+    expect(panCarriesQr('INCOME TAX DEPARTMENT Permanent Account Number Card ABCPK1234E')).toBe(true);
+    expect(panCarriesQr('INCOME TAX DEPARTMENT Permanent Account Number ABCPK1234E')).toBe(false);
+    expect(panCarriesQr('TAX INVOICE Invoice No 1')).toBe(false);
   });
 });
