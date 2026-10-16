@@ -16,7 +16,8 @@ import {
   editDistanceCapped,
   isProperNounTerm,
 } from './logic.js';
-import { rasterizePdf, largestImageWidthPerPage, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
+import { rasterizePdf, largestImageWidthPerPage, rasterScale, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
+import { MIN_OCR_PAGE_LONG_SIDE } from '../lib/ocr.js';
 import { extractNames, extractRelationNames } from './crossDocLogic.js';
 import { ADDRESS_WORDS, INDIAN_PLACE_WORDS } from './indianPlaces.js';
 
@@ -112,6 +113,16 @@ function nearFormWord(token: string, term: string): boolean {
  *  deterministic, so a second reading at the same scale would only repeat the first. */
 const OCR_RENDER_SCALE = 2;
 const REREAD_SCALE = 3;
+
+/**
+ * How many pixels META's first look gave a page this long (points), on its long side. Scale 2,
+ * but never under ocr.ts's MIN_OCR_PAGE_LONG_SIDE: a 465pt voter card was read at 1400 px, not
+ * 930, so a scale-3 re-read (1395 px) shows Tesseract nothing it has not seen and could only
+ * "confirm" its own misread (ship review 2026-10-16).
+ */
+export function metaFirstLook(longSidePt: number): number {
+  return longSidePt * rasterScale(longSidePt, longSidePt, OCR_RENDER_SCALE, MIN_OCR_PAGE_LONG_SIDE);
+}
 /** Pages read a second time per document. Mirrors META's cap on its own high-res retries;
  *  a near-miss on a page past it simply stays doubtful, as it was before. */
 const MAX_REREAD_PAGES = 8;
@@ -152,8 +163,10 @@ async function rereadPages(ctx: ValidatorContext, documentId: string, pages: num
       // part of a page counts as coarser than it is (it stays doubtful). Measure the image's
       // placed size from the operator list's transform if that hides real misspellings.
       if (ocrRead.has(page)) {
+        const reread = Math.max(render.width, render.height);
+        const firstRender = metaFirstLook(reread / REREAD_SCALE);
+        if (reread <= firstRender) continue;
         const img = (await largestImageWidthPerPage(doc.readablePath, [page])).get(page);
-        const firstRender = (Math.max(render.width, render.height) * OCR_RENDER_SCALE) / REREAD_SCALE;
         if (img && Math.max(img.width, img.height) <= firstRender) continue;
       }
       await fs.writeFile(file, render.png);
@@ -161,7 +174,9 @@ async function rereadPages(ctx: ValidatorContext, documentId: string, pages: num
     } catch {
       // no second reading for this page
     } finally {
-      await fs.rm(file, { force: true });
+      // A locked temp file (antivirus on the Windows box) must not throw out of finally and
+      // fail the whole SPELL check, losing every finding with it.
+      await fs.rm(file, { force: true, maxRetries: 3 }).catch(() => undefined);
     }
   }
   return out;

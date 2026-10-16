@@ -409,39 +409,54 @@ export async function largestImageWidthPerPage(
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
     const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false }).promise;
-    for (const n of pages) {
-      if (n < 1 || n > doc.numPages) continue;
-      const page = await doc.getPage(n);
-      const ops = await page.getOperatorList();
-      let best: { width: number; height: number } | undefined;
-      for (let i = 0; i < ops.fnArray.length; i++) {
-        if (ops.fnArray[i] !== OPS.paintImageXObject) continue;
-        const name = ops.argsArray[i]?.[0];
-        if (typeof name !== 'string') continue;
-        // An image painted on two or more pages is moved to the document-wide pool under a
-        // "g_" name (pdfjs's own rule, see its canvas getObject). Asking page.objs for it
-        // waits forever: on 045360 two ID pages sharing a strip image hung the QR check until
-        // the 600s run timeout, so no QR result was ever stored. The cap is for any other
-        // object that never resolves — a missing measurement only loses a message detail.
-        const pool = name.startsWith('g_') ? page.commonObjs : page.objs;
-        const img = await new Promise<unknown>((res) => {
-          const timer = setTimeout(() => res(null), 5_000);
-          try {
-            pool.get(name, (v: unknown) => {
-              clearTimeout(timer);
-              res(v);
-            });
-          } catch {
-            clearTimeout(timer);
-            res(null);
+    // One wait per image, not per paint: a page painting one unresolvable image N times waited
+    // N x 5s, enough for a crafted PDF to hold QR or SPELL to its timeout (ship review 2026-10-16).
+    const measured = new Map<string, { width?: number; height?: number } | null>();
+    try {
+      for (const n of pages) {
+        if (n < 1 || n > doc.numPages) continue;
+        const page = await doc.getPage(n);
+        const ops = await page.getOperatorList();
+        let best: { width: number; height: number } | undefined;
+        for (let i = 0; i < ops.fnArray.length; i++) {
+          if (ops.fnArray[i] !== OPS.paintImageXObject) continue;
+          const name = ops.argsArray[i]?.[0];
+          if (typeof name !== 'string') continue;
+          // An image painted on two or more pages is moved to the document-wide pool under a
+          // "g_" name (pdfjs's own rule, see its canvas getObject). Asking page.objs for it
+          // waits forever: on 045360 two ID pages sharing a strip image hung the QR check until
+          // the 600s run timeout, so no QR result was ever stored. The cap is for any other
+          // object that never resolves — a missing measurement only loses a message detail.
+          const shared = name.startsWith('g_');
+          const key = shared ? name : `${n}:${name}`;
+          let wh = measured.get(key);
+          if (wh === undefined) {
+            const pool = shared ? page.commonObjs : page.objs;
+            wh = (await new Promise<unknown>((res) => {
+              const timer = setTimeout(() => res(null), 5_000);
+              try {
+                pool.get(name, (v: unknown) => {
+                  clearTimeout(timer);
+                  res(v);
+                });
+              } catch {
+                clearTimeout(timer);
+                res(null);
+              }
+            })) as { width?: number; height?: number } | null;
+            measured.set(key, wh);
           }
-        });
-        const wh = img as { width?: number; height?: number } | null;
-        if (wh?.width && wh?.height && (!best || wh.width > best.width)) {
-          best = { width: wh.width, height: wh.height };
+          if (wh?.width && wh?.height && (!best || wh.width > best.width)) {
+            best = { width: wh.width, height: wh.height };
+          }
         }
+        if (best) out.set(n, best);
       }
-      if (best) out.set(n, best);
+    } finally {
+      // Its decoded page images stay in memory until the document is let go, and SPELL now
+      // measures a page per doubtful word it re-reads, not once per failed QR check.
+      await doc.cleanup?.();
+      await doc.destroy?.();
     }
   } catch {
     // Measurement is a nicety; never let it break a validation run.

@@ -15,7 +15,7 @@
  */
 import { DocField } from './docFields.js';
 import { isUnreadableQrPayload } from './aadhaarSecureQr.js';
-import { idMatches, idNorm, nameMatches, nameTokens } from './crossDocLogic.js';
+import { extractRelationNames, idMatches, idNorm, nameMatches, nameTokens } from './crossDocLogic.js';
 import { editDistanceCapped } from './logic.js';
 
 export type QrVerdict = 'MATCH' | 'MISMATCH';
@@ -202,19 +202,35 @@ function modelMatches(a: string, b: string): boolean {
 
 // A relative's name, not the holder's: "S/O: Ramesh" on an Aadhaar, the line under
 // "Father's Name" on a PAN. Without this a QR carrying the father's name passes because the
-// card prints the father too — the swapped-QR case this comparison exists to catch.
-const RELATION_RE = /\b(?:[sdwc]\s*[/|]\s*[o0]|son\s+of|daughter\s+of|wife\s+of|care\s+of|father|husband|mother|guardian)\b/i;
+// card prints the father too — the swapped-QR case this comparison exists to catch. As OCR
+// prints the markers too: "SIO" / "5/O" for S/O, "Fathers" without its apostrophe, and the
+// Hindi label alone (ship review 2026-10-16 reproduced each one passing as a match).
+const RELATION_RE =
+  /(?<![a-z])(?:[sdwc5$]\s*[/|\\Il1]\s*[o0]|son\s+of|daughter\s+of|wife\s+of|care\s+of|fathers?|husbands?|mothers?|guardians?)(?![a-z])|पिता|पति|माता/i;
+
+// nameTokens folds every spelling of Mohammed to "mohd"; the page prints the spelling itself.
+const MOHD_ON_PAGE = '(?:md|mohd|mohammed|mohammad|mohamed|muhammad|muhammed)';
 
 /** The QR's name word for word on one line of the page, as the page spells it; else null.
- *  Not a relative's line: a relation marker before it on that line or on the line above. */
+ *  Not a relative's line: a relation marker before it on that line or on the nearest non-blank
+ *  line above (Tesseract puts a blank line between a label and its value), and not a name the
+ *  page gives a relative anywhere. */
 function nameOnPage(qrName: string, pageText: string): string | null {
   const t = nameTokens(qrName);
   if (t.length === 0) return null;
-  const re = new RegExp(`(?<![a-z])${t.join('[^a-z\\n]*')}(?![a-z])`, 'i');
+  // Every word of the QR's name in a relative's: one-way, because a South Indian holder carries
+  // the father's name as a surname — "Pragadesh Thamaraiselvan", S/O "Thamaraiselvan" (611698).
+  const relatives = extractRelationNames(pageText).map(nameTokens);
+  if (relatives.some((r) => t.every((w) => r.includes(w)))) return null;
+  const words = t.map((w) => (w === 'mohd' ? MOHD_ON_PAGE : w));
+  const re = new RegExp(`(?<![a-z])${words.join('[^a-z\\n]*')}(?![a-z])`, 'i');
   const lines = pageText.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const m = re.exec(lines[i]);
-    if (!m || RELATION_RE.test(lines[i].slice(0, m.index)) || RELATION_RE.test(lines[i - 1] ?? '')) continue;
+    if (!m || RELATION_RE.test(lines[i].slice(0, m.index))) continue;
+    let above = i - 1;
+    while (above >= 0 && lines[above].trim() === '') above--;
+    if (RELATION_RE.test(lines[above] ?? '')) continue;
     return m[0].replace(/\s+/g, ' ');
   }
   return null;

@@ -146,6 +146,17 @@ describe('client QA 2026-10 — GSTIN misreads, Voter back side, date fragments'
     expect(checkDates('Subject to IMT Endt. Nos.& Memorandum: 16.17.22.28')).toEqual([]);
     expect(checkDates('TPPD 1 Sum Insured - 7.50.000/-')).toEqual([]);
   });
+  // Value: protects=an impossible date opening a hyphenated range, or sitting behind stray
+  // digits, is still red; fails_when=the fragment skip swallows a range or does not resume at
+  // the second number; why_new=only four-digit ranges and pure fragments were tested (ship
+  // review 2026-10-16); seam=none; no_claim=OCR fragment shapes beyond these
+  it('a two-digit-year range, and a date behind stray digits, are still checked', () => {
+    expect(checkDates('Period 31/02/24-01/03/25')[0]?.data).toEqual({ date: '31/02/24' });
+    expect(checkDates('Period 01/04/24-31/03/25')).toEqual([]);
+    expect(checkDates('To. Date. 41/31/02/2024')[0]?.data).toEqual({ date: '31/02/2024' });
+    // ...but a two-digit piece read out of the same chain is still the chain (673493 p1).
+    expect(checkDates('H NO 4-6-90/19 X')).toEqual([]);
+  });
   it('real impossible dates are still flagged', () => {
     expect(checkDates('Date 31/02/24')[0]?.code).toBe('REDFLAG_BAD_DATE');
     expect(checkDates('DOB 19.10.20000')[0]?.code).toBe('REDFLAG_BAD_DATE');

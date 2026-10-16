@@ -430,7 +430,10 @@ export class ValidationService {
       // pdfjs document — so running it beside QR puts two PDF loaders in memory at once, on
       // top of QR's scale-8 canvases. With two claim workers on an 8 GB box that is the
       // margin this change was supposed to respect. It runs after, alone.
-      const PARALLEL_SAFE = (v: Validator) => v.key !== 'META' && v.key !== 'REDFLAG';
+      // SPELL joins it there: confirming a doubtful word renders the page again at scale 3,
+      // measures its image through a second pdfjs load and OCRs it — the same loaders and
+      // canvases beside QR's that REDFLAG was moved out for (ship review 2026-10-16).
+      const PARALLEL_SAFE = (v: Validator) => v.key !== 'META' && v.key !== 'REDFLAG' && v.key !== 'SPELL';
 
       // Anything switched off, plus anything that cannot answer without it. Recorded as
       // DOUBTFUL and never PASSED: the badge has to say "we did not check this", because the
@@ -478,7 +481,9 @@ export class ValidationService {
 
       const meta = on.filter((v) => v.key === 'META');
       const parallel = on.filter(PARALLEL_SAFE);
-      const tail = on.filter((v) => v.key === 'REDFLAG');
+      // Everything neither META nor parallel, so a check moved out of the parallel group can
+      // never be dropped from the run by forgetting to list it here.
+      const tail = on.filter((v) => v.key !== 'META' && !PARALLEL_SAFE(v));
       const results: Ran[] = [];
       for (const v of meta) results.push(await runOneValidator(v));
       results.push(...(await Promise.all(parallel.map(runOneValidator))));

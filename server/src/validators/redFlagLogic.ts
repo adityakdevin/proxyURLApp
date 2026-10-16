@@ -616,12 +616,28 @@ function isRealDay(day: number, month: number, year: number): boolean {
 export function checkDates(fileText: string, page: number | null = null): RedFlagFinding[] {
   const out: RedFlagFinding[] = [];
   const seen = new Set<string>();
-  for (const m of fileText.matchAll(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,5})\b/g)) {
+  const DATE_RE = /\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,5})\b/g;
+  // End of the digit chain last split as a fragment. Inside it, only a whole date with a
+  // four-digit year counts: "6-90/19" read out of the house number "4-6-90/19" is the chain
+  // again, not a date (ship review 2026-10-16, 673493 p1).
+  let chainEnd = -1;
+  for (let m: RegExpExecArray | null; (m = DATE_RE.exec(fileText)); ) {
     const raw = m[0];
     // A two-digit "year" with more of the chain after it is a fragment, not a date: OCR glued a
     // stray "41/" onto 30/04/2020 and read "41/30/04" (client QA 2026-10, 004536 p1); "48/10/12/1"
-    // is a door number, "16.17.22.28" a list of IMT clauses.
-    if (m[3].length === 2 && /^[\/.\-]\d/.test(fileText.slice((m.index ?? 0) + raw.length))) continue;
+    // is a door number, "16.17.22.28" a list of IMT clauses. The scan resumes at the fragment's
+    // second number, so the real date behind the stray digits ("31/02/2024" in "41/31/02/2024")
+    // is still checked. Not a fragment: a hyphen joining two whole dates, "31/02/24-01/03/25" —
+    // skipping that let an impossible policy start date pass (ship review 2026-10-16).
+    const after = fileText.slice(m.index + raw.length);
+    const sep = raw[m[1].length];
+    const rangeNext = sep !== '-' && /^-\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}\b/.test(after);
+    const inChain = m.index < chainEnd;
+    if (m[3].length === 2 && ((/^[\/.\-]\d/.test(after) && !rangeNext) || inChain)) {
+      if (!inChain) chainEnd = m.index + raw.length + (/^(?:[\/.\-]\d+)+/.exec(after)?.[0].length ?? 0);
+      DATE_RE.lastIndex = m.index + m[1].length + 1;
+      continue;
+    }
     // Starting mid-number is not a date: a payslip's "LWP 0.00/0.00" matched as "00/0.00"
     // and failed the claim on an impossible date (client QA 2026-10, #6).
     // Mid-number only: a digit before it, or a '.'/',' that itself follows a digit. A dot
