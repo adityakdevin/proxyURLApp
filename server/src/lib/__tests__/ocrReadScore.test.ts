@@ -1,4 +1,5 @@
-import { readScore, readsAsText, turnBeatsUpright } from '../ocr.js';
+import { MIN_OCR_PAGE_LONG_SIDE, readScore, readsAsText, sauvolaWins, turnBeatsUpright } from '../ocr.js';
+import { rasterScale } from '../pdfExtractor.js';
 import { getSpell, type Spell } from '../../validators/dictionary.js';
 
 // Real OCR output of one PAN card photo (client QA 2026-10, 650930 p.7), abridged.
@@ -95,5 +96,34 @@ describe('OCR orientation scoring', () => {
     // An upside-down policy page: 26 dictionary words by chance, among 434 letter clusters.
     expect(readsAsText('Xqz '.repeat(434), 26)).toBe(false);
     expect(readsAsText('Xqz '.repeat(200), 26)).toBe(true);
+  });
+});
+
+// Value: protects=the Sauvola read replaces a card's read only when it reads clearly more and is more than a scrap, and only pages smaller than paper are rendered larger; fails_when=the gate drops to "any gain" or to a 2-3 word read (Sauvola reads that lost a PAN and an Aadhaar marker win again), or the floor starts enlarging A4/Letter pages (every dense page pays for it, and near-paper scans lose numbers to OCR noise); why_new=sauvolaWins and rasterScale are new; seam=the pure decisions only — the Sauvola pass and the render need tesseract/pdfjs and are checked with a tsx harness; no_claim=threshold tuning beyond the measured cases
+describe('OCR second looks', () => {
+  it('takes the Sauvola read only when it reads clearly more, and more than a scrap', () => {
+    expect(sauvolaWins(5, 3)).toBe(true); // a PAN card on a patterned ground (301725 p.4)
+    expect(sauvolaWins(4, 2)).toBe(true);
+    expect(sauvolaWins(8, 7)).toBe(false); // a gain this small splits "Unique Identification"
+    expect(sauvolaWins(3, 2)).toBe(false); // read "INCOME TAX" as "COMETAX" (632308 p.3)
+    expect(sauvolaWins(3, 1)).toBe(false); // read "Male" as "Make" (648687 p.7)
+    expect(sauvolaWins(4, 3)).toBe(false);
+  });
+
+  it('renders only pages smaller than paper larger', () => {
+    expect(rasterScale(595.28, 841.89, 2, MIN_OCR_PAGE_LONG_SIDE)).toBe(2); // A4
+    expect(rasterScale(841.89, 595.28, 2, MIN_OCR_PAGE_LONG_SIDE)).toBe(2); // A4 landscape
+    expect(rasterScale(612, 792, 2, MIN_OCR_PAGE_LONG_SIDE)).toBe(2); // US Letter
+    expect(rasterScale(595, 770, 2, MIN_OCR_PAGE_LONG_SIDE)).toBe(2); // a cropped A4 scan
+    // A voter card saved as its own 465x280pt page: 930 px wide at scale 2.
+    expect(465 * rasterScale(465, 280.5, 2, MIN_OCR_PAGE_LONG_SIDE)).toBeCloseTo(MIN_OCR_PAGE_LONG_SIDE);
+    // The high-resolution retry keeps twice the first look's size.
+    expect(rasterScale(465, 280.5, 4, 2 * MIN_OCR_PAGE_LONG_SIDE)).toBeCloseTo(
+      2 * rasterScale(465, 280.5, 2, MIN_OCR_PAGE_LONG_SIDE)
+    );
+    expect(rasterScale(595.28, 841.89, 4, 2 * MIN_OCR_PAGE_LONG_SIDE)).toBe(4);
+    // Callers that ask for no floor (the QR scan) and degenerate pages keep their scale.
+    expect(rasterScale(465, 280.5, 2, 0)).toBe(2);
+    expect(rasterScale(0, 0, 2, MIN_OCR_PAGE_LONG_SIDE)).toBe(2);
   });
 });

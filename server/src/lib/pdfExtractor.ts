@@ -261,6 +261,13 @@ export interface RasterPage {
   totalPages: number;
 }
 
+/** The scale to render a `width`x`height`pt page at: `scale`, or more if that would leave its
+ *  long side under `minLongSide` px. */
+export function rasterScale(width: number, height: number, scale: number, minLongSide: number): number {
+  const long = Math.max(width, height);
+  return long ? Math.max(scale, minLongSide / long) : scale;
+}
+
 /**
  * Rasterize a PDF's pages to PNG buffers via pdfjs + @napi-rs/canvas. This is the
  * bridge that lets scanned (image-only, no text layer) PDFs be OCR'd — pdfjs text
@@ -272,13 +279,16 @@ export interface RasterPage {
  * often a ~110 DPI JPEG drawn up to page size; smoothing blurs its QR modules into each
  * other, and the QR scan missed codes zxing reads from the same page unsmoothed (client
  * QA 2026-10, #34: 642615, 612342, 059741 p15). OCR keeps smoothing — it reads text better.
+ *
+ * `minLongSide` raises the scale for a page that would otherwise come out shorter than that
+ * on its long side — a card saved as its own small page. See MIN_OCR_PAGE_LONG_SIDE in ocr.ts.
  */
 export async function rasterizePdf(
   absolutePath: string,
   maxPages = MAX_PDF_PAGES,
   scale = 2,
   onlyPages?: number[],
-  { smooth = true }: { smooth?: boolean } = {}
+  { smooth = true, minLongSide = 0 }: { smooth?: boolean; minLongSide?: number } = {}
 ): Promise<RasterPage[]> {
   try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -316,7 +326,8 @@ export async function rasterizePdf(
       for (let p = 1; p <= pageCount; p++) {
         if (onlyPages && !onlyPages.includes(p)) continue;
         const page = await doc.getPage(p);
-        const viewport = page.getViewport({ scale });
+        const { width, height } = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: rasterScale(width, height, scale, minLongSide) });
         const canvas = createCanvas(viewport.width, viewport.height);
         // @napi-rs/canvas's 2D context is API-compatible with what pdfjs renders into;
         // cast through unknown since the DOM lib isn't in this project's tsconfig.

@@ -146,12 +146,13 @@ export function turnBeatsUpright(turned: number, upright: number): boolean {
   return turned >= 2 && turned > 2 * upright;
 }
 
-/** Rotate (counter-clockwise, verified against Jimp) and contrast-boost a copy to try. */
-async function prepare(image: Buffer | string, deg: number): Promise<Buffer | null> {
+/** Rotate (counter-clockwise, verified against Jimp) and, unless `boost` is off, contrast-boost
+ *  a copy to try. */
+async function prepare(image: Buffer | string, deg: number, boost = true): Promise<Buffer | null> {
   try {
     const img = await Jimp.read(image as never);
     if (deg) img.rotate(deg);
-    img.greyscale().contrast(0.5);
+    if (boost) img.greyscale().contrast(0.5);
     return Buffer.from(await img.getBuffer('image/png'));
   } catch {
     return null; // preprocessing unavailable → keep whatever the plain pass gave
@@ -210,6 +211,26 @@ async function prepareDeskewed(
  */
 const MIN_OCR_IMAGE_WIDTH = 1600;
 
+/**
+ * PDF pages get a floor too, on their LONG side: a page that would render shorter than this
+ * at the usual scale 2 — a card saved as its own small page — is rendered larger.
+ *
+ * A voter card saved as a 465x280pt page rendered 930 px wide, and its EPIC ABC1234569 read
+ * as ABC1234565 — so the back of the same card, read right, was flagged as a possible misread
+ * (638633 p.16). Rendered anywhere from 1163 to 1860 px wide it read right. The
+ * high-resolution retry had read it right too, but on 6 real words against 7, and a retry
+ * that does not read clearly more is rightly not believed (HIGHRES_GAIN): it was the first
+ * look that was short of pixels.
+ *
+ * 1400, not the photos' 1600: A4 and Letter (1584 px) stay as they are, and so do the pages
+ * a little short of them — cropped document scans of 700-790pt, where a few percent more
+ * only reshuffled the OCR noise: on 88 claims it lost a PAN number from three such pages and
+ * found no marker or number they had missed.
+ *
+ * The long side, where photos use the width: by width, every portrait A4 page would qualify.
+ */
+export const MIN_OCR_PAGE_LONG_SIDE = 1400;
+
 /** The image as OCR should see it: small photos enlarged, everything else untouched. */
 async function upscaleSmallImage(
   absolutePath: string
@@ -250,19 +271,56 @@ const MAX_HIGHRES_RETRY_PAGES = 8;
  */
 const HIGHRES_GAIN = 1.4;
 
+/**
+ * Recognize with Tesseract's thresholding_method set to Sauvola, a threshold per
+ * neighbourhood, instead of its default single global (Otsu) threshold for the whole page.
+ *
+ * A card printed on a tinted, patterned ground has no one grey level that separates its ink
+ * from its background. A clear PAN card photo (301725 p.4) read as "Pern anent Account
+ * Number", a name line and noise — no "INCOME TAX DEPARTMENT", no number — so PAN was
+ * reported missing; thresholded locally, it read "INCOMETAX DEPARTMENT", the PAN number,
+ * the name and the date of birth. It is not short of pixels: rendered 1607 and 1786 px wide
+ * instead of 1191, it still read 3 real words and no marker.
+ */
+async function recognizeSauvola(worker: Worker, png: Buffer) {
+  await worker.setParameters({ thresholding_method: '2' });
+  try {
+    return await worker.recognize(png, {}, { blocks: true });
+  } finally {
+    // The worker reads every other page in its lane too; put the default back.
+    await worker.setParameters({ thresholding_method: '0' });
+  }
+}
+
+/**
+ * Whether the Sauvola read (`sauvola` real words) replaces the best read so far (`first`).
+ *
+ * The high-resolution retry's HIGHRES_GAIN, for the same reason — it rewrites the whole page
+ * — and four real words at least. Below that, one poor read is as likely as another to hold
+ * the card's marker. On 88 claims, of the 9 Sauvola reads that cleared the gain on two or
+ * three words, one found a marker the first read lacked and two lost one ("INCOME TAX" read
+ * as "COMETAX", 632308 p.3; "Male" as "Make", 648687 p.7). The 33 on four or more found 15
+ * and lost none.
+ */
+export function sauvolaWins(sauvola: number, first: number): boolean {
+  return sauvola >= 4 && sauvola > first * HIGHRES_GAIN;
+}
+
 /** One recognition at a KNOWN configuration — used for the high-resolution second look,
  *  where the winning rotation is already established and re-sweeping would be waste. */
 async function recognizeWith(
   worker: Worker,
   image: Buffer,
-  rotation: number,
-  deskew: boolean
+  { rotation, skew, sauvola }: { rotation: number; skew?: number; sauvola?: boolean }
 ): Promise<{ data: Awaited<ReturnType<Worker['recognize']>>['data']; score: number } | null> {
-  const png = deskew
-    ? (await prepareDeskewed(image, rotation))?.png
-    : await prepare(image, rotation);
+  const png =
+    skew !== undefined
+      ? (await prepareDeskewed(image, rotation))?.png
+      : await prepare(image, rotation, !sauvola);
   if (!png) return null;
-  const r = await worker.recognize(png, {}, { blocks: true });
+  const r = sauvola
+    ? await recognizeSauvola(worker, png)
+    : await worker.recognize(png, {}, { blocks: true });
   return { data: r.data, score: readScore(r.data.text ?? '', await getSpell()) };
 }
 
@@ -277,7 +335,13 @@ async function recognize(worker: Worker, image: Buffer | string) {
   const readable = (b: { data: { text?: string }; score: number }) =>
     readsAsText(b.data.text ?? '', b.score);
   const plain = await worker.recognize(image, {}, { blocks: true });
-  let best: { data: typeof plain.data; rotation: number; score: number; skew?: number } = {
+  let best: {
+    data: typeof plain.data;
+    rotation: number;
+    score: number;
+    skew?: number;
+    sauvola?: boolean;
+  } = {
     data: plain.data,
     rotation: 0,
     score: score(plain.data.text),
@@ -313,6 +377,19 @@ async function recognize(worker: Worker, image: Buffer | string) {
       const s = score(r.data.text);
       if (s > best.score) {
         best = { data: r.data, rotation: best.rotation, score: s, skew: straightened.skew };
+      }
+    }
+  }
+
+  // Still poor? The ink may not separate from a patterned ground at any one grey level. One
+  // more pass, thresholded locally, at whichever turn read best — see recognizeSauvola.
+  if (!readable(best)) {
+    const turned = await prepare(image, best.rotation, false);
+    if (turned) {
+      const r = await recognizeSauvola(worker, turned);
+      const s = score(r.data.text);
+      if (sauvolaWins(s, best.score)) {
+        best = { data: r.data, rotation: best.rotation, score: s, sauvola: true };
       }
     }
   }
@@ -400,9 +477,10 @@ export class TesseractOcrPort implements OcrPort {
       // exactly which pages lack a text layer, honour that list instead — applying the cap
       // first meant an ID-card page at position 13+ of a bundled claim PDF was never read.
       const rasterStartedAt = Date.now();
+      const small = { minLongSide: MIN_OCR_PAGE_LONG_SIDE };
       const pages = onlyPages
-        ? await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, 2, onlyPages)
-        : await rasterizePdf(absolutePath, 12);
+        ? await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, 2, onlyPages, small)
+        : await rasterizePdf(absolutePath, 12, 2, undefined, small);
       const rasterMs = Date.now() - rasterStartedAt;
       if (pages.length === 0) return { text: '', words: [] };
       // One lane per worker, each pulling the next page off a shared cursor, so a page that
@@ -452,13 +530,15 @@ export class TesseractOcrPort implements OcrPort {
               highResBudget--;
               retries++;
               const retryStartedAt = Date.now();
+              // Twice the first look, on a small page too.
               const [hi] = await rasterizePdf(
                 absolutePath,
                 MAX_OCR_TARGETED_PAGES,
                 HIGH_RASTER_SCALE,
-                [pg.page]
+                [pg.page],
+                { minLongSide: 2 * MIN_OCR_PAGE_LONG_SIDE }
               );
-              const retry = hi && (await recognizeWith(worker, hi.png, rotation, skew !== undefined));
+              const retry = hi && (await recognizeWith(worker, hi.png, recognized));
               if (retry && retry.score > score * HIGHRES_GAIN) {
                 data = retry.data;
                 score = retry.score;
