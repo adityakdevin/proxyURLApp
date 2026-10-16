@@ -1,5 +1,9 @@
+import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
+import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
-import { Validator, FindingInput, WordBox } from './types.js';
+import { Validator, ValidatorContext, FindingInput, WordBox } from './types.js';
 import { getSpell, isRealWord as dictHasWord, type Spell } from './dictionary.js';
 import {
   spellCandidates,
@@ -10,7 +14,10 @@ import {
   ocrIndistinguishable,
   isTruncation,
   editDistanceCapped,
+  isProperNounTerm,
 } from './logic.js';
+import { rasterizePdf, largestImageWidthPerPage, rasterScale, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
+import { MAX_HIGHRES_RETRY_PAGES, MIN_OCR_PAGE_LONG_SIDE, OCR_RENDER_SCALE } from '../lib/ocr.js';
 import { extractNames, extractRelationNames } from './crossDocLogic.js';
 import { ADDRESS_WORDS, INDIAN_PLACE_WORDS } from './indianPlaces.js';
 
@@ -77,10 +84,122 @@ export const UNREADABLE_REAL_WORD_RATIO = 0.35;
 const UNREADABLE_MIN_WORDS = 12;
 
 /** Tesseract word confidence (0-100) below which a hit is treated as doubtful rather
- *  than as a misspelling. Digital PDF text has no confidence and is never softened. */
+ *  than as a misspelling — unless a second reading confirms it. A word from a PDF text
+ *  layer has no confidence. */
 const LOW_OCR_CONFIDENCE = 70;
-/** At or above this a softened near-miss is reported as a misspelling: the scan was clear. */
+/** At or above this a softened near-miss is reported as a misspelling: the scan was clear.
+ *  Also what a second reading must reach to confirm one. */
 const CONFIDENT_OCR = 85;
+/** Below this the OCR word was a guess (it rated itself more likely wrong than right), and a
+ *  second reading by the same engine is not asked to confirm it. */
+const GUESS_OCR_CONFIDENCE = 50;
+
+/** Close enough to a form word that a trusted reading of it is a misspelling: a form word
+ *  (not a place), same first letter, not a clipped word, and one letter off — two only on a
+ *  long word ("Degination"). Across all 570 claims a looser gate failed real words and names:
+ *  "enquire" (require) on 107 claims, "licence" (science), "Sahoo" (school), "Kalan"
+ *  (Kalyan), "Shree" (three).
+ *  ponytail: length as the two-edit gate; a per-term allow list if it lets noise in. */
+function nearFormWord(token: string, term: string): boolean {
+  return (
+    !PLACES.has(term) &&
+    token[0] === term[0] &&
+    editDistanceCapped(token, term, 2) <= (term.length >= 9 ? 2 : 1) &&
+    !isTruncation(token, term)
+  );
+}
+
+/** The scale of the second look. Tesseract is deterministic, so a second reading at META's own
+ *  scale (OCR_RENDER_SCALE; 4 on a poor page's retry) would only repeat the first. */
+const REREAD_SCALE = 3;
+
+/**
+ * How many pixels META's first look gave a page this long (points), on its long side. Scale 2,
+ * but never under ocr.ts's MIN_OCR_PAGE_LONG_SIDE: a 465pt voter card was read at 1400 px, not
+ * 930, so a scale-3 re-read (1395 px) shows Tesseract nothing it has not seen and could only
+ * "confirm" its own misread (ship review 2026-10-16).
+ */
+export function metaFirstLook(longSidePt: number): number {
+  return longSidePt * rasterScale(longSidePt, longSidePt, OCR_RENDER_SCALE, MIN_OCR_PAGE_LONG_SIDE);
+}
+
+/**
+ * Whether a re-render `rereadPx` long (long side) shows Tesseract anything META's first look did
+ * not, given the largest image the page paints. undefined: it paints none — vector print, sharper
+ * at any scale. null: the page could not be measured, so no: a coarse scan re-read is the same
+ * blur, enlarged, and both readings make the same mistake (ship review 2026-10-16).
+ * ponytail: META's high-res retry (scale 4 on a poorly read page, ocr.ts) is not visible here, so
+ * a page it retried can be re-read at fewer pixels than the reading being checked. Record the px
+ * META actually read each page at, and compare against that, if retried pages confirm misreads.
+ */
+export function rereadAddsPixels(rereadPx: number, image: { width: number; height: number } | null | undefined): boolean {
+  const firstLook = metaFirstLook(rereadPx / REREAD_SCALE);
+  if (image === null || rereadPx <= firstLook) return false;
+  return !image || Math.max(image.width, image.height) > firstLook;
+}
+
+/** Pages read a second time per document: the same budget as META's own high-res retries.
+ *  A near-miss on a page past it simply stays doubtful, as it was before. */
+const MAX_REREAD_PAGES = MAX_HIGHRES_RETRY_PAGES;
+
+/** Words printed on the line people sign and stamp. A pen stroke through a letter reads the
+ *  same to every engine: a signature crossing the "n" of "Signature" was read "Sighature"
+ *  by the scanning app and again by ours at 93. A second reading cannot confirm these.
+ *  ponytail: add 'authorised' if a stamped "Authorised" is ever confirmed the same way. */
+const SIGNING_LINE_WORDS: ReadonlySet<string> = new Set(['signature', 'signatory']);
+
+/**
+ * Our OCR's second reading of some pages of a PDF, rendered at REREAD_SCALE. Empty for
+ * anything else, or when the reading fails: a missing second reading changes nothing.
+ * ponytail: PDFs only; an uploaded photo keeps its single reading. Resize and re-read it
+ * here if photos turn out to carry the hidden misspellings too.
+ */
+async function rereadPages(ctx: ValidatorContext, documentId: string, pages: number[]): Promise<WordBox[]> {
+  const doc = ctx.documents.find((d) => d.id === documentId);
+  const out: WordBox[] = [];
+  if (!doc || doc.mimeType !== 'application/pdf' || !ctx.ocr.extractImage) return out;
+  const ocrRead = new Set(
+    (ctx.wordBoxes.get(documentId) ?? []).filter((w) => w.conf !== undefined).map((w) => w.page)
+  );
+  for (const page of [...new Set(pages)].slice(0, MAX_REREAD_PAGES)) {
+    // extractImage reads a file, and nothing else in OcrPort renders at a chosen scale.
+    const file = path.join(os.tmpdir(), `spell-reread-${randomUUID()}.png`);
+    try {
+      const [render] = await rasterizePdf(doc.readablePath, MAX_PDF_PAGES, REREAD_SCALE, [page]);
+      if (!render) continue;
+      // A page our OCR has already read is worth reading again only when the larger render
+      // shows it something new: a scan with more pixels than META's render had. Below that
+      // it is the same blur, enlarged, and both readings make the same mistake — bold
+      // "Policy" and "Employee" on 91 ppi scans were read "palicy" and "employes" twice,
+      // while every real misspelling it confirmed on a page it had read sat on a 154-300
+      // ppi scan. A page with no image is vector print, and sharper at any scale. A page
+      // only the scanning app's text layer read is a first reading for our engine either way.
+      // ponytail: largest image vs the whole page, long side to long side, so a photo filling
+      // part of a page counts as coarser than it is (it stays doubtful). Measure the image's
+      // placed size from the operator list's transform if that hides real misspellings.
+      if (ocrRead.has(page)) {
+        const px = Math.max(render.width, render.height);
+        // The size check alone first: a small card's re-read never beats META's first look,
+        // so there is no need to open the PDF again to measure it.
+        if (!rereadAddsPixels(px, undefined)) continue;
+        const sizes = await largestImageWidthPerPage(doc.readablePath, [page]);
+        if (!rereadAddsPixels(px, sizes ? sizes.get(page) : null)) continue;
+      }
+      await fs.writeFile(file, render.png);
+      out.push(...(await ctx.ocr.extractImage(file)).words.map((w) => ({ ...w, page })));
+    } catch {
+      // no second reading for this page
+    } finally {
+      // A locked temp file (antivirus on the Windows box) must not throw out of finally and
+      // fail the whole SPELL check, losing every finding with it.
+      await fs.rm(file, { force: true, maxRetries: 3 }).catch(() => undefined);
+    }
+  }
+  return out;
+}
+
+/** Swappable in tests: rendering a PDF page is out of Jest's reach (ESM dynamic import). */
+export const secondReading = { pages: rereadPages };
 
 /** Every word used in a person's name anywhere in the claim, lowercased.
  *
@@ -167,33 +286,62 @@ export const spellValidator: Validator = {
       const boxIndex = indexBoxes(ctx.wordBoxes.get(documentId) ?? []);
       // Places are near-miss targets too, after the form terms so a tie goes to the form
       // word, and a hit against one is only ever doubtful.
-      for (const hit of findTermMisspellings(words, isRealWord, [...terms, ...PLACES], PLACES)) {
+      const hits = findTermMisspellings(words, isRealWord, [...terms, ...PLACES], PLACES).map((hit) => {
         const { token, term } = hit;
         const box = boxIndex.get(token)?.shift();
-        // A low-confidence OCR read is itself grounds for doubt, whatever the glyphs say, and
-        // so is a word the claim uses as somebody's name.
-        // A confident read is not a scan error. Two edits and place names are softened
-        // because OCR garbage looks like that — but "Assoolate" (conf 91) and "Degination"
-        // (93) were printed that way, and Doubtful hid real misspellings (client QA 2026-10,
-        // #42, #45; Master row 13 for places). Glyph swaps and clipped words stay soft:
-        // those ARE what a confident misread looks like.
-        // A form word only, same first letter, and two letters off only on a long word.
-        // Across all 570 claims a looser promotion failed real words and names as
-        // misspellings: "enquire" (require) on 107 claims, "licence" (science), "Sahoo"
-        // (school), "Kalan" (Kalyan), "Shree" (three). "Degination" is two off "designation".
-        // ponytail: length as the two-edit gate; a per-term allow list if it lets noise in.
+        // A low-confidence OCR read is itself grounds for doubt, whatever the glyphs say.
+        // A confident read is not a scan error. Two edits are softened because OCR garbage
+        // looks like that — but "Degination" (conf 93) was printed that way, and Doubtful hid
+        // a real misspelling (client QA 2026-10, #45). Glyph swaps stay soft on one confident
+        // reading: that IS what a confident misread looks like.
         const confidentlyPrinted =
           box?.conf !== undefined &&
           box.conf >= CONFIDENT_OCR &&
-          !PLACES.has(term) &&
-          token[0] === term[0] &&
-          editDistanceCapped(token, term, 2) <= (term.length >= 9 ? 2 : 1) &&
-          !ocrIndistinguishable(token, term) &&
-          !isTruncation(token, term);
-        const soft =
-          nameWords.has(token) ||
-          (hit.doubtful && !confidentlyPrinted) ||
-          (box?.conf !== undefined && box.conf < LOW_OCR_CONFIDENCE);
+          nearFormWord(token, term) &&
+          !ocrIndistinguishable(token, term);
+        const unsure =
+          (hit.doubtful && !confidentlyPrinted) || (box?.conf !== undefined && box.conf < LOW_OCR_CONFIDENCE);
+        return { ...hit, box, unsure };
+      });
+      // Two kinds of single reading were hiding real misspellings (client QA 2026-10), and are
+      // read again, by our OCR at REREAD_SCALE, before the hit is hidden:
+      //  - #42 "Assoolate": a word from a PDF's text layer has no confidence at all, and on a
+      //    scanned page that layer is the scanning app's own invisible OCR. Trusting it as
+      //    printed would fail claims on its misreads ("invoicc" on 12 claims, "totai" on 10);
+      //    a different engine agreeing with it, even on a glyph swap, is independent evidence.
+      //    Measured on all 570 claims: our OCR confirmed 7 of 77 such words, all printed that
+      //    way but "Sighature" (see SIGNING_LINE_WORDS), and none of the "invoicc"/"totai".
+      //  - #44 "Enginear" read at 69. Low confidence alone does not separate a misprint from a
+      //    misread, nor does the page reading well around it: a printed "vehcile" read at 64
+      //    and a pen-crossed "Customer" read "cudtomer" at 58, both on pages whose median
+      //    word read 93-95. A misread belongs to one rendering of the pixels; a misprint
+      //    survives another. Of 120 such words read at 50-69, the re-render confirmed 7 —
+      //    "Enginear" on all four slips, "vehcile", and two bold words on 91 ppi scans that
+      //    rereadPages now refuses to read again.
+      // Our own engine is NOT a second opinion on its glyph swaps or its guesses: re-rendered,
+      // it read a bold "Period" as "Perlod" and a stamped "TOTAL" as "toial" again, and the
+      // bold "Policy" it first read as "palicy" at 13 and 41. So an OCR word is re-read only
+      // when it is one plain letter off (not doubtful in itself) and its first reading beat a
+      // coin toss.
+      // Names and places are not re-read: their doubt is the word, not the reading.
+      const askAgain = ({ box, token, term, unsure, doubtful: shaky }: (typeof hits)[number]) =>
+        unsure &&
+        box !== undefined &&
+        !nameWords.has(token) &&
+        !SIGNING_LINE_WORDS.has(term) &&
+        (box.conf === undefined
+          ? nearFormWord(token, term) && !isProperNounTerm(term, isRealWord)
+          : !shaky && box.conf >= GUESS_OCR_CONFIDENCE);
+      const reread = indexBoxes(
+        await secondReading.pages(ctx, documentId, hits.filter(askAgain).map((h) => h.box!.page))
+      );
+      for (const hit of hits) {
+        const { token, term, box } = hit;
+        const confirmed =
+          askAgain(hit) &&
+          (reread.get(token) ?? []).some((b) => b.page === box!.page && (b.conf ?? 0) >= CONFIDENT_OCR);
+        // A word the claim uses as somebody's name is doubtful however it reads.
+        const soft = nameWords.has(token) || (hit.unsure && !confirmed);
         (soft ? doubtful : distinct).add(token);
         const into = soft ? doubtfulSample : sample;
         if (into.length < 50) into.push(`${token}→${term}`);

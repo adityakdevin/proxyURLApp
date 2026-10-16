@@ -261,6 +261,13 @@ export interface RasterPage {
   totalPages: number;
 }
 
+/** The scale to render a `width`x`height`pt page at: `scale`, or more if that would leave its
+ *  long side under `minLongSide` px. */
+export function rasterScale(width: number, height: number, scale: number, minLongSide: number): number {
+  const long = Math.max(width, height);
+  return long ? Math.max(scale, minLongSide / long) : scale;
+}
+
 /**
  * Rasterize a PDF's pages to PNG buffers via pdfjs + @napi-rs/canvas. This is the
  * bridge that lets scanned (image-only, no text layer) PDFs be OCR'd — pdfjs text
@@ -272,13 +279,16 @@ export interface RasterPage {
  * often a ~110 DPI JPEG drawn up to page size; smoothing blurs its QR modules into each
  * other, and the QR scan missed codes zxing reads from the same page unsmoothed (client
  * QA 2026-10, #34: 642615, 612342, 059741 p15). OCR keeps smoothing — it reads text better.
+ *
+ * `minLongSide` raises the scale for a page that would otherwise come out shorter than that
+ * on its long side — a card saved as its own small page. See MIN_OCR_PAGE_LONG_SIDE in ocr.ts.
  */
 export async function rasterizePdf(
   absolutePath: string,
   maxPages = MAX_PDF_PAGES,
   scale = 2,
   onlyPages?: number[],
-  { smooth = true }: { smooth?: boolean } = {}
+  { smooth = true, minLongSide = 0 }: { smooth?: boolean; minLongSide?: number } = {}
 ): Promise<RasterPage[]> {
   try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -316,7 +326,8 @@ export async function rasterizePdf(
       for (let p = 1; p <= pageCount; p++) {
         if (onlyPages && !onlyPages.includes(p)) continue;
         const page = await doc.getPage(p);
-        const viewport = page.getViewport({ scale });
+        const { width, height } = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: rasterScale(width, height, scale, minLongSide) });
         const canvas = createCanvas(viewport.width, viewport.height);
         // @napi-rs/canvas's 2D context is API-compatible with what pdfjs renders into;
         // cast through unknown since the DOM lib isn't in this project's tsconfig.
@@ -387,42 +398,55 @@ export async function rasterizePdf(
  * Largest image per page, because an ID-card page is one photo plus, sometimes, a small
  * logo or signature strip; the card is the one that matters.
  *
- * Returns an empty map rather than throwing — this only ever decorates a message.
+ * Read from the paint operators' own arguments: pdfjs's evaluator puts each image's size there
+ * (4.10: paintImageXObject [objId, width, height]; a mask carries an object with width and
+ * height), so nothing is decoded or waited for. Not inline images: pdfjs inlines only images
+ * under 200 px, never a card, and one on a vector page made it "too coarse" for its QR
+ * (ship review r3). Waiting on page.objs for the
+ * decoded image is what hung 045360's QR check to the 600s run timeout, when two pages shared
+ * an image pdfjs keeps in the document-wide pool. A monochrome scan arrives as an image MASK,
+ * which the old lookup never counted (ship review 2026-10-16).
+ *
+ * A page with no entry paints no image. null when the file could not be read at all: SPELL
+ * then leaves its doubtful words alone rather than re-reading a page it could not measure.
  */
 export async function largestImageWidthPerPage(
   absolutePath: string,
   pages: number[]
-): Promise<Map<number, { width: number; height: number }>> {
+): Promise<Map<number, { width: number; height: number }> | null> {
   const out = new Map<number, { width: number; height: number }>();
   try {
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
-    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false }).promise;
-    for (const n of pages) {
-      if (n < 1 || n > doc.numPages) continue;
-      const page = await doc.getPage(n);
-      const ops = await page.getOperatorList();
-      let best: { width: number; height: number } | undefined;
-      for (let i = 0; i < ops.fnArray.length; i++) {
-        if (ops.fnArray[i] !== OPS.paintImageXObject) continue;
-        const name = ops.argsArray[i]?.[0];
-        if (typeof name !== 'string') continue;
-        const img = await new Promise<unknown>((res) => {
-          try {
-            page.objs.get(name, res);
-          } catch {
-            res(null);
+    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false, verbosity: 0 }).promise;
+    try {
+      for (const n of pages) {
+        if (n < 1 || n > doc.numPages) continue;
+        const page = await doc.getPage(n);
+        const ops = await page.getOperatorList();
+        let best: { width: number; height: number } | undefined;
+        for (let i = 0; i < ops.fnArray.length; i++) {
+          const fn = ops.fnArray[i];
+          const args = ops.argsArray[i];
+          const [width, height] =
+            fn === OPS.paintImageXObject
+              ? [args?.[1], args?.[2]]
+              : fn === OPS.paintImageMaskXObject
+                ? [args?.[0]?.width, args?.[0]?.height]
+                : [undefined, undefined];
+          if (typeof width === 'number' && typeof height === 'number' && width > 0 && (!best || width > best.width)) {
+            best = { width, height };
           }
-        });
-        const wh = img as { width?: number; height?: number } | null;
-        if (wh?.width && wh?.height && (!best || wh.width > best.width)) {
-          best = { width: wh.width, height: wh.height };
         }
+        if (best) out.set(n, best);
+        page.cleanup();
       }
-      if (best) out.set(n, best);
+    } finally {
+      await doc.cleanup?.();
+      await doc.destroy?.();
     }
   } catch {
-    // Measurement is a nicety; never let it break a validation run.
+    return null;
   }
   return out;
 }

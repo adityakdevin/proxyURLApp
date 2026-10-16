@@ -207,6 +207,37 @@ Found by: /ship performance + API contract specialists, 2026-10-13.
 - Wheel zoom does not re-centre on the cursor; docFields reports NOT_A_MODEL twice.
 Found by: /ship review passes 2-4, 2026-10-13.
 
+### New false reds from the round-2 OCR changes
+**Priority:** P1
+Reading small cards larger and thresholding patterned ones finds more text, and some of it is
+junk. On the 570 QA claims: SPELL 22 pass→red (about half real typos, the rest OCR junk),
+COMPARE 7, QR 8, REDFLAG 4 (junk names, impossible dates, Aadhaar mismatches from misreads).
+QR DOB compare is format-sensitive (QR "1985-07-15" vs printed "15/07/1985") and is now
+reached on more card pages. The QR holder-name page rescue was removed in review; redo it so
+it rescues only junk-name misreads (612342, 631650 flag again). Also open: 627998 PAN read
+with a space, 045360 name misread, cardText's pdf-parse fallback.
+Fix: classify each new red on the 570-claim diff, then fix by cause.
+Found by: 570-claim comparison, 2026-10-16.
+
+### OCR and SPELL re-read leftovers
+**Priority:** P2
+- `TesseractOcrPort.close()` does not settle a recognize already in flight (tesseract.js
+  5.1.1 `terminate` leaves its jobs pending), so a timed-out SPELL keeps one temp PNG and its
+  render buffer. Race recognize against a closed promise, or pass the buffer, not a file.
+- META's high-res retry is invisible to SPELL, which compares against the first look only.
+- SPELL renders a page before measuring its image; per-claim (not per-doc) re-read budget.
+- The Sauvola pass starts its own worker; dense pages take every pass.
+- No Jest test for the getPool close race or the image-size Map/null contract (ESM dynamic
+  imports); add a tsx check over a few real PDFs.
+Found by: /ship review passes 1-3, 2026-10-16/17.
+
+### Red flag rules still open
+**Priority:** P2
+- GSTIN check char is only folded for OCR misreads; a clean print and text layers need it too.
+- A single-sided voter card (front only, back never scanned) still reads "Back side NA".
+- `qrPresentUnread` is decided per page; the bundled "No QR" line can disagree with it.
+Found by: /ship review passes 1-3, 2026-10-16/17.
+
 ## Completed
 
 - **Bulk actions on a filter set could target claims the reviewer never selected** — `allMatching`
