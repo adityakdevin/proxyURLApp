@@ -410,6 +410,12 @@ function fieldsForQrPage(doc: ValidatorDoc, ctx: ValidatorContext, page?: number
   return group?.fields ?? [];
 }
 
+/** A page miss saying a code IS printed there, unread: a current-design PAN (it always carries
+ *  one) or an Aadhaar too coarse to read. Not an older PAN, coarse or not: it prints no QR, so
+ *  "No QR code found" stays true of it (MZBFB812LTN608650). */
+const qrPresentUnread = (m: FindingInput) =>
+  m.data?.qrExpected === true || (m.data?.tooCoarse === true && m.data?.kind === 'AADHAR');
+
 /**
  * Row 19 — which of the four QR outcomes this claim landed on.
  *
@@ -567,7 +573,8 @@ export const qrValidator: Validator = {
             data: { value: h.value },
           });
           // Does the QR agree with what is printed on the same page?
-          for (const c of compareQrToFields(h.value, fieldsForQrPage(doc, ctx, h.page))) {
+          const pageText = pageTextFor(doc, ctx, h.page);
+          for (const c of compareQrToFields(h.value, fieldsForQrPage(doc, ctx, h.page), pageText)) {
             comparisons.push({ ...c, documentId: doc.id, ...(h.page !== undefined ? { page: h.page } : {}) });
             if (c.verdict === 'MISMATCH') {
               mismatches.push({
@@ -606,7 +613,7 @@ export const qrValidator: Validator = {
           const url = kiaVerificationUrl(h.value);
           if (url && !verifiedUrls.has(url)) {
             verifiedUrls.add(url);
-            for (const f of await verifyKiaPolicy(h.value, pageTextFor(doc, ctx, h.page))) {
+            for (const f of await verifyKiaPolicy(h.value, pageText)) {
               const finding = { documentId: doc.id, ...f, page: h.page ?? null, bbox: h.bbox ?? null };
               // An ERROR is the QR contradicting its page, exactly like a field mismatch. An
               // unreachable site is INFO: unverified is not wrong.
@@ -630,12 +637,6 @@ export const qrValidator: Validator = {
             data: { kind },
           });
         }
-      } else {
-        missing.push({
-          documentId: doc.id,
-          code: 'QR_MISSING',
-          message: `No QR code found in ${doc.fileName}.`,
-        });
       }
 
       // Per-PAGE reporting for ID cards. The check above is per DOCUMENT, so one readable
@@ -651,6 +652,7 @@ export const qrValidator: Validator = {
             )
           : new Map<number, { width: number; height: number }>();
 
+      const pageMisses: FindingInput[] = [];
       for (const p of idCardMisses) {
         // Do not blame the scan when the server lost its decoder. zxing reads dense and
         // blurry codes that jsQR cannot, so on the fallback path a crisp, perfectly good
@@ -670,7 +672,7 @@ export const qrValidator: Validator = {
         // 2026-10, #33: the customer's PAN on 026512, a blurred QR reported as absent).
         const qrExpected =
           p.kind === 'PAN' && panCarriesQr(pageTextFor(doc, ctx, p.page));
-        missing.push({
+        pageMisses.push({
           documentId: doc.id,
           code: 'QR_MISSING',
           severity: 'INFO',
@@ -706,6 +708,16 @@ export const qrValidator: Validator = {
           },
         });
       }
+      // "No QR code found" beside a page saying a code is there but unreadable contradicts
+      // it, as an ERROR no less (client QA 2026-10, 026512).
+      if (hits.length === 0 && !pageMisses.some(qrPresentUnread)) {
+        missing.push({
+          documentId: doc.id,
+          code: 'QR_MISSING',
+          message: `No QR code found in ${doc.fileName}.`,
+        });
+      }
+      missing.push(...pageMisses);
     }
     const outcome = qrOutcome(values.length, scannable.length, values);
     // A QR that disagrees with its own page fails the check outright: the point of reading
@@ -717,6 +729,8 @@ export const qrValidator: Validator = {
       // Not every page was looked at: a QR may be there unread. Not a pass.
       outcome.status = 'FAILED';
       outcome.summary = 'Some pages or images were not fully scanned for QR codes — please check them visually.';
+    } else if (values.length === 0 && missing.some(qrPresentUnread)) {
+      outcome.summary = 'A QR code is present but could not be read — see the flagged page(s).';
     }
     // Row 19 — bifurcate the column by WHAT happened, not just pass/fail.
     //

@@ -407,10 +407,21 @@ export async function largestImageWidthPerPage(
         if (ops.fnArray[i] !== OPS.paintImageXObject) continue;
         const name = ops.argsArray[i]?.[0];
         if (typeof name !== 'string') continue;
+        // An image painted on two or more pages is moved to the document-wide pool under a
+        // "g_" name (pdfjs's own rule, see its canvas getObject). Asking page.objs for it
+        // waits forever: on 045360 two ID pages sharing a strip image hung the QR check until
+        // the 600s run timeout, so no QR result was ever stored. The cap is for any other
+        // object that never resolves — a missing measurement only loses a message detail.
+        const pool = name.startsWith('g_') ? page.commonObjs : page.objs;
         const img = await new Promise<unknown>((res) => {
+          const timer = setTimeout(() => res(null), 5_000);
           try {
-            page.objs.get(name, res);
+            pool.get(name, (v: unknown) => {
+              clearTimeout(timer);
+              res(v);
+            });
           } catch {
+            clearTimeout(timer);
             res(null);
           }
         });
