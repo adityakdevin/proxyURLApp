@@ -259,4 +259,50 @@ describe('redFlagValidator compares a card only with its own pages (client QA 20
     // An unclassified page that reads like the card's back is still compared.
     expect(await codes([voter, "Elector's Name RAM KUMAR ABX7654321 signature"])).toContain('REDFLAG_VOTER_MISMATCH');
   });
+
+  it('a back side whose "Electoral Registration Officer" OCR garbled is still the back (638633 p17)', async () => {
+    const back = 'ABC1234569 Address: 1-23, Station Road Dahej For 151-Vagra Constituency Facsimile Signature of the EkcomiRegsraion Oficer';
+    const front = 'ELECTION COMMISSION OF INDIA IDENTITY CARD ABC1234569 signature';
+    const out = await codes([front, back]);
+    expect(out).not.toContain('REDFLAG_VOTER_BACK_NA');
+    expect(out).not.toContain('REDFLAG_VOTER_MISMATCH');
+    expect(await codes([front, back.replace('ABC1234569', 'NWM7654321')])).toContain('REDFLAG_VOTER_MISMATCH');
+  });
+
+  // Value: protects=a policy page after a Voter ID is not compared as the card's back;
+  // fails_when=the voter filter stops excluding pages that classify as something else (its
+  // "facsimile signature" and intermediary code raise a false Voter ID mismatch); why_new=only
+  // RC and Gujarat-card neighbours were tested (ship review 2026-10-16); seam=none;
+  // no_claim=pages classifyDocType cannot place
+  it('a policy schedule after the card is not its back side', async () => {
+    const front = 'ELECTION COMMISSION OF INDIA IDENTITY CARD ABC1234569 signature';
+    const policy =
+      'CERTIFICATE OF INSURANCE CUM POLICY SCHEDULE\nPeriod of Insurance\nPremium\nThis document bears a facsimile signature\nIntermediary Code: IMD1234567';
+    expect(await codes([front, policy])).not.toContain('REDFLAG_VOTER_MISMATCH');
+    const taxInvoice = 'Tax Invoice cum Certificate of Insurance\nFacsimile signature\nchange of address\nCode BRK0000123';
+    expect(await codes([front, taxInvoice])).not.toContain('REDFLAG_VOTER_MISMATCH');
+  });
+
+  // Value: protects=a tampered back photocopied on one sheet with the RC still mismatches, as on
+  // main; fails_when=the back is dropped because the page also reads as an RC; why_new=the
+  // 52cd6a5 classify filter passed this case (ship review r3, 2026-10-17); seam=none;
+  // no_claim=OCR quality
+  it('a back side copied on one sheet with the RC is still compared', async () => {
+    const front = 'ELECTION COMMISSION OF INDIA IDENTITY CARD ABC1234567 signature';
+    const back = "Elector's Name RAM KUMAR ABC7654321 Certificate of Registration Regn. No GJ01AB1234";
+    expect(await codes([front, back])).toContain('REDFLAG_VOTER_MISMATCH');
+  });
+
+  it('an unreadable GSTIN is boxed on the page', async () => {
+    const out = await redFlagValidator.run(
+      ctx({
+        pageTexts: new Map([['d1', ['GSTIN No. : 36AAACKT904GIZO signature']]]),
+        wordBoxes: new Map([['d1', [{ text: '36AAACKT904GIZO', page: 1, bbox: { x: 0.5, y: 0.1, w: 0.1, h: 0.01 } }]]]),
+      })
+    );
+    const f = out.findings?.find((x) => x.code === 'REDFLAG_GST_UNREADABLE');
+    expect(f?.bbox).toMatchObject({ x: 0.5, y: 0.1 });
+    // The reviewer reads the rule's label, not its code.
+    expect(out.summary).toMatch(/GSTIN unreadable ×1/);
+  });
 });

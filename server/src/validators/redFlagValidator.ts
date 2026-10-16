@@ -174,6 +174,7 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_BAD_DATE: 'Impossible date',
   REDFLAG_VID_UNREADABLE: 'VID unreadable',
   REDFLAG_PAN_UNREADABLE: 'PAN unreadable',
+  REDFLAG_GST_UNREADABLE: 'GSTIN unreadable',
   REDFLAG_DL_UNREADABLE: 'DL unreadable',
   REDFLAG_PASSPORT_UNREADABLE: 'Passport no. unreadable',
 };
@@ -237,7 +238,12 @@ export const redFlagValidator: Validator = {
         // Voter page is its back side.
         // …but only when it reads like one: on 648914 the page after the Voter ID was a
         // Government of Gujarat card whose "GCN1234567" was compared as the EPIC.
-        const voterBack = /elector|election|\bepic\b|voter|मतदाता|निर्वाचन/i;
+        // The back's constituency line counts too: OCR read 638633's "Electoral Registration
+        // Officer" as "EkcomiRegsraion Oficer", so its back (p17) was dropped and the front
+        // reported "Back side NA" (client QA 2026-10, #3). Not "facsimile" or "change of
+        // address": a policy schedule after the card says both, and its intermediary code was
+        // compared as the EPIC (ship review 2026-10-16).
+        const voterBack = /elector|election|\bepic\b|voter|मतदाता|निर्वाचन|constituency|registration\s+officer/i;
         const voterPages = asPages.filter(
           (p, i) =>
             pages[i].govtCode === 'VOTER_ID' ||

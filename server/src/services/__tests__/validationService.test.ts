@@ -116,6 +116,7 @@ describe('ValidationService + drainer', () => {
     // to run end to end — INTRA and FULL, which do no I/O at all, waited behind the QR page
     // rasterisation for the whole of it.
     const order: string[] = [];
+    const tailStarts: number[] = [];
     const inFlight = new Set<string>();
     let maxConcurrent = 0;
     const trace = (key: Validator['key'], column: Validator['column']): Validator => ({
@@ -124,6 +125,7 @@ describe('ValidationService + drainer', () => {
       run: async () => {
         order.push(key);
         inFlight.add(key);
+        if (key === 'REDFLAG' || key === 'SPELL') tailStarts.push(inFlight.size);
         maxConcurrent = Math.max(maxConcurrent, inFlight.size);
         await new Promise((r) => setTimeout(r, 20));
         inFlight.delete(key);
@@ -154,13 +156,15 @@ describe('ValidationService + drainer', () => {
     });
     await new ValidationService(prisma, traced).runOne(run.id);
 
-    // META started before anything else, and never shared the stage. REDFLAG ran last and
-    // alone: it opens its own pdfjs document per PDF, so overlapping it with QR's
+    // META started before anything else, and never shared the stage. REDFLAG and SPELL ran
+    // after the rest, one at a time: each opens its own pdfjs document per PDF (SPELL to
+    // render a page again for a second reading), so overlapping either with QR's
     // rasterisation would put two PDF loaders in memory at once.
     expect(order[0]).toBe('META');
-    expect(order[order.length - 1]).toBe('REDFLAG');
-    // Only the four in the middle overlapped.
-    expect(maxConcurrent).toBe(4);
+    expect(order.slice(-2).sort()).toEqual(['REDFLAG', 'SPELL']);
+    // Only the three in the middle overlapped, and each of the two after them ran alone.
+    expect(maxConcurrent).toBe(3);
+    expect(tailStarts).toEqual([1, 1]);
     // Every check still recorded exactly one result. Not asserted in order: the rows are
     // written inside one transaction and share a createdAt to the millisecond, so ordering
     // by it is a coin toss — the same tie the audit log's pagination had to break.

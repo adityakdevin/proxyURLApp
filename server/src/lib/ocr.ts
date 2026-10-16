@@ -6,6 +6,7 @@ import { OcrPort, WordBox } from '../validators/types.js';
 import { rasterizePdf, MAX_PDF_PAGES } from './pdfExtractor.js';
 import { estimateSkewDegrees } from './deskew.js';
 import { clamp01 } from './bbox.js';
+import { getSpell, isRealWord, type Spell } from '../validators/dictionary.js';
 
 /**
  * Map a normalized box from an image rotated counter-clockwise by `deg` back onto the page
@@ -88,29 +89,70 @@ const MAX_OCR_TARGETED_PAGES = MAX_PDF_PAGES;
 const ROTATIONS = [90, 180, 270] as const;
 
 /**
- * How many word-SHAPED tokens the text has. A character count cannot separate a sideways
- * page from an upright one (the sideways read is just as long), and Tesseract's own
- * confidence scored a sideways Aadhaar card ABOVE its upright reading. This separates them
- * cleanly: the policy page scores 815 upright and 265 sideways; the Aadhaar card 2 upright
- * and 13 at 270°.
+ * How much REAL text a read holds: the dictionary words of 5+ letters in it.
+ *
+ * A character count cannot separate a sideways page from an upright one, and Tesseract's own
+ * confidence scored a sideways Aadhaar card ABOVE its upright reading. Counting word-SHAPED
+ * tokens did, until card photos: turned upside down, a card yields MORE letter clusters than
+ * upright ("AMRAHS RAMUK IVAR" is "RAVI KUMAR SHARMA" read at 180°), so clear PAN and Aadhaar
+ * cards were read the wrong way up and reported missing (client QA 2026-10: 650930 p.7,
+ * 301725 p.3-4, 650618 p.7-10), and a card whose background pattern read upright as 145
+ * clusters of noise never got a second look (643885 p.6). Real words do not have that flaw:
+ * the wrong way up those cards read 0-1 of them, the right way up 2-13.
+ *
+ * Short dictionary hits are no evidence: noise is full of "ERR", "SEE", "EAR", and with
+ * 4-letter words counted, a wrong-way read of "Issue Date ABLE" came within one word of the
+ * right-way Aadhaar ("GOVERNMENT Chandra MALE Mobile", 059741 p.9). At 5+ letters it is 1
+ * against 3.
  */
-const wordScore = (text: string) => (text.match(/\b[A-Za-z]{3,}\b/g) ?? []).length;
+export function readScore(text: string, spell: Spell): number {
+  return (text.match(/\b[A-Za-z]{5,}\b/g) ?? []).filter((w) => isRealWord(spell, w)).length;
+}
+
+/** Word-shaped tokens (3+ letters) in a read, real or not. */
+const wordShaped = (text: string) => (text.match(/\b[A-Za-z]{3,}\b/g) ?? []).length;
 
 /**
- * Above this the page is plainly upright and readable, so no alternative is tried.
+ * Whether a read holding `real` real words is plainly upright and readable, so no alternative
+ * is tried: ten real words, and at least one word-shaped token in ten a real one.
  *
  * This is what keeps the sweep affordable, and it is self-balancing: the pages that are
- * SLOW to OCR are the dense ones, and dense pages clear the bar by a mile (815, 54). The
- * pages that fall below it are the sparse card photos, which are the fast ones (~0.3s).
+ * SLOW to OCR are the dense ones, and dense pages clear the bar by a mile (an upright policy
+ * page reads 400+ real words). The pages that fall below it are the sparse card photos, which
+ * are the fast ones (~0.3s).
+ *
+ * The share is there for dense pages. Read upside down, a policy page still turns up 20-26
+ * dictionary words by chance, but among 400+ letter clusters: measured on 54 claims, no
+ * wrong-way-up read reached a 6.2% share, and 176 of 177 upright pages with ten real words
+ * were at 10% or more. The exception, a Hindi-heavy Aadhaar letter at 8%, costs a wasted
+ * sweep and nothing else.
  */
-const UPRIGHT_SCORE = 60;
+export function readsAsText(text: string, real: number): boolean {
+  return real >= 10 && real * 10 >= wordShaped(text);
+}
 
-/** Rotate (counter-clockwise, verified against Jimp) and contrast-boost a copy to try. */
-async function prepare(image: Buffer | string, deg: number): Promise<Buffer | null> {
+/**
+ * Whether a quarter turn that read `turned` real words is believed over the best upright read
+ * (`upright`): it needs at least two, and more than twice as many.
+ *
+ * Pages mostly arrive the right way up. A turn taken on one stray word was wrong every time
+ * it was measured (four upright ID badges and photocopies turned sideways or over, e.g.
+ * 616760 p.5), and a narrow lead was no better: a ration card upside down on 2 against 1
+ * (739562 p.9), a PAN card sideways on 7 against 6 (321756 p.3). Cards that really were
+ * turned win clearly — 13 against 1, 41 against 3 — and the closest real ones were 2 against 0
+ * (650618 p.9) and 3 against 1 (059741 p.9).
+ */
+export function turnBeatsUpright(turned: number, upright: number): boolean {
+  return turned >= 2 && turned > 2 * upright;
+}
+
+/** Rotate (counter-clockwise, verified against Jimp) and, unless `boost` is off, contrast-boost
+ *  a copy to try. */
+async function prepare(image: Buffer | string, deg: number, boost = true): Promise<Buffer | null> {
   try {
     const img = await Jimp.read(image as never);
     if (deg) img.rotate(deg);
-    img.greyscale().contrast(0.5);
+    if (boost) img.greyscale().contrast(0.5);
     return Buffer.from(await img.getBuffer('image/png'));
   } catch {
     return null; // preprocessing unavailable → keep whatever the plain pass gave
@@ -169,6 +211,28 @@ async function prepareDeskewed(
  */
 const MIN_OCR_IMAGE_WIDTH = 1600;
 
+/**
+ * PDF pages get a floor too, on their LONG side: a page that would render shorter than this
+ * at the usual scale 2 — a card saved as its own small page — is rendered larger.
+ *
+ * A voter card saved as a 465x280pt page rendered 930 px wide, and its EPIC ABC1234569 read
+ * as ABC1234565 — so the back of the same card, read right, was flagged as a possible misread
+ * (638633 p.16). Rendered anywhere from 1163 to 1860 px wide it read right. The
+ * high-resolution retry had read it right too, but on 6 real words against 7, and a retry
+ * that does not read clearly more is rightly not believed (HIGHRES_GAIN): it was the first
+ * look that was short of pixels.
+ *
+ * 1400, not the photos' 1600: A4 and Letter (1584 px) stay as they are, and so do the pages
+ * a little short of them — cropped document scans of 700-790pt, where a few percent more
+ * only reshuffled the OCR noise: on 88 claims it lost a PAN number from three such pages and
+ * found no marker or number they had missed.
+ *
+ * The long side, where photos use the width: by width, every portrait A4 page would qualify.
+ */
+export const MIN_OCR_PAGE_LONG_SIDE = 1400;
+/** The scale META renders a PDF page at for its first look (SPELL works out what that showed). */
+export const OCR_RENDER_SCALE = 2;
+
 /** The image as OCR should see it: small photos enlarged, everything else untouched. */
 async function upscaleSmallImage(
   absolutePath: string
@@ -194,7 +258,7 @@ async function upscaleSmallImage(
  *  one real claim page scored 54 at scale 2, 108 at scale 3 and 140 at scale 4. */
 const HIGH_RASTER_SCALE = 4;
 /** Bound the expensive retries per document, as the QR scan does for its scale-8 pass. */
-const MAX_HIGHRES_RETRY_PAGES = 8;
+export const MAX_HIGHRES_RETRY_PAGES = 8;
 /**
  * How much better the second look must read before it REPLACES the first.
  *
@@ -202,23 +266,64 @@ const MAX_HIGHRES_RETRY_PAGES = 8;
  * Aadhaar back the larger render scored 51 against 44, but re-read "C/O:" as "Jo:" and lost
  * the father's name with it. A page that genuinely needed the pixels wins by much more than
  * that — the invoice in the same bundle went 54 → 140.
+ *
+ * Those figures are word-shaped tokens; the score is now real words (readScore), still a
+ * count. On 118 retries across 54 claims the same 1.4 turned away 7 of the 8 rereads that
+ * would have lost a card's PAN/Aadhaar marker.
  */
 const HIGHRES_GAIN = 1.4;
+
+/**
+ * Recognize with Tesseract's thresholding_method set to Sauvola, a threshold per
+ * neighbourhood, instead of its default single global (Otsu) threshold for the whole page.
+ *
+ * A card printed on a tinted, patterned ground has no one grey level that separates its ink
+ * from its background. A clear PAN card photo (301725 p.4) read as "Pern anent Account
+ * Number", a name line and noise — no "INCOME TAX DEPARTMENT", no number — so PAN was
+ * reported missing; thresholded locally, it read "INCOMETAX DEPARTMENT", the PAN number,
+ * the name and the date of birth. It is not short of pixels: rendered 1607 and 1786 px wide
+ * instead of 1191, it still read 3 real words and no marker.
+ */
+async function recognizeSauvola(worker: Worker, png: Buffer) {
+  await worker.setParameters({ thresholding_method: '2' });
+  try {
+    return await worker.recognize(png, {}, { blocks: true });
+  } finally {
+    // The worker reads every other page in its lane too; put the default back.
+    await worker.setParameters({ thresholding_method: '0' });
+  }
+}
+
+/**
+ * Whether the Sauvola read (`sauvola` real words) replaces the best read so far (`first`).
+ *
+ * The high-resolution retry's HIGHRES_GAIN, for the same reason — it rewrites the whole page
+ * — and four real words at least. Below that, one poor read is as likely as another to hold
+ * the card's marker. On 88 claims, of the 9 Sauvola reads that cleared the gain on two or
+ * three words, one found a marker the first read lacked and two lost one ("INCOME TAX" read
+ * as "COMETAX", 632308 p.3; "Male" as "Make", 648687 p.7). The 33 on four or more found 15
+ * and lost none.
+ */
+export function sauvolaWins(sauvola: number, first: number): boolean {
+  return sauvola >= 4 && sauvola > first * HIGHRES_GAIN;
+}
 
 /** One recognition at a KNOWN configuration — used for the high-resolution second look,
  *  where the winning rotation is already established and re-sweeping would be waste. */
 async function recognizeWith(
   worker: Worker,
   image: Buffer,
-  rotation: number,
-  deskew: boolean
+  { rotation, skew, sauvola }: { rotation: number; skew?: number; sauvola?: boolean }
 ): Promise<{ data: Awaited<ReturnType<Worker['recognize']>>['data']; score: number } | null> {
-  const png = deskew
-    ? (await prepareDeskewed(image, rotation))?.png
-    : await prepare(image, rotation);
+  const png =
+    skew !== undefined
+      ? (await prepareDeskewed(image, rotation))?.png
+      : await prepare(image, rotation, !sauvola);
   if (!png) return null;
-  const r = await worker.recognize(png, {}, { blocks: true });
-  return { data: r.data, score: wordScore(r.data.text ?? '') };
+  const r = sauvola
+    ? await recognizeSauvola(worker, png)
+    : await worker.recognize(png, {}, { blocks: true });
+  return { data: r.data, score: readScore(r.data.text ?? '', await getSpell()) };
 }
 
 /**
@@ -227,34 +332,66 @@ async function recognizeWith(
  * back to the page as the reviewer sees it.
  */
 async function recognize(worker: Worker, image: Buffer | string) {
+  const spell = await getSpell();
+  const score = (text?: string) => readScore(text ?? '', spell);
+  const readable = (b: { data: { text?: string }; score: number }) =>
+    readsAsText(b.data.text ?? '', b.score);
   const plain = await worker.recognize(image, {}, { blocks: true });
-  let best: { data: typeof plain.data; rotation: number; score: number; skew?: number } = {
+  let best: {
+    data: typeof plain.data;
+    rotation: number;
+    score: number;
+    skew?: number;
+    sauvola?: boolean;
+  } = {
     data: plain.data,
     rotation: 0,
-    score: wordScore(plain.data.text ?? ''),
+    score: score(plain.data.text),
   };
-  if (best.score >= UPRIGHT_SCORE) return best;
+  if (readable(best)) return best;
   // Upright-boosted first, so a tie keeps the page the way it was scanned.
+  let upright = best.score;
   for (const deg of [0, ...ROTATIONS]) {
     const prepped = await prepare(image, deg);
     if (!prepped) continue;
     const r = await worker.recognize(prepped, {}, { blocks: true });
-    const score = wordScore(r.data.text ?? '');
-    if (score > best.score) best = { data: r.data, rotation: deg, score };
+    const s = score(r.data.text);
+    // The boost is there for pages the plain pass read NOTHING from (see ROTATIONS), so its
+    // letters replace an empty read even without a real word: FULL flags letter soup as an
+    // unreadable page, but takes an empty one for a blank page and says nothing.
+    const better =
+      deg === 0
+        ? s > best.score || wordShaped(best.data.text ?? '') === 0
+        : s > best.score && turnBeatsUpright(s, upright);
+    if (better) best = { data: r.data, rotation: deg, score: s };
+    if (deg === 0) upright = best.score;
     // Once a candidate reads as proper text, stop — the remaining rotations cost seconds
     // each on a dense page and cannot beat a page that is already right way up.
-    if (best.score >= UPRIGHT_SCORE) break;
+    if (readable(best)) break;
   }
 
   // Still poor at every quarter turn? The page may be a few degrees off square, which
   // Tesseract barely tolerates. One more pass, squared up at whichever turn read best.
-  if (best.score < UPRIGHT_SCORE) {
+  if (!readable(best)) {
     const straightened = await prepareDeskewed(image, best.rotation);
     if (straightened) {
       const r = await worker.recognize(straightened.png, {}, { blocks: true });
-      const score = wordScore(r.data.text ?? '');
-      if (score > best.score) {
-        best = { data: r.data, rotation: best.rotation, score, skew: straightened.skew };
+      const s = score(r.data.text);
+      if (s > best.score) {
+        best = { data: r.data, rotation: best.rotation, score: s, skew: straightened.skew };
+      }
+    }
+  }
+
+  // Still poor? The ink may not separate from a patterned ground at any one grey level. One
+  // more pass, thresholded locally, at whichever turn read best — see recognizeSauvola.
+  if (!readable(best)) {
+    const turned = await prepare(image, best.rotation, false);
+    if (turned) {
+      const r = await recognizeSauvola(worker, turned);
+      const s = score(r.data.text);
+      if (sauvolaWins(s, best.score)) {
+        best = { data: r.data, rotation: best.rotation, score: s, sauvola: true };
       }
     }
   }
@@ -281,13 +418,25 @@ function ocrWorkers(): number {
 
 export class TesseractOcrPort implements OcrPort {
   private workers: Worker[] = [];
+  private closed = false;
 
   /** Grow the pool to `n` workers and hand back that many. Spun up once per run: creating
-   *  one (and loading its language data) costs seconds, far more than any single page. */
+   *  one (and loading its language data) costs seconds, far more than any single page.
+   *  Never after close(): a check the run timed out and abandoned keeps going, and SPELL's
+   *  next page would start a worker nothing terminates (ship review 2026-10-16). Every caller
+   *  catches, so the abandoned loop just reads nothing and ends. Checked again after each
+   *  start: close() can land while a worker is still loading (ship review r3). */
   private async getPool(n: number): Promise<Worker[]> {
     while (this.workers.length < n) {
-      this.workers.push(await createWorker('eng', undefined, { cachePath: OCR_CACHE_PATH }));
+      if (this.closed) throw new Error('OCR port closed');
+      const w = await createWorker('eng', undefined, { cachePath: OCR_CACHE_PATH });
+      if (this.closed) {
+        await w.terminate().catch(() => undefined);
+        throw new Error('OCR port closed');
+      }
+      this.workers.push(w);
     }
+    if (this.closed) throw new Error('OCR port closed');
     return this.workers.slice(0, n);
   }
 
@@ -342,9 +491,10 @@ export class TesseractOcrPort implements OcrPort {
       // exactly which pages lack a text layer, honour that list instead — applying the cap
       // first meant an ID-card page at position 13+ of a bundled claim PDF was never read.
       const rasterStartedAt = Date.now();
+      const small = { minLongSide: MIN_OCR_PAGE_LONG_SIDE };
       const pages = onlyPages
-        ? await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, 2, onlyPages)
-        : await rasterizePdf(absolutePath, 12);
+        ? await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, OCR_RENDER_SCALE, onlyPages, small)
+        : await rasterizePdf(absolutePath, 12, OCR_RENDER_SCALE, undefined, small);
       const rasterMs = Date.now() - rasterStartedAt;
       if (pages.length === 0) return { text: '', words: [] };
       // One lane per worker, each pulling the next page off a shared cursor, so a page that
@@ -390,17 +540,19 @@ export class TesseractOcrPort implements OcrPort {
             //
             // The budget is shared across lanes. Test and decrement sit together with no
             // await between them, so no two lanes can both see the last unit and spend it.
-            if (score < UPRIGHT_SCORE && highResBudget > 0) {
+            if (!readsAsText(data.text ?? '', score) && highResBudget > 0) {
               highResBudget--;
               retries++;
               const retryStartedAt = Date.now();
+              // Twice the first look, on a small page too.
               const [hi] = await rasterizePdf(
                 absolutePath,
                 MAX_OCR_TARGETED_PAGES,
                 HIGH_RASTER_SCALE,
-                [pg.page]
+                [pg.page],
+                { minLongSide: 2 * MIN_OCR_PAGE_LONG_SIDE }
               );
-              const retry = hi && (await recognizeWith(worker, hi.png, rotation, skew !== undefined));
+              const retry = hi && (await recognizeWith(worker, hi.png, recognized));
               if (retry && retry.score > score * HIGHRES_GAIN) {
                 data = retry.data;
                 score = retry.score;
@@ -451,6 +603,7 @@ export class TesseractOcrPort implements OcrPort {
   async close(): Promise<void> {
     // Every worker, not just the first: a leaked thread holds its wasm instance and language
     // data for the life of the process, and the drainer creates a port per run.
+    this.closed = true;
     const open = this.workers;
     this.workers = [];
     await Promise.all(open.map((w) => w.terminate()));
