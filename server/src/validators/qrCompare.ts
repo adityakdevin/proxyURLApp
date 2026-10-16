@@ -200,12 +200,24 @@ function modelMatches(a: string, b: string): boolean {
   return short.length > 0 && short[0] === long[0] && short.every((w) => long.includes(w));
 }
 
-/** The QR's name word for word on one line of the page, as the page spells it; else null. */
+// A relative's name, not the holder's: "S/O: Ramesh" on an Aadhaar, the line under
+// "Father's Name" on a PAN. Without this a QR carrying the father's name passes because the
+// card prints the father too — the swapped-QR case this comparison exists to catch.
+const RELATION_RE = /\b(?:[sdwc]\s*[/|]\s*[o0]|son\s+of|daughter\s+of|wife\s+of|care\s+of|father|husband|mother|guardian)\b/i;
+
+/** The QR's name word for word on one line of the page, as the page spells it; else null.
+ *  Not a relative's line: a relation marker before it on that line or on the line above. */
 function nameOnPage(qrName: string, pageText: string): string | null {
   const t = nameTokens(qrName);
   if (t.length === 0) return null;
-  const m = new RegExp(`(?<![a-z])${t.join('[^a-z\\n]*')}(?![a-z])`, 'i').exec(pageText);
-  return m ? m[0].replace(/\s+/g, ' ') : null;
+  const re = new RegExp(`(?<![a-z])${t.join('[^a-z\\n]*')}(?![a-z])`, 'i');
+  const lines = pageText.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = re.exec(lines[i]);
+    if (!m || RELATION_RE.test(lines[i].slice(0, m.index)) || RELATION_RE.test(lines[i - 1] ?? '')) continue;
+    return m[0].replace(/\s+/g, ' ');
+  }
+  return null;
 }
 
 /**

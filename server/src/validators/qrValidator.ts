@@ -574,7 +574,11 @@ export const qrValidator: Validator = {
           });
           // Does the QR agree with what is printed on the same page?
           const pageText = pageTextFor(doc, ctx, h.page);
-          for (const c of compareQrToFields(h.value, fieldsForQrPage(doc, ctx, h.page), pageText)) {
+          // The QR's own page only: pageTextFor falls back to the whole file, and a name
+          // printed anywhere in the file is not the card agreeing with its QR.
+          const pages = ctx.pageTexts.get(doc.id) ?? [];
+          const cardText = (h.page !== undefined ? pages[h.page - 1] : pages.length === 1 ? pages[0] : '') ?? '';
+          for (const c of compareQrToFields(h.value, fieldsForQrPage(doc, ctx, h.page), cardText)) {
             comparisons.push({ ...c, documentId: doc.id, ...(h.page !== undefined ? { page: h.page } : {}) });
             if (c.verdict === 'MISMATCH') {
               mismatches.push({

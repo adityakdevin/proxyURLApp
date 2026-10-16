@@ -90,6 +90,11 @@ describe('QR holder name read off its own page (client QA 2026-10, 612342 / 6316
   it('a card that does not print the QR name still mismatches', () => {
     expect(holder('NAVEEN K', 'Government of India\nNaveen K\nS/O: Ganesans K').verdict).toBe('MISMATCH');
   });
+  // The swapped-QR case: the QR is the father's, and the card prints the father as a relative.
+  it("a QR carrying the father's name still mismatches", () => {
+    expect(holder('NAVEEN K', 'Government of India\nNaveen K\nS/O: Ganesan').verdict).toBe('MISMATCH');
+    expect(holder('NAVEEN K', "Name\nNAVEEN K\nFather's Name\nGANESAN").verdict).toBe('MISMATCH');
+  });
   it('a policy naming the QR person elsewhere (as nominee) still mismatches', () => {
     const c = compareQrToFields('Name:MR. ROHIT JAIN|Pol.No.:OG-1', [{ label: "Insured's Name", value: 'SUNIL' }] as never,
       "Insured's Name + MR. SUNIL\nName of Nominee\nROHIT JAIN 58 FATHER");
