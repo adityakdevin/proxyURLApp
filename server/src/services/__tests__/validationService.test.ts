@@ -154,13 +154,14 @@ describe('ValidationService + drainer', () => {
     });
     await new ValidationService(prisma, traced).runOne(run.id);
 
-    // META started before anything else, and never shared the stage. REDFLAG ran last and
-    // alone: it opens its own pdfjs document per PDF, so overlapping it with QR's
+    // META started before anything else, and never shared the stage. REDFLAG and SPELL ran
+    // after the rest, one at a time: each opens its own pdfjs document per PDF (SPELL to
+    // render a page again for a second reading), so overlapping either with QR's
     // rasterisation would put two PDF loaders in memory at once.
     expect(order[0]).toBe('META');
-    expect(order[order.length - 1]).toBe('REDFLAG');
-    // Only the four in the middle overlapped.
-    expect(maxConcurrent).toBe(4);
+    expect(order.slice(-2).sort()).toEqual(['REDFLAG', 'SPELL']);
+    // Only the three in the middle overlapped.
+    expect(maxConcurrent).toBe(3);
     // Every check still recorded exactly one result. Not asserted in order: the rows are
     // written inside one transaction and share a createdAt to the millisecond, so ordering
     // by it is a coin toss — the same tie the audit log's pagination had to break.

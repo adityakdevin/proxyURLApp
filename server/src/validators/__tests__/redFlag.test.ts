@@ -278,5 +278,7 @@ describe('redFlagValidator compares a card only with its own pages (client QA 20
     );
     const f = out.findings?.find((x) => x.code === 'REDFLAG_GST_UNREADABLE');
     expect(f?.bbox).toMatchObject({ x: 0.5, y: 0.1 });
+    // The reviewer reads the rule's label, not its code.
+    expect(out.summary).toMatch(/GSTIN unreadable ×1/);
   });
 });

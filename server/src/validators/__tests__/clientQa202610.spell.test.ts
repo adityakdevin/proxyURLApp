@@ -1,7 +1,7 @@
 /** Regressions from the client QA summary report of 2026-10: Spell points #41-46. */
 import { findTermMisspellings, EXPECTED_TERMS } from '../logic.js';
 import { extractNames } from '../crossDocLogic.js';
-import { spellValidator, secondReading } from '../spellValidator.js';
+import { spellValidator, secondReading, metaFirstLook } from '../spellValidator.js';
 import type { ValidatorContext, WordBox } from '../types.js';
 
 const isReal = (w: string) => ['surgeon', 'associate', 'security', 'senior', 'nurse', 'sales'].includes(w.toLowerCase());
@@ -104,6 +104,44 @@ describe('client QA 2026-10 — a second reading of an untrusted near-miss', () 
     answer([box('Sighature', 1, 93)]);
     expect(await run('Sighature of Customer', [box('Sighature', 1)])).toEqual({ sighature: 'WARNING' });
     expect(asked).toEqual([]);
+  });
+  // Value: protects=places stay doubtful-only even from a text layer, which carries no
+  // confidence (client decision, Master row 13); fails_when=nearFormWord loses its place guard
+  // (a place variant is confirmed, turns red, fails the claim); why_new=the #46 case is at conf 49,
+  // so the guess gate hid the place gate; seam=none; no_claim=OCR quality
+  it('a place from a text layer is not re-read either', async () => {
+    answer([box('LUCNOW', 2, 95)]);
+    expect(await run('UAN 100123456789 Branch LUCNOW', [box('LUCNOW', 2)])).toEqual({ lucnow: 'WARNING' });
+    expect(asked).toEqual([]);
+  });
+  // Value: protects=a near-miss of an admin-added brand or proper-noun term is never confirmed
+  // into a failing misspelling; fails_when=the isProperNounTerm guard is dropped from the
+  // re-read gate; why_new=every second-reading test used built-in terms; seam=none (prisma
+  // stub for the term table); no_claim=what tesseract reads
+  it('a near-miss of an admin-added proper noun is not re-read', async () => {
+    answer([box('Mahindro', 1, 95)]);
+    const ctx: ValidatorContext = {
+      claim: { id: 'c', claimId: 'C1', subCategoryId: 's' },
+      documents: [],
+      prisma: { spellTerm: { findMany: async () => [{ term: 'mahindra', expansion: null }] } } as never,
+      ocr: { extractImageText: async () => '' },
+      shared: new Map([['d1', 'Make Mahindro Scorpio']]),
+      wordBoxes: new Map([['d1', [box('Mahindro', 1)]]]),
+      pageTexts: new Map(),
+    };
+    const res = await spellValidator.run(ctx);
+    expect(Object.fromEntries((res.findings ?? []).map((f) => [f.data?.word, f.severity]))).toEqual({ mahindro: 'WARNING' });
+    expect(asked).toEqual([]);
+  });
+  // Value: protects=a second read never runs on a page rendered no larger than META first saw
+  // it; fails_when=metaFirstLook forgets ocr.ts's long-side floor (a 465pt card computes 930 px,
+  // so a 1395 px re-read "confirms" META's own misread); why_new=the gate's size maths had no
+  // test (ship review 2026-10-16); seam=none; no_claim=the render itself (pdfjs, outside Jest)
+  it("a small card page's second read adds no pixels; an A4 page's does", () => {
+    expect(metaFirstLook(465)).toBeCloseTo(1400, 5);
+    expect(465 * 3).toBeLessThanOrEqual(metaFirstLook(465));
+    expect(metaFirstLook(841.92)).toBeCloseTo(1683.84, 2);
+    expect(841.92 * 3).toBeGreaterThan(metaFirstLook(841.92));
   });
   it('a word used as a name is not re-read', async () => {
     answer([box('Managar', 1, 95)]);

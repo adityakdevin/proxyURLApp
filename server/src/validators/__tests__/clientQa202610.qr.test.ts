@@ -90,6 +90,35 @@ describe('QR holder name read off its own page (client QA 2026-10, 612342 / 6316
   it('a card that does not print the QR name still mismatches', () => {
     expect(holder('NAVEEN K', 'Government of India\nNaveen K\nS/O: Ganesans K').verdict).toBe('MISMATCH');
   });
+  // Value: protects=a swapped QR carrying a relative's name stays a mismatch however OCR prints
+  // the relation marker; fails_when=the marker regex drops an OCR variant, or only the line
+  // directly above is checked; why_new=each layout passed as a MATCH (ship review 2026-10-16);
+  // seam=none; no_claim=markers OCR loses entirely
+  it.each([
+    "Name\nRavi Kumar Sharma\n\nFather's Name\n\nRamesh Kumar Sharma",
+    'Name\nRavi Kumar Sharma\nFathers Name\nRamesh Kumar Sharma',
+    'Ravi Kumar Sharma\nSIO Ramesh Kumar Sharma, 12 MG Road',
+    'Ravi Kumar Sharma\n5/O Ramesh Kumar Sharma',
+    'Ravi Kumar Sharma\nपिता\nRamesh Kumar Sharma',
+    "Ravi Kumar Sharma\nFather's Name: Ramesh Kumar Sharma",
+  ])("a relative's name stays a mismatch however OCR prints the marker: %j", (page) => {
+    const [c] = compareQrToFields('Name:Ramesh Kumar Sharma', [{ label: 'Holder Name', value: 'Ravi Kumar Sharma' }] as never, page);
+    expect(c.verdict).toBe('MISMATCH');
+  });
+  // Value: protects=a Mohammed / MD holder printed on the card matches its QR like any other
+  // name; fails_when=the page regex uses the folded "mohd" token; why_new=such holders were
+  // never found on their card; seam=none; no_claim=other spelling folds
+  it('a Mohammed / MD name printed on the card is a match', () => {
+    const pane = [{ label: 'Holder Name', value: 'YIR' }] as never;
+    expect(compareQrToFields('Name:Mohammed Ali', pane, 'Government of India\nMohammed Ali\nDOB 1980')[0].verdict).toBe('MATCH');
+    expect(compareQrToFields('Name:MD Shahabuddin', pane, 'GOVERNMENT OF INDIA\nMD SHAHABUDDIN')[0].verdict).toBe('MATCH');
+  });
+  // Value: protects=the QR name is not found inside a longer word on the page; fails_when=the
+  // regex loses its letter boundaries (a swapped QR passes on "Ganesanpur Road"); why_new=the
+  // other negative case is rejected by its S/O marker first; seam=none; no_claim=none beyond protects
+  it('the QR name inside a longer word is not the card printing it', () => {
+    expect(holder('YIR', 'Government of India\nGanesanpur Road').verdict).toBe('MISMATCH');
+  });
   // The swapped-QR case: the QR is the father's, and the card prints the father as a relative.
   it("a QR carrying the father's name still mismatches", () => {
     expect(holder('NAVEEN K', 'Government of India\nNaveen K\nS/O: Ganesan').verdict).toBe('MISMATCH');
@@ -106,6 +135,17 @@ describe('QR holder name read off its own page (client QA 2026-10, 612342 / 6316
 // against the QR ("No.&chassis" on 020440); fails_when=modelFromRow stops rejecting label words;
 // why_new=only "Company"/"Name"-style fragments were covered; seam=none; no_claim=reading the
 // real model further down the table
+// Value: protects=a real model is still read from a schedule's two-line Make/Model table, and
+// a header after "Model :" is not; fails_when=the NOT_A_MODEL prefix check over-rejects or the
+// header words are dropped from MODEL_RE (a header compared against the QR's model fails the
+// check); why_new=only the 020440 rejection was tested; seam=none; no_claim=variant parsing
+it('a real model is still read; a header after "Model :" is not', () => {
+  const model = (text: string) => valueOf(docFieldGroups([`${POLICY}${text}`])[0].fields, 'Model');
+  expect(model('Make Model Variant\nKIA SYROS SYROS D1.5 6MT')).toBe('SYROS');
+  expect(model('Model : Chassis No MZBB1811LSN014084')).toBeNull();
+  expect(model('Model - Fuel Type Petrol')).toBeNull();
+});
+
 it('a header fragment in the model cell is not a model (020440)', () => {
   const [g] = docFieldGroups([
     `${POLICY}Registration RTO Place Engine/Motor Make - Model Type Of Body\nNo. No.&chassis Type Of Fuel Manf.\nNEW - G3LCSM373438 TSYROS G1.0 SALOON`,
