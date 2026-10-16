@@ -94,7 +94,7 @@ it('a header fragment in the model cell is not a model (020440)', () => {
 // "No QR code found" (026512), while an older PAN with no QR still is; fails_when=the document
 // line is emitted regardless of its page misses; why_new=only classifyQrOutcome was tested, not
 // the findings run() emits; seam=rasterizePdf and largestImageWidthPerPage use import(), which
-// Jest cannot run, so both come back empty here; no_claim=the coarse-scan branches (a coarse
+// Jest cannot run, so here there is no render and no measurement (null); no_claim=the coarse-scan branches (a coarse
 // Aadhaar suppressing the line, a coarse older PAN keeping it) — those need a real render
 describe('"No QR code found" beside an unreadable QR (client QA 2026-10, 026512)', () => {
   const run = (pageText: string) =>

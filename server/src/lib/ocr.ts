@@ -258,7 +258,7 @@ async function upscaleSmallImage(
  *  one real claim page scored 54 at scale 2, 108 at scale 3 and 140 at scale 4. */
 const HIGH_RASTER_SCALE = 4;
 /** Bound the expensive retries per document, as the QR scan does for its scale-8 pass. */
-const MAX_HIGHRES_RETRY_PAGES = 8;
+export const MAX_HIGHRES_RETRY_PAGES = 8;
 /**
  * How much better the second look must read before it REPLACES the first.
  *
@@ -424,12 +424,19 @@ export class TesseractOcrPort implements OcrPort {
    *  one (and loading its language data) costs seconds, far more than any single page.
    *  Never after close(): a check the run timed out and abandoned keeps going, and SPELL's
    *  next page would start a worker nothing terminates (ship review 2026-10-16). Every caller
-   *  catches, so the abandoned loop just reads nothing and ends. */
+   *  catches, so the abandoned loop just reads nothing and ends. Checked again after each
+   *  start: close() can land while a worker is still loading (ship review r3). */
   private async getPool(n: number): Promise<Worker[]> {
-    if (this.closed) throw new Error('OCR port closed');
     while (this.workers.length < n) {
-      this.workers.push(await createWorker('eng', undefined, { cachePath: OCR_CACHE_PATH }));
+      if (this.closed) throw new Error('OCR port closed');
+      const w = await createWorker('eng', undefined, { cachePath: OCR_CACHE_PATH });
+      if (this.closed) {
+        await w.terminate().catch(() => undefined);
+        throw new Error('OCR port closed');
+      }
+      this.workers.push(w);
     }
+    if (this.closed) throw new Error('OCR port closed');
     return this.workers.slice(0, n);
   }
 

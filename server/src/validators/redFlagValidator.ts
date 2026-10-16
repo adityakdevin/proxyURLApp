@@ -28,7 +28,6 @@ import {
   checkAadhaarFormat,
   checkVid,
   checkVoterId,
-  VOTER_BACK_RE,
   checkSignature,
   checkSignatoryWord,
   checkEditorWatermark,
@@ -239,21 +238,16 @@ export const redFlagValidator: Validator = {
         // Voter page is its back side.
         // …but only when it reads like one: on 648914 the page after the Voter ID was a
         // Government of Gujarat card whose "GCN1234567" was compared as the EPIC.
-        // The back's own wording counts too: OCR read 638633's "Electoral Registration Officer"
-        // as "EkcomiRegsraion Oficer", so its back (p17) was dropped and the front reported
-        // "Back side NA" (client QA 2026-10, #3).
-        // Not a page that is plainly something else, as for the Aadhaar back: a policy schedule
-        // after the card says "facsimile signature" and "change of address" too, and its
-        // intermediary code was compared as the EPIC (ship review 2026-10-16).
-        const voterBack = /elector|election|\bepic\b|voter|मतदाता|निर्वाचन/i;
+        // The back's constituency line counts too: OCR read 638633's "Electoral Registration
+        // Officer" as "EkcomiRegsraion Oficer", so its back (p17) was dropped and the front
+        // reported "Back side NA" (client QA 2026-10, #3). Not "facsimile" or "change of
+        // address": a policy schedule after the card says both, and its intermediary code was
+        // compared as the EPIC (ship review 2026-10-16).
+        const voterBack = /elector|election|\bepic\b|voter|मतदाता|निर्वाचन|constituency|registration\s+officer/i;
         const voterPages = asPages.filter(
           (p, i) =>
             pages[i].govtCode === 'VOTER_ID' ||
-            (!pages[i].govtCode &&
-              i > 0 &&
-              pages[i - 1].govtCode === 'VOTER_ID' &&
-              (voterBack.test(p.text) || VOTER_BACK_RE.test(p.text)) &&
-              !['PAYSLIP', 'INVOICE', 'INSURANCE', 'RC'].includes(classifyDocType(p.text) ?? ''))
+            (!pages[i].govtCode && i > 0 && pages[i - 1].govtCode === 'VOTER_ID' && voterBack.test(p.text))
         );
         for (const f of checkVoterId(voterPages)) findings.push(toFinding(doc.id, f));
       }

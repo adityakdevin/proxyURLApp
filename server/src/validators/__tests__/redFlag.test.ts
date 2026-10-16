@@ -279,6 +279,18 @@ describe('redFlagValidator compares a card only with its own pages (client QA 20
     const policy =
       'CERTIFICATE OF INSURANCE CUM POLICY SCHEDULE\nPeriod of Insurance\nPremium\nThis document bears a facsimile signature\nIntermediary Code: IMD1234567';
     expect(await codes([front, policy])).not.toContain('REDFLAG_VOTER_MISMATCH');
+    const taxInvoice = 'Tax Invoice cum Certificate of Insurance\nFacsimile signature\nchange of address\nCode BRK0000123';
+    expect(await codes([front, taxInvoice])).not.toContain('REDFLAG_VOTER_MISMATCH');
+  });
+
+  // Value: protects=a tampered back photocopied on one sheet with the RC still mismatches, as on
+  // main; fails_when=the back is dropped because the page also reads as an RC; why_new=the
+  // 52cd6a5 classify filter passed this case (ship review r3, 2026-10-17); seam=none;
+  // no_claim=OCR quality
+  it('a back side copied on one sheet with the RC is still compared', async () => {
+    const front = 'ELECTION COMMISSION OF INDIA IDENTITY CARD ABC1234567 signature';
+    const back = "Elector's Name RAM KUMAR ABC7654321 Certificate of Registration Regn. No GJ01AB1234";
+    expect(await codes([front, back])).toContain('REDFLAG_VOTER_MISMATCH');
   });
 
   it('an unreadable GSTIN is boxed on the page', async () => {
