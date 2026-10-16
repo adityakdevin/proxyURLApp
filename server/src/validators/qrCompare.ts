@@ -15,7 +15,7 @@
  */
 import { DocField } from './docFields.js';
 import { isUnreadableQrPayload } from './aadhaarSecureQr.js';
-import { idMatches, idNorm, nameMatches } from './crossDocLogic.js';
+import { idMatches, idNorm, nameMatches, nameTokens } from './crossDocLogic.js';
 import { editDistanceCapped } from './logic.js';
 
 export type QrVerdict = 'MATCH' | 'MISMATCH';
@@ -200,14 +200,22 @@ function modelMatches(a: string, b: string): boolean {
   return short.length > 0 && short[0] === long[0] && short.every((w) => long.includes(w));
 }
 
+/** The QR's name word for word on one line of the page, as the page spells it; else null. */
+function nameOnPage(qrName: string, pageText: string): string | null {
+  const t = nameTokens(qrName);
+  if (t.length === 0) return null;
+  const m = new RegExp(`(?<![a-z])${t.join('[^a-z\\n]*')}(?![a-z])`, 'i').exec(pageText);
+  return m ? m[0].replace(/\s+/g, ' ') : null;
+}
+
 /**
  * Compare one QR payload against one document's field pane.
  *
  * Only fields present on BOTH sides are compared — a QR key the pane has no row for (a
  * policy QR's registration number, its URL) is not evidence of anything, and neither is a
- * pane row the QR does not carry.
+ * pane row the QR does not carry. `pageText` is the text of the page the QR sits on.
  */
-export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldComparison[] {
+export function compareQrToFields(qrValue: string, fields: DocField[], pageText = ''): QrFieldComparison[] {
   const payload = parseQrPayload(qrValue);
   if (payload.size === 0) return [];
   const byLabel = new Map(fields.map((f) => [f.label, f.value]));
@@ -216,16 +224,22 @@ export function compareQrToFields(qrValue: string, fields: DocField[]): QrFieldC
 
   for (const [key, qrRaw] of payload) {
     for (const label of QR_KEY_TO_LABELS[key] ?? []) {
-      const documentValue = byLabel.get(label);
+      let documentValue = byLabel.get(label);
       if (!documentValue || seen.has(label)) continue;
       seen.add(label);
-      const ok = NAME_LABELS.has(label)
+      let ok = NAME_LABELS.has(label)
         ? nameMatches(qrRaw, documentValue)
         : label === 'Gender'
           ? genderMatches(qrRaw, documentValue)
           : label === 'Model'
             ? modelMatches(qrRaw, documentValue)
             : identifierMatches(qrRaw, documentValue);
+      // An ID card carries one person, so its page printing the QR's name word for word is
+      // agreement the pane failed to read: it took OCR debris ("YIR", "PA PA TATA") beside a
+      // printed "Ganesan" / "Murali Krishnan" (client QA 2026-10, 612342 / 631650). Not for
+      // a policy: its page names a nominee, agent and appointee too.
+      const printed = !ok && label === 'Holder Name' ? nameOnPage(qrRaw, pageText) : null;
+      if (printed) [ok, documentValue] = [true, printed];
       out.push({
         label,
         qrValue: qrRaw.replace(/\s+/g, ' ').trim(),

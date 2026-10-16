@@ -72,8 +72,13 @@ const ENGINE_RE = /engine\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{5,20})/i;
 // Not a model: the next column's header or policy boilerplate after "Model :" ("Company
 // Fitted", "Name", "Year") — "Company" was shown against the QR's "SONET" (client QA
 // 2026-10, #37/38).
-const MODEL_RE =
-  /(?:model|variant)\s*[:\-]\s*(?!(?:company|name|private|fitted|year|no|number|make|cc|type)\b)([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/i;
+// Also the column headers a two-line table puts in the model's cell: "No.&chassis" under
+// "Make - Model" on an Oriental schedule was compared against the QR's model (020440).
+const NOT_A_MODEL = 'company|name|private|fitted|year|no|number|make|cc|type|chassis|engine|regn?|registration|body|fuel';
+const MODEL_RE = new RegExp(
+  `(?:model|variant)\\s*[:\\-]\\s*(?!(?:${NOT_A_MODEL})\\b)([A-Za-z0-9][A-Za-z0-9 .\\-]{1,40})`,
+  'i'
+);
 const VID_RE = /\bV\.?I\.?D\.?\s*[:\-]?\s*((?:\d[\s-]?){13,15}\d)/i;
 
 /**
@@ -294,7 +299,7 @@ function engineFromRow(text: string): string | null {
 function modelFromRow(text: string): string | null {
   const row = rowUnder(text, /\bmake\b[\s\S]{0,40}?\bmodel\b/i);
   const v = row[1] ?? null;
-  return v && !/^(?:company|name|private|fitted|year|cc|type)$/i.test(v) ? v : null;
+  return v && !new RegExp(`^(?:${NOT_A_MODEL})\\b`, 'i').test(v) ? v : null;
 }
 
 // A vehicle invoice never labels the buyer "Name" — it says "Bill To" or "Sold To", so the
