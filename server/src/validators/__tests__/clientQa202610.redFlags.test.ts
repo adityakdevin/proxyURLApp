@@ -1,6 +1,6 @@
 /** Regressions from the client QA summary report of 2026-10 ("Summary Report - Software
  *  Testing"): Red Flags points 1-6 and Missing Docs points 7-12. */
-import { checkGst, checkPan, checkVid, checkDates, checkVoterId, checkAadhaar, aadhaarNumbers } from '../redFlagLogic.js';
+import { checkGst, checkPan, checkVid, checkDates, checkVoterId, checkAadhaar, aadhaarNumbers, gstCheckChar } from '../redFlagLogic.js';
 import { typePresent } from '../logic.js';
 import { classify, ClassifiableType } from '../../services/documentClassifier.js';
 
@@ -108,6 +108,49 @@ describe('client QA 2026-10 — Red Flags', () => {
   });
   it('#6 a phone number is still not read as a date', () => {
     expect(checkDates('+91-20-2721 8080 or 011-23-45678')).toEqual([]);
+  });
+});
+
+// Value: protects=a valid GSTIN misread by OCR passes once its check char agrees, a wrong one stays red and boxable, Voter "Back side NA" only when no back, no date from a digit chain; fails_when=the checksum is skipped or alternatives are tried (a forged GSTIN passes), the EPIC/back wording on one page is ignored, a chain fragment is read as a date; why_new=client QA rows 2-3 and 004536 p1 reported these on real claims; seam=none; no_claim=OCR quality
+describe('client QA 2026-10 — GSTIN misreads, Voter back side, date fragments', () => {
+  it('computes the GSTIN check char (CBIC mod-36)', () => {
+    for (const g of ['36AAACI7904G1ZO', '24AABCB5730G1Z3', '37AABCT3518Q1ZV', '29AAACN4165C2ZM']) expect(gstCheckChar(g)).toBe(g[14]);
+  });
+  it('#2 a valid GSTIN misread by OCR is accepted (313242, 650930, 004536, 648914)', () => {
+    for (const read of ['36AAACITH04GIZO', '36AAACIT904GIZO', '36AABCBST30GIZY', '24AABCBS730G1Z3', '27AACCOA128Q1Z0']) {
+      expect(checkGst(`Servicing Branch GSTIN No. : ${read} PAN No.:`, 3)).toEqual([]);
+    }
+  });
+  it('#2 a misread whose check char disagrees stays red and carries the value to box', () => {
+    // I read as K: a letter for a letter, which no fold can undo, so the check char cannot agree.
+    expect(checkGst('GSTIN: 36AAACKT904GIZO', 3)).toEqual([
+      expect.objectContaining({ code: 'REDFLAG_GST_UNREADABLE', severity: 'ERROR', data: { gst: '36AAACKT904GIZO' } }),
+    ]);
+  });
+  it('#2 a wrong GSTIN garbled the same way is still red', () => {
+    // 36AAACI7904G1ZO with the 9 changed to 8, then OCR'd like the real one.
+    expect(checkGst('GSTIN: 36AAACIT804GIZO', 3)[0]?.severity).toBe('ERROR');
+    expect(checkGst('GSTIN: 35AAACIT904GIZO', 3)[0]?.severity).toBe('ERROR');
+  });
+  it('#3 both sides of a Voter ID on one page are not "Back side NA" (648914 p8)', () => {
+    expect(checkVoterId([{ page: 8, text: 'ELECTION COMMISSION OF INDIA XYZ7654320 Address: 5-34 Station Road XYZ7654320' }])).toEqual([]);
+    // The back's EPIC unread, its wording still there.
+    expect(checkVoterId([{ page: 8, text: 'ELECTION COMMISSION OF INDIA XYZ7654320 For 169-Bardoli Constituency Facsiflk Signatur' }])).toEqual([]);
+  });
+  it('#3 a front alone is still "Back side NA"', () => {
+    expect(checkVoterId([{ page: 8, text: "ELECTION COMMISSION OF INDIA XYZ7654320 Elector's Name Patel" }])[0]?.code).toBe('REDFLAG_VOTER_BACK_NA');
+  });
+  it('a two-digit "year" with more digits chained on is not a date (004536 p1)', () => {
+    expect(checkDates('To. Date. 41/30/04/2020')).toEqual([]);
+    expect(checkDates('SIMHA MOTORS, 48/10/12/1, SERVICE ROAD')).toEqual([]);
+    expect(checkDates('Subject to IMT Endt. Nos.& Memorandum: 16.17.22.28')).toEqual([]);
+    expect(checkDates('TPPD 1 Sum Insured - 7.50.000/-')).toEqual([]);
+  });
+  it('real impossible dates are still flagged', () => {
+    expect(checkDates('Date 31/02/24')[0]?.code).toBe('REDFLAG_BAD_DATE');
+    expect(checkDates('DOB 19.10.20000')[0]?.code).toBe('REDFLAG_BAD_DATE');
+    // The second date of a range is not a chain fragment.
+    expect(checkDates('Period 01/04/2024-31/04/2025')[0]?.data).toEqual({ date: '31/04/2025' });
   });
 });
 

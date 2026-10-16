@@ -259,4 +259,24 @@ describe('redFlagValidator compares a card only with its own pages (client QA 20
     // An unclassified page that reads like the card's back is still compared.
     expect(await codes([voter, "Elector's Name RAM KUMAR ABX7654321 signature"])).toContain('REDFLAG_VOTER_MISMATCH');
   });
+
+  it('a back side whose "Electoral Registration Officer" OCR garbled is still the back (638633 p17)', async () => {
+    const back = 'ABC1234569 Address: 1-23, Station Road Dahej For 151-Vagra Constituency Facsimile Signature of the EkcomiRegsraion Oficer';
+    const front = 'ELECTION COMMISSION OF INDIA IDENTITY CARD ABC1234569 signature';
+    const out = await codes([front, back]);
+    expect(out).not.toContain('REDFLAG_VOTER_BACK_NA');
+    expect(out).not.toContain('REDFLAG_VOTER_MISMATCH');
+    expect(await codes([front, back.replace('ABC1234569', 'NWM7654321')])).toContain('REDFLAG_VOTER_MISMATCH');
+  });
+
+  it('an unreadable GSTIN is boxed on the page', async () => {
+    const out = await redFlagValidator.run(
+      ctx({
+        pageTexts: new Map([['d1', ['GSTIN No. : 36AAACKT904GIZO signature']]]),
+        wordBoxes: new Map([['d1', [{ text: '36AAACKT904GIZO', page: 1, bbox: { x: 0.5, y: 0.1, w: 0.1, h: 0.01 } }]]]),
+      })
+    );
+    const f = out.findings?.find((x) => x.code === 'REDFLAG_GST_UNREADABLE');
+    expect(f?.bbox).toMatchObject({ x: 0.5, y: 0.1 });
+  });
 });
