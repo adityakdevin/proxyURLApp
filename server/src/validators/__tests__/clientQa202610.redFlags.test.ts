@@ -156,6 +156,11 @@ describe('client QA 2026-10 — GSTIN misreads, Voter back side, date fragments'
     expect(checkDates('To. Date. 41/31/02/2024')[0]?.data).toEqual({ date: '31/02/2024' });
     // ...but a two-digit piece read out of the same chain is still the chain (673493 p1).
     expect(checkDates('H NO 4-6-90/19 X')).toEqual([]);
+    // A dash joining a time or a dash-written date is not a chain; a dotted date behind
+    // stray digits is checked like a slashed one.
+    expect(checkDates('Date 31/02/24-10:30')[0]?.data).toEqual({ date: '31/02/24' });
+    expect(checkDates('Period 31-02-24-01-03-25')[0]?.data).toEqual({ date: '31-02-24' });
+    expect(checkDates('Dt 41.31.02.2024')[0]?.data).toEqual({ date: '31.02.2024' });
   });
   it('real impossible dates are still flagged', () => {
     expect(checkDates('Date 31/02/24')[0]?.code).toBe('REDFLAG_BAD_DATE');

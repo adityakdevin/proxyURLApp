@@ -621,28 +621,31 @@ export function checkDates(fileText: string, page: number | null = null): RedFla
   // four-digit year counts: "6-90/19" read out of the house number "4-6-90/19" is the chain
   // again, not a date (ship review 2026-10-16, 673493 p1).
   let chainEnd = -1;
+  // Where the scan resumed inside a split fragment: that start follows a digit by design, so
+  // the mid-number rule below must not drop it ("41.31.02.2024" read nothing at all).
+  let resumedAt = -1;
   for (let m: RegExpExecArray | null; (m = DATE_RE.exec(fileText)); ) {
     const raw = m[0];
     // A two-digit "year" with more of the chain after it is a fragment, not a date: OCR glued a
     // stray "41/" onto 30/04/2020 and read "41/30/04" (client QA 2026-10, 004536 p1); "48/10/12/1"
     // is a door number, "16.17.22.28" a list of IMT clauses. The scan resumes at the fragment's
     // second number, so the real date behind the stray digits ("31/02/2024" in "41/31/02/2024")
-    // is still checked. Not a fragment: a hyphen joining two whole dates, "31/02/24-01/03/25" —
-    // skipping that let an impossible policy start date pass (ship review 2026-10-16).
+    // is still checked. Not a fragment: a hyphen joining a second whole date or a time —
+    // "31/02/24-01/03/25", "31-02-24-01-03-25", "31/02/24-10:30" — skipping those let an
+    // impossible date pass that main flagged (ship review 2026-10-16).
     const after = fileText.slice(m.index + raw.length);
-    const sep = raw[m[1].length];
-    const rangeNext = sep !== '-' && /^-\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}\b/.test(after);
+    const joined = /^-(?:\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b|\d{1,2}:\d{2})/.test(after);
     const inChain = m.index < chainEnd;
-    if (m[3].length === 2 && ((/^[\/.\-]\d/.test(after) && !rangeNext) || inChain)) {
+    if (m[3].length === 2 && ((/^[\/.\-]\d/.test(after) && !joined) || inChain)) {
       if (!inChain) chainEnd = m.index + raw.length + (/^(?:[\/.\-]\d+)+/.exec(after)?.[0].length ?? 0);
-      DATE_RE.lastIndex = m.index + m[1].length + 1;
+      resumedAt = DATE_RE.lastIndex = m.index + m[1].length + 1;
       continue;
     }
     // Starting mid-number is not a date: a payslip's "LWP 0.00/0.00" matched as "00/0.00"
     // and failed the claim on an impossible date (client QA 2026-10, #6).
     // Mid-number only: a digit before it, or a '.'/',' that itself follows a digit. A dot
     // after a label ("Dt.31/02/2024", "No.") is not inside a number and must be checked.
-    if (/\d[.,]?$/.test(fileText.slice(Math.max(0, (m.index ?? 0) - 2), m.index ?? 0))) continue;
+    if (m.index !== resumedAt && /\d[.,]?$/.test(fileText.slice(Math.max(0, m.index - 2), m.index))) continue;
     if (seen.has(raw)) continue;
     seen.add(raw);
     const day = +m[1];

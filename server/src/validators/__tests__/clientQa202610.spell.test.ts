@@ -1,7 +1,7 @@
 /** Regressions from the client QA summary report of 2026-10: Spell points #41-46. */
 import { findTermMisspellings, EXPECTED_TERMS } from '../logic.js';
 import { extractNames } from '../crossDocLogic.js';
-import { spellValidator, secondReading, metaFirstLook } from '../spellValidator.js';
+import { spellValidator, secondReading, metaFirstLook, rereadAddsPixels } from '../spellValidator.js';
 import type { ValidatorContext, WordBox } from '../types.js';
 
 const isReal = (w: string) => ['surgeon', 'associate', 'security', 'senior', 'nurse', 'sales'].includes(w.toLowerCase());
@@ -133,15 +133,18 @@ describe('client QA 2026-10 — a second reading of an untrusted near-miss', () 
     expect(Object.fromEntries((res.findings ?? []).map((f) => [f.data?.word, f.severity]))).toEqual({ mahindro: 'WARNING' });
     expect(asked).toEqual([]);
   });
-  // Value: protects=a second read never runs on a page rendered no larger than META first saw
-  // it; fails_when=metaFirstLook forgets ocr.ts's long-side floor (a 465pt card computes 930 px,
-  // so a 1395 px re-read "confirms" META's own misread); why_new=the gate's size maths had no
-  // test (ship review 2026-10-16); seam=none; no_claim=the render itself (pdfjs, outside Jest)
-  it("a small card page's second read adds no pixels; an A4 page's does", () => {
+  // Value: protects=a second read runs only when it shows Tesseract more pixels than META's first
+  // look, and never on a page it could not measure; fails_when=the gate forgets ocr.ts's 1400 px
+  // floor (a 465pt card's 1395 px re-read "confirms" META's own misread), inverts, or re-reads an
+  // unmeasured scan; why_new=the gate's decision had no test (ship review 2026-10-16); seam=none;
+  // no_claim=the render and the measurement themselves (pdfjs, outside Jest)
+  it('a second read happens only when it adds pixels', () => {
     expect(metaFirstLook(465)).toBeCloseTo(1400, 5);
-    expect(465 * 3).toBeLessThanOrEqual(metaFirstLook(465));
-    expect(metaFirstLook(841.92)).toBeCloseTo(1683.84, 2);
-    expect(841.92 * 3).toBeGreaterThan(metaFirstLook(841.92));
+    expect(rereadAddsPixels(465 * 3, undefined)).toBe(false); // small card: read at 1400 px already
+    expect(rereadAddsPixels(841.92 * 3, undefined)).toBe(true); // A4 vector print
+    expect(rereadAddsPixels(841.92 * 3, { width: 900, height: 1200 })).toBe(false); // a 1200 px scan
+    expect(rereadAddsPixels(841.92 * 3, { width: 2480, height: 3508 })).toBe(true); // a 300 ppi scan
+    expect(rereadAddsPixels(841.92 * 3, null)).toBe(false); // could not be measured
   });
   it('a word used as a name is not re-read', async () => {
     answer([box('Managar', 1, 95)]);

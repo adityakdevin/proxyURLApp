@@ -17,7 +17,7 @@ import {
   isProperNounTerm,
 } from './logic.js';
 import { rasterizePdf, largestImageWidthPerPage, rasterScale, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
-import { MIN_OCR_PAGE_LONG_SIDE } from '../lib/ocr.js';
+import { MIN_OCR_PAGE_LONG_SIDE, OCR_RENDER_SCALE } from '../lib/ocr.js';
 import { extractNames, extractRelationNames } from './crossDocLogic.js';
 import { ADDRESS_WORDS, INDIAN_PLACE_WORDS } from './indianPlaces.js';
 
@@ -109,9 +109,8 @@ function nearFormWord(token: string, term: string): boolean {
   );
 }
 
-/** The scale META's OCR renders a PDF page at (ocr.ts; 4 on a poor page's retry). Tesseract is
- *  deterministic, so a second reading at the same scale would only repeat the first. */
-const OCR_RENDER_SCALE = 2;
+/** The scale of the second look. Tesseract is deterministic, so a second reading at META's own
+ *  scale (OCR_RENDER_SCALE; 4 on a poor page's retry) would only repeat the first. */
 const REREAD_SCALE = 3;
 
 /**
@@ -123,8 +122,24 @@ const REREAD_SCALE = 3;
 export function metaFirstLook(longSidePt: number): number {
   return longSidePt * rasterScale(longSidePt, longSidePt, OCR_RENDER_SCALE, MIN_OCR_PAGE_LONG_SIDE);
 }
-/** Pages read a second time per document. Mirrors META's cap on its own high-res retries;
- *  a near-miss on a page past it simply stays doubtful, as it was before. */
+
+/**
+ * Whether a re-render `rereadPx` long (long side) shows Tesseract anything META's first look did
+ * not, given the largest image the page paints. undefined: it paints none — vector print, sharper
+ * at any scale. null: the page could not be measured, so no: a coarse scan re-read is the same
+ * blur, enlarged, and both readings make the same mistake (ship review 2026-10-16).
+ * ponytail: META's high-res retry (scale 4 on a poorly read page, ocr.ts) is not visible here, so
+ * a page it retried can be re-read at fewer pixels than the reading being checked. Record the px
+ * META actually read each page at, and compare against that, if retried pages confirm misreads.
+ */
+export function rereadAddsPixels(rereadPx: number, image: { width: number; height: number } | null | undefined): boolean {
+  const firstLook = metaFirstLook(rereadPx / REREAD_SCALE);
+  if (image === null || rereadPx <= firstLook) return false;
+  return !image || Math.max(image.width, image.height) > firstLook;
+}
+
+/** Pages read a second time per document: the same number as META's own high-res retries
+ *  (ocr.ts). A near-miss on a page past it simply stays doubtful, as it was before. */
 const MAX_REREAD_PAGES = 8;
 
 /** Words printed on the line people sign and stamp. A pen stroke through a letter reads the
@@ -163,11 +178,8 @@ async function rereadPages(ctx: ValidatorContext, documentId: string, pages: num
       // part of a page counts as coarser than it is (it stays doubtful). Measure the image's
       // placed size from the operator list's transform if that hides real misspellings.
       if (ocrRead.has(page)) {
-        const reread = Math.max(render.width, render.height);
-        const firstRender = metaFirstLook(reread / REREAD_SCALE);
-        if (reread <= firstRender) continue;
-        const img = (await largestImageWidthPerPage(doc.readablePath, [page])).get(page);
-        if (img && Math.max(img.width, img.height) <= firstRender) continue;
+        const sizes = await largestImageWidthPerPage(doc.readablePath, [page]);
+        if (!rereadAddsPixels(Math.max(render.width, render.height), sizes ? sizes.get(page) : null)) continue;
       }
       await fs.writeFile(file, render.png);
       out.push(...(await ctx.ocr.extractImage(file)).words.map((w) => ({ ...w, page })));
