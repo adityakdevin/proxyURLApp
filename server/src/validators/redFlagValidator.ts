@@ -28,6 +28,7 @@ import {
   checkAadhaarFormat,
   checkVid,
   checkVoterId,
+  VOTER_BACK_RE,
   checkSignature,
   checkSignatoryWord,
   checkEditorWatermark,
@@ -174,6 +175,7 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_BAD_DATE: 'Impossible date',
   REDFLAG_VID_UNREADABLE: 'VID unreadable',
   REDFLAG_PAN_UNREADABLE: 'PAN unreadable',
+  REDFLAG_GST_UNREADABLE: 'GSTIN unreadable',
   REDFLAG_DL_UNREADABLE: 'DL unreadable',
   REDFLAG_PASSPORT_UNREADABLE: 'Passport no. unreadable',
 };
@@ -237,11 +239,17 @@ export const redFlagValidator: Validator = {
         // Voter page is its back side.
         // …but only when it reads like one: on 648914 the page after the Voter ID was a
         // Government of Gujarat card whose "GCN1234567" was compared as the EPIC.
+        // The back's own wording counts too: OCR read 638633's "Electoral Registration Officer"
+        // as "EkcomiRegsraion Oficer", so its back (p17) was dropped and the front reported
+        // "Back side NA" (client QA 2026-10, #3).
         const voterBack = /elector|election|\bepic\b|voter|मतदाता|निर्वाचन/i;
         const voterPages = asPages.filter(
           (p, i) =>
             pages[i].govtCode === 'VOTER_ID' ||
-            (!pages[i].govtCode && i > 0 && pages[i - 1].govtCode === 'VOTER_ID' && voterBack.test(p.text))
+            (!pages[i].govtCode &&
+              i > 0 &&
+              pages[i - 1].govtCode === 'VOTER_ID' &&
+              (voterBack.test(p.text) || VOTER_BACK_RE.test(p.text)))
         );
         for (const f of checkVoterId(voterPages)) findings.push(toFinding(doc.id, f));
       }

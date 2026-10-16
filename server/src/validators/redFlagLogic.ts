@@ -52,19 +52,34 @@ const OCR_ALT: Record<string, string> = {
   O: '0', '0': 'O', I: '1', '1': 'I', L: '1', S: '5', '5': 'S', B: '8', '8': 'B', Z: '2', '2': 'Z',
 };
 
-/** Letter → the digit it is misread for, and back; GSTIN positions say which one is meant. */
-const AS_DIGIT: Record<string, string> = { O: '0', Q: '0', D: '0', I: '1', L: '1', T: '7', S: '5', B: '8', Z: '2', G: '6' };
+/** Letter → the digit it is misread for, and back; GSTIN positions say which one is meant.
+ *  H and A are from the corpus: ICICI's "7904" OCRs as "TH04", "AACCO4128Q" as "AACCOA128Q". */
+const AS_DIGIT: Record<string, string> = { O: '0', Q: '0', D: '0', I: '1', L: '1', T: '7', S: '5', B: '8', Z: '2', G: '6', A: '4', H: '9' };
 const AS_LETTER: Record<string, string> = { '0': 'O', '1': 'I', '5': 'S', '8': 'B', '2': 'Z', '6': 'G', '7': 'T' };
 /** A GSTIN is 2 digits, 5 letters, 4 digits, a letter, an entity code, Z, a check char.
- *  Folding each position to its own kind turns OCR's "36AAACKT904GIZO" (7 read as T, 1 as
- *  I) back into a valid shape, which the generic swap search gave up on — too many
- *  ambiguous characters (client QA 2026-10, #2: 643885, 650930, 328472, 004536). */
+ *  Folding each position to its own kind turns OCR's "36AAACITH04GIZO" (7 read as T, 9 as H,
+ *  1 as I) back into 36AAACI7904G1ZO (client QA 2026-10, #2: 313242, 643885, 650930, 004536).
+ *  The entity code is a registration count, a digit but for a 10th+ registration, so it folds
+ *  to a digit; the check char is left as read. One reading only: the check char then vouches
+ *  for exactly the string accepted — trying alternatives would let a wrong GSTIN pass by luck. */
 function gstFold(g: string): string {
   return [...g]
     .map((c, i) =>
-      i < 2 || (i >= 7 && i <= 10) ? (AS_DIGIT[c] ?? c) : (i >= 2 && i <= 6) || i === 11 ? (AS_LETTER[c] ?? c) : i === 13 && c === '2' ? 'Z' : c
+      i < 2 || (i >= 7 && i <= 10) || i === 12 ? (AS_DIGIT[c] ?? c) : i < 14 ? (AS_LETTER[c] ?? c) : c
     )
     .join('');
+}
+
+const GST_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+/** A GSTIN's 15th character: CBIC's mod-36 Luhn check over the first 14. It catches any one
+ *  wrong character, which is what makes undoing OCR misreads safe. */
+export function gstCheckChar(g: string): string {
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const v = GST_CHARS.indexOf(g[i]) * (i % 2 ? 2 : 1);
+    sum += Math.floor(v / 36) + (v % 36);
+  }
+  return GST_CHARS[(36 - (sum % 36)) % 36];
 }
 
 /** Is `raw` a plausible OCR misread of a token that WOULD match `shape`? True only when
@@ -150,7 +165,12 @@ export function checkGst(text: string, page: number | null = null): RedFlagFindi
   const cand = labeledCandidate(text, /\bGSTIN\b|\bGST\s*(?:no|reg)/i, /\b[0-9]{2}[A-Z0-9]{13}\b/);
   if (!cand) return [];
   if (GST_RE.test(cand)) return [];
-  if ((cand.length === 15 && GST_RE.test(gstFold(cand))) || ocrAdjacent(cand, GST_RE)) return [err('REDFLAG_GST_UNREADABLE', `GSTIN "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page)];
+  const folded = cand.length === 15 ? gstFold(cand) : '';
+  // A misread GSTIN whose check char agrees once the misreads are undone is the valid GSTIN
+  // printed on the page. One whose check char still disagrees stays red.
+  if (GST_RE.test(folded) && gstCheckChar(folded) === folded[14]) return [];
+  // `data` carries the read value so the viewer can box it on the page.
+  if (GST_RE.test(folded) || ocrAdjacent(cand, GST_RE)) return [err('REDFLAG_GST_UNREADABLE', `GSTIN "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page, { gst: cand })];
   const why = cand.length !== 15 ? `is ${cand.length} chars, not 15` : cand[13] !== 'Z' ? 'is missing the mandatory Z at position 14' : 'has an invalid format';
   return [err('REDFLAG_GST_FORMAT', `GSTIN "${cand}" ${why}`, page, { gst: cand })];
 }
@@ -366,17 +386,26 @@ export function checkAadhaar(pages: { page: number; text: string }[]): RedFlagFi
   return out;
 }
 
+/** Wording only the address side of an EPIC card prints. OCR garbles some of it on any one
+ *  scan ("EkcomiRegsraion Oficer"), hence several. */
+export const VOTER_BACK_RE = /constituency|registration\s+officer|facsimile|change\s+(?:of|in)\s+address/i;
+
 /** Voter ID (EPIC) number must match on the back side if present. EPIC = 3 letters + 7 digits. */
 export function checkVoterId(pages: { page: number; text: string }[]): RedFlagFinding[] {
   const epics = new Set<string>();
+  let reads = 0;
   let firstPage: number | null = null;
   for (const p of pages) {
     for (const m of p.text.toUpperCase().matchAll(/\b[A-Z]{3}[0-9]{7}\b/g)) {
       epics.add(m[0]);
+      reads++;
       if (firstPage === null) firstPage = p.page;
     }
   }
-  if (epics.size === 1 && pages.length < 2) {
+  // Both sides scanned onto ONE page print the EPIC twice, or carry the back's wording: that
+  // back is there, and "Back side NA" on it was wrong (client QA 2026-10, #3: 648914 p8).
+  const backSeen = pages.length > 1 || reads > 1 || pages.some((p) => VOTER_BACK_RE.test(p.text));
+  if (epics.size === 1 && !backSeen) {
     // Spec: report "Back side NA" rather than passing silently — a one-sided upload is
     // not a clean cross-check, and a silent pass looked identical to a verified match.
     return [info('REDFLAG_VOTER_BACK_NA', 'Back side NA — Voter ID back side not available to cross-check', firstPage)];
@@ -589,6 +618,10 @@ export function checkDates(fileText: string, page: number | null = null): RedFla
   const seen = new Set<string>();
   for (const m of fileText.matchAll(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,5})\b/g)) {
     const raw = m[0];
+    // A two-digit "year" with more of the chain after it is a fragment, not a date: OCR glued a
+    // stray "41/" onto 30/04/2020 and read "41/30/04" (client QA 2026-10, 004536 p1); "48/10/12/1"
+    // is a door number, "16.17.22.28" a list of IMT clauses.
+    if (m[3].length === 2 && /^[\/.\-]\d/.test(fileText.slice((m.index ?? 0) + raw.length))) continue;
     // Starting mid-number is not a date: a payslip's "LWP 0.00/0.00" matched as "00/0.00"
     // and failed the claim on an impossible date (client QA 2026-10, #6).
     // Mid-number only: a digit before it, or a '.'/',' that itself follows a digit. A dot
@@ -608,7 +641,8 @@ export function checkDates(fileText: string, page: number | null = null): RedFla
       continue;
     }
     let year = +m[3];
-    if (year < 100) year += year < 50 ? 2000 : 1900;
+    // Only a two-digit year is short for 19xx/20xx: "7.50.000" is Rs 7,50,000, not the year 2000.
+    if (m[3].length === 2) year += year < 50 ? 2000 : 1900;
     // Not a date at all: "+91-20-2721 8080", the NSDL helpline printed on every PAN card, reads
     // as day 91 / month 20 / year 2721 and failed Red Flags on any claim carrying a PAN card.
     // No document in a claim is dated outside this range.
