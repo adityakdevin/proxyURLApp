@@ -399,8 +399,10 @@ export async function rasterizePdf(
  * logo or signature strip; the card is the one that matters.
  *
  * Read from the paint operators' own arguments: pdfjs's evaluator puts each image's size there
- * (4.10: paintImageXObject [objId, width, height]; a mask or inline image carries an object
- * with width and height), so nothing is decoded or waited for. Waiting on page.objs for the
+ * (4.10: paintImageXObject [objId, width, height]; a mask carries an object with width and
+ * height), so nothing is decoded or waited for. Not inline images: pdfjs inlines only images
+ * under 200 px, never a card, and one on a vector page made it "too coarse" for its QR
+ * (ship review r3). Waiting on page.objs for the
  * decoded image is what hung 045360's QR check to the 600s run timeout, when two pages shared
  * an image pdfjs keeps in the document-wide pool. A monochrome scan arrives as an image MASK,
  * which the old lookup never counted (ship review 2026-10-16).
@@ -429,7 +431,7 @@ export async function largestImageWidthPerPage(
           const [width, height] =
             fn === OPS.paintImageXObject
               ? [args?.[1], args?.[2]]
-              : fn === OPS.paintImageMaskXObject || fn === OPS.paintInlineImageXObject
+              : fn === OPS.paintImageMaskXObject
                 ? [args?.[0]?.width, args?.[0]?.height]
                 : [undefined, undefined];
           if (typeof width === 'number' && typeof height === 'number' && width > 0 && (!best || width > best.width)) {

@@ -573,7 +573,6 @@ export const qrValidator: Validator = {
             data: { value: h.value },
           });
           // Does the QR agree with what is printed on the same page?
-          const pageText = pageTextFor(doc, ctx, h.page);
           for (const c of compareQrToFields(h.value, fieldsForQrPage(doc, ctx, h.page))) {
             comparisons.push({ ...c, documentId: doc.id, ...(h.page !== undefined ? { page: h.page } : {}) });
             if (c.verdict === 'MISMATCH') {
@@ -613,7 +612,7 @@ export const qrValidator: Validator = {
           const url = kiaVerificationUrl(h.value);
           if (url && !verifiedUrls.has(url)) {
             verifiedUrls.add(url);
-            for (const f of await verifyKiaPolicy(h.value, pageText)) {
+            for (const f of await verifyKiaPolicy(h.value, pageTextFor(doc, ctx, h.page))) {
               const finding = { documentId: doc.id, ...f, page: h.page ?? null, bbox: h.bbox ?? null };
               // An ERROR is the QR contradicting its page, exactly like a field mismatch. An
               // unreachable site is INFO: unverified is not wrong.

@@ -617,26 +617,26 @@ export function checkDates(fileText: string, page: number | null = null): RedFla
   const out: RedFlagFinding[] = [];
   const seen = new Set<string>();
   const DATE_RE = /\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,5})\b/g;
-  // End of the digit chain last split as a fragment. Inside it, only a whole date with a
-  // four-digit year counts: "6-90/19" read out of the house number "4-6-90/19" is the chain
-  // again, not a date (ship review 2026-10-16, 673493 p1).
+  const dayMonth = (d: number, mo: number) => d >= 1 && d <= 31 && mo >= 1 && mo <= 12;
+  // End of the digit chain last split as a fragment, and where the scan resumed inside it: that
+  // start follows a digit by design, so the mid-number rule below must not drop it
+  // ("41.31.02.2024" read nothing at all).
   let chainEnd = -1;
-  // Where the scan resumed inside a split fragment: that start follows a digit by design, so
-  // the mid-number rule below must not drop it ("41.31.02.2024" read nothing at all).
   let resumedAt = -1;
   for (let m: RegExpExecArray | null; (m = DATE_RE.exec(fileText)); ) {
     const raw = m[0];
-    // A two-digit "year" with more of the chain after it is a fragment, not a date: OCR glued a
-    // stray "41/" onto 30/04/2020 and read "41/30/04" (client QA 2026-10, 004536 p1); "48/10/12/1"
-    // is a door number, "16.17.22.28" a list of IMT clauses. The scan resumes at the fragment's
-    // second number, so the real date behind the stray digits ("31/02/2024" in "41/31/02/2024")
-    // is still checked. Not a fragment: a hyphen joining a second whole date or a time —
-    // "31/02/24-01/03/25", "31-02-24-01-03-25", "31/02/24-10:30" — skipping those let an
-    // impossible date pass that main flagged (ship review 2026-10-16).
+    // A two-digit "year" in a longer digit chain is a fragment, not a date, when its day and
+    // month cannot be a day and month either way round: OCR glued a stray "41/" onto 30/04/2020
+    // and read "41/30/04" (client QA 2026-10, 004536 p1); "48/10/12/1" is a door number,
+    // "16.17.22.28" a list of IMT clauses. The scan resumes at the fragment's second number, so
+    // the date behind the stray digits ("31/02/2024" in "41/31/02/2024") is still checked. A day
+    // and month that could be one ("31/02/24-10.30", "31/02/24/0012", "4-6-90/19") is checked as
+    // a date whatever follows: skipping those let an impossible date pass that main flagged
+    // (ship review 2026-10-16).
     const after = fileText.slice(m.index + raw.length);
-    const joined = /^-(?:\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b|\d{1,2}:\d{2})/.test(after);
     const inChain = m.index < chainEnd;
-    if (m[3].length === 2 && ((/^[\/.\-]\d/.test(after) && !joined) || inChain)) {
+    const notDayMonth = !dayMonth(+m[1], +m[2]) && !dayMonth(+m[2], +m[1]);
+    if (m[3].length === 2 && notDayMonth && (inChain || /^[\/.\-]\d/.test(after))) {
       if (!inChain) chainEnd = m.index + raw.length + (/^(?:[\/.\-]\d+)+/.exec(after)?.[0].length ?? 0);
       resumedAt = DATE_RE.lastIndex = m.index + m[1].length + 1;
       continue;

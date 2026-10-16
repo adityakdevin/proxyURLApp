@@ -156,11 +156,31 @@ describe('client QA 2026-10 — GSTIN misreads, Voter back side, date fragments'
     expect(checkDates('To. Date. 41/31/02/2024')[0]?.data).toEqual({ date: '31/02/2024' });
     // ...but a two-digit piece read out of the same chain is still the chain (673493 p1).
     expect(checkDates('H NO 4-6-90/19 X')).toEqual([]);
-    // A dash joining a time or a dash-written date is not a chain; a dotted date behind
+    // A day and month that could be one are a date whatever is joined on; a dotted date behind
     // stray digits is checked like a slashed one.
     expect(checkDates('Date 31/02/24-10:30')[0]?.data).toEqual({ date: '31/02/24' });
     expect(checkDates('Period 31-02-24-01-03-25')[0]?.data).toEqual({ date: '31-02-24' });
     expect(checkDates('Dt 41.31.02.2024')[0]?.data).toEqual({ date: '31.02.2024' });
+  });
+  // Value: protects=an impossible date with a time, serial or digit joined on is red, as on main;
+  // fails_when=the fragment rule goes back to "anything after a two-digit year" (each of these
+  // passed silently); why_new=only a colon time and a dash date were covered (ship review r3,
+  // 2026-10-17); seam=none; no_claim=OCR fragment shapes beyond these
+  it('an impossible date with anything joined on is still checked', () => {
+    for (const [text, date] of [
+      ['Date: 31/02/24-10.30 AM', '31/02/24'],
+      ['Date: 31/02/24-1030Hrs', '31/02/24'],
+      ['Date 31.02.24.10.30', '31.02.24'],
+      ['Receipt 29/02/23-5PM', '29/02/23'],
+      ['Inv Dt 31/02/24/0012', '31/02/24'],
+      ['Dt.31/02/24-1', '31/02/24'],
+      ['41/31/02/24', '31/02/24'],
+    ]) {
+      expect(checkDates(text).map((f) => f.data?.date)).toEqual([date]);
+    }
+    // ...while a real day and month read out of a longer number stays quiet, as on main.
+    expect(checkDates('Section 5.31.11.2024')).toEqual([]);
+    expect(checkDates('Amt 1.30.02.2024')).toEqual([]);
   });
   it('real impossible dates are still flagged', () => {
     expect(checkDates('Date 31/02/24')[0]?.code).toBe('REDFLAG_BAD_DATE');

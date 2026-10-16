@@ -17,7 +17,7 @@ import {
   isProperNounTerm,
 } from './logic.js';
 import { rasterizePdf, largestImageWidthPerPage, rasterScale, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
-import { MIN_OCR_PAGE_LONG_SIDE, OCR_RENDER_SCALE } from '../lib/ocr.js';
+import { MAX_HIGHRES_RETRY_PAGES, MIN_OCR_PAGE_LONG_SIDE, OCR_RENDER_SCALE } from '../lib/ocr.js';
 import { extractNames, extractRelationNames } from './crossDocLogic.js';
 import { ADDRESS_WORDS, INDIAN_PLACE_WORDS } from './indianPlaces.js';
 
@@ -138,9 +138,9 @@ export function rereadAddsPixels(rereadPx: number, image: { width: number; heigh
   return !image || Math.max(image.width, image.height) > firstLook;
 }
 
-/** Pages read a second time per document: the same number as META's own high-res retries
- *  (ocr.ts). A near-miss on a page past it simply stays doubtful, as it was before. */
-const MAX_REREAD_PAGES = 8;
+/** Pages read a second time per document: the same budget as META's own high-res retries.
+ *  A near-miss on a page past it simply stays doubtful, as it was before. */
+const MAX_REREAD_PAGES = MAX_HIGHRES_RETRY_PAGES;
 
 /** Words printed on the line people sign and stamp. A pen stroke through a letter reads the
  *  same to every engine: a signature crossing the "n" of "Signature" was read "Sighature"
@@ -178,8 +178,12 @@ async function rereadPages(ctx: ValidatorContext, documentId: string, pages: num
       // part of a page counts as coarser than it is (it stays doubtful). Measure the image's
       // placed size from the operator list's transform if that hides real misspellings.
       if (ocrRead.has(page)) {
+        const px = Math.max(render.width, render.height);
+        // The size check alone first: a small card's re-read never beats META's first look,
+        // so there is no need to open the PDF again to measure it.
+        if (!rereadAddsPixels(px, undefined)) continue;
         const sizes = await largestImageWidthPerPage(doc.readablePath, [page]);
-        if (!rereadAddsPixels(Math.max(render.width, render.height), sizes ? sizes.get(page) : null)) continue;
+        if (!rereadAddsPixels(px, sizes ? sizes.get(page) : null)) continue;
       }
       await fs.writeFile(file, render.png);
       out.push(...(await ctx.ocr.extractImage(file)).words.map((w) => ({ ...w, page })));
