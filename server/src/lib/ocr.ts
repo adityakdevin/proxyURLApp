@@ -6,6 +6,7 @@ import { OcrPort, WordBox } from '../validators/types.js';
 import { rasterizePdf, MAX_PDF_PAGES } from './pdfExtractor.js';
 import { estimateSkewDegrees } from './deskew.js';
 import { clamp01 } from './bbox.js';
+import { getSpell, isRealWord, type Spell } from '../validators/dictionary.js';
 
 /**
  * Map a normalized box from an image rotated counter-clockwise by `deg` back onto the page
@@ -88,22 +89,62 @@ const MAX_OCR_TARGETED_PAGES = MAX_PDF_PAGES;
 const ROTATIONS = [90, 180, 270] as const;
 
 /**
- * How many word-SHAPED tokens the text has. A character count cannot separate a sideways
- * page from an upright one (the sideways read is just as long), and Tesseract's own
- * confidence scored a sideways Aadhaar card ABOVE its upright reading. This separates them
- * cleanly: the policy page scores 815 upright and 265 sideways; the Aadhaar card 2 upright
- * and 13 at 270°.
+ * How much REAL text a read holds: the dictionary words of 5+ letters in it.
+ *
+ * A character count cannot separate a sideways page from an upright one, and Tesseract's own
+ * confidence scored a sideways Aadhaar card ABOVE its upright reading. Counting word-SHAPED
+ * tokens did, until card photos: turned upside down, a card yields MORE letter clusters than
+ * upright ("AMRAHS RAMUK IVAR" is "RAVI KUMAR SHARMA" read at 180°), so clear PAN and Aadhaar
+ * cards were read the wrong way up and reported missing (client QA 2026-10: 650930 p.7,
+ * 301725 p.3-4, 650618 p.7-10), and a card whose background pattern read upright as 145
+ * clusters of noise never got a second look (643885 p.6). Real words do not have that flaw:
+ * the wrong way up those cards read 0-1 of them, the right way up 2-13.
+ *
+ * Short dictionary hits are no evidence: noise is full of "ERR", "SEE", "EAR", and with
+ * 4-letter words counted, a wrong-way read of "Issue Date ABLE" came within one word of the
+ * right-way Aadhaar ("GOVERNMENT Chandra MALE Mobile", 059741 p.9). At 5+ letters it is 1
+ * against 3.
  */
-const wordScore = (text: string) => (text.match(/\b[A-Za-z]{3,}\b/g) ?? []).length;
+export function readScore(text: string, spell: Spell): number {
+  return (text.match(/\b[A-Za-z]{5,}\b/g) ?? []).filter((w) => isRealWord(spell, w)).length;
+}
+
+/** Word-shaped tokens (3+ letters) in a read, real or not. */
+const wordShaped = (text: string) => (text.match(/\b[A-Za-z]{3,}\b/g) ?? []).length;
 
 /**
- * Above this the page is plainly upright and readable, so no alternative is tried.
+ * Whether a read holding `real` real words is plainly upright and readable, so no alternative
+ * is tried: ten real words, and at least one word-shaped token in ten a real one.
  *
  * This is what keeps the sweep affordable, and it is self-balancing: the pages that are
- * SLOW to OCR are the dense ones, and dense pages clear the bar by a mile (815, 54). The
- * pages that fall below it are the sparse card photos, which are the fast ones (~0.3s).
+ * SLOW to OCR are the dense ones, and dense pages clear the bar by a mile (an upright policy
+ * page reads 400+ real words). The pages that fall below it are the sparse card photos, which
+ * are the fast ones (~0.3s).
+ *
+ * The share is there for dense pages. Read upside down, a policy page still turns up 20-26
+ * dictionary words by chance, but among 400+ letter clusters: measured on 54 claims, no
+ * wrong-way-up read reached a 6.2% share, and 176 of 177 upright pages with ten real words
+ * were at 10% or more. The exception, a Hindi-heavy Aadhaar letter at 8%, costs a wasted
+ * sweep and nothing else.
  */
-const UPRIGHT_SCORE = 60;
+export function readsAsText(text: string, real: number): boolean {
+  return real >= 10 && real * 10 >= wordShaped(text);
+}
+
+/**
+ * Whether a quarter turn that read `turned` real words is believed over the best upright read
+ * (`upright`): it needs at least two, and more than twice as many.
+ *
+ * Pages mostly arrive the right way up. A turn taken on one stray word was wrong every time
+ * it was measured (four upright ID badges and photocopies turned sideways or over, e.g.
+ * 616760 p.5), and a narrow lead was no better: a ration card upside down on 2 against 1
+ * (739562 p.9), a PAN card sideways on 7 against 6 (321756 p.3). Cards that really were
+ * turned win clearly — 13 against 1, 41 against 3 — and the closest real ones were 2 against 0
+ * (650618 p.9) and 3 against 1 (059741 p.9).
+ */
+export function turnBeatsUpright(turned: number, upright: number): boolean {
+  return turned >= 2 && turned > 2 * upright;
+}
 
 /** Rotate (counter-clockwise, verified against Jimp) and contrast-boost a copy to try. */
 async function prepare(image: Buffer | string, deg: number): Promise<Buffer | null> {
@@ -202,6 +243,10 @@ const MAX_HIGHRES_RETRY_PAGES = 8;
  * Aadhaar back the larger render scored 51 against 44, but re-read "C/O:" as "Jo:" and lost
  * the father's name with it. A page that genuinely needed the pixels wins by much more than
  * that — the invoice in the same bundle went 54 → 140.
+ *
+ * Those figures are word-shaped tokens; the score is now real words (readScore), still a
+ * count. On 118 retries across 54 claims the same 1.4 turned away 7 of the 8 rereads that
+ * would have lost a card's PAN/Aadhaar marker.
  */
 const HIGHRES_GAIN = 1.4;
 
@@ -218,7 +263,7 @@ async function recognizeWith(
     : await prepare(image, rotation);
   if (!png) return null;
   const r = await worker.recognize(png, {}, { blocks: true });
-  return { data: r.data, score: wordScore(r.data.text ?? '') };
+  return { data: r.data, score: readScore(r.data.text ?? '', await getSpell()) };
 }
 
 /**
@@ -227,34 +272,47 @@ async function recognizeWith(
  * back to the page as the reviewer sees it.
  */
 async function recognize(worker: Worker, image: Buffer | string) {
+  const spell = await getSpell();
+  const score = (text?: string) => readScore(text ?? '', spell);
+  const readable = (b: { data: { text?: string }; score: number }) =>
+    readsAsText(b.data.text ?? '', b.score);
   const plain = await worker.recognize(image, {}, { blocks: true });
   let best: { data: typeof plain.data; rotation: number; score: number; skew?: number } = {
     data: plain.data,
     rotation: 0,
-    score: wordScore(plain.data.text ?? ''),
+    score: score(plain.data.text),
   };
-  if (best.score >= UPRIGHT_SCORE) return best;
+  if (readable(best)) return best;
   // Upright-boosted first, so a tie keeps the page the way it was scanned.
+  let upright = best.score;
   for (const deg of [0, ...ROTATIONS]) {
     const prepped = await prepare(image, deg);
     if (!prepped) continue;
     const r = await worker.recognize(prepped, {}, { blocks: true });
-    const score = wordScore(r.data.text ?? '');
-    if (score > best.score) best = { data: r.data, rotation: deg, score };
+    const s = score(r.data.text);
+    // The boost is there for pages the plain pass read NOTHING from (see ROTATIONS), so its
+    // letters replace an empty read even without a real word: FULL flags letter soup as an
+    // unreadable page, but takes an empty one for a blank page and says nothing.
+    const better =
+      deg === 0
+        ? s > best.score || wordShaped(best.data.text ?? '') === 0
+        : s > best.score && turnBeatsUpright(s, upright);
+    if (better) best = { data: r.data, rotation: deg, score: s };
+    if (deg === 0) upright = best.score;
     // Once a candidate reads as proper text, stop — the remaining rotations cost seconds
     // each on a dense page and cannot beat a page that is already right way up.
-    if (best.score >= UPRIGHT_SCORE) break;
+    if (readable(best)) break;
   }
 
   // Still poor at every quarter turn? The page may be a few degrees off square, which
   // Tesseract barely tolerates. One more pass, squared up at whichever turn read best.
-  if (best.score < UPRIGHT_SCORE) {
+  if (!readable(best)) {
     const straightened = await prepareDeskewed(image, best.rotation);
     if (straightened) {
       const r = await worker.recognize(straightened.png, {}, { blocks: true });
-      const score = wordScore(r.data.text ?? '');
-      if (score > best.score) {
-        best = { data: r.data, rotation: best.rotation, score, skew: straightened.skew };
+      const s = score(r.data.text);
+      if (s > best.score) {
+        best = { data: r.data, rotation: best.rotation, score: s, skew: straightened.skew };
       }
     }
   }
@@ -390,7 +448,7 @@ export class TesseractOcrPort implements OcrPort {
             //
             // The budget is shared across lanes. Test and decrement sit together with no
             // await between them, so no two lanes can both see the last unit and spend it.
-            if (score < UPRIGHT_SCORE && highResBudget > 0) {
+            if (!readsAsText(data.text ?? '', score) && highResBudget > 0) {
               highResBudget--;
               retries++;
               const retryStartedAt = Date.now();
