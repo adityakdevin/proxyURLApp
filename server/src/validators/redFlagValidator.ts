@@ -242,6 +242,9 @@ export const redFlagValidator: Validator = {
         // The back's own wording counts too: OCR read 638633's "Electoral Registration Officer"
         // as "EkcomiRegsraion Oficer", so its back (p17) was dropped and the front reported
         // "Back side NA" (client QA 2026-10, #3).
+        // Not a page that is plainly something else, as for the Aadhaar back: a policy schedule
+        // after the card says "facsimile signature" and "change of address" too, and its
+        // intermediary code was compared as the EPIC (ship review 2026-10-16).
         const voterBack = /elector|election|\bepic\b|voter|मतदाता|निर्वाचन/i;
         const voterPages = asPages.filter(
           (p, i) =>
@@ -249,7 +252,8 @@ export const redFlagValidator: Validator = {
             (!pages[i].govtCode &&
               i > 0 &&
               pages[i - 1].govtCode === 'VOTER_ID' &&
-              (voterBack.test(p.text) || VOTER_BACK_RE.test(p.text)))
+              (voterBack.test(p.text) || VOTER_BACK_RE.test(p.text)) &&
+              !['PAYSLIP', 'INVOICE', 'INSURANCE', 'RC'].includes(classifyDocType(p.text) ?? ''))
         );
         for (const f of checkVoterId(voterPages)) findings.push(toFinding(doc.id, f));
       }

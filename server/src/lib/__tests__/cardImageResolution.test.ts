@@ -34,27 +34,28 @@ describe('largestImageWidthPerPage', () => {
     'MZBB1811LSN014084.pdf'
   );
 
-  it('always resolves to a Map, never throws, on a real file', async () => {
+  // A Map when the file was read, null when it was not: SPELL must tell "no image on this page"
+  // from "could not look", and re-reads only the first (ship review 2026-10-16).
+  it('never throws on a real file: a Map, or null where pdfjs cannot load', async () => {
     const sizes = await largestImageWidthPerPage(sample, [4]);
-    expect(sizes).toBeInstanceOf(Map);
+    expect(sizes === null || sizes instanceof Map).toBe(true);
   });
 
-  it('returns an empty map for a missing file rather than throwing', async () => {
-    const sizes = await largestImageWidthPerPage('/definitely/not/here.pdf', [1]);
-    expect(sizes.size).toBe(0);
+  it('says it could not look (null) for a missing file rather than throwing', async () => {
+    expect(await largestImageWidthPerPage('/definitely/not/here.pdf', [1])).toBeNull();
   });
 
   it('reports nothing for pages outside the document rather than guessing', async () => {
     const sizes = await largestImageWidthPerPage(sample, [0, -1, 99999]);
-    expect(sizes.has(0)).toBe(false);
-    expect(sizes.has(99999)).toBe(false);
+    expect(sizes?.has(0) ?? false).toBe(false);
+    expect(sizes?.has(99999) ?? false).toBe(false);
   });
 
   it('never reports a zero or negative size for any page it does report', async () => {
     // Vacuous where pdfjs is unavailable, meaningful where it is — the invariant holds in
     // both, which is the only kind of assertion worth making across the two environments.
     const sizes = await largestImageWidthPerPage(sample, [1, 2, 3, 4, 5]);
-    for (const [, wh] of sizes) {
+    for (const [, wh] of sizes ?? []) {
       expect(wh.width).toBeGreaterThan(0);
       expect(wh.height).toBeGreaterThan(0);
     }

@@ -230,6 +230,8 @@ const MIN_OCR_IMAGE_WIDTH = 1600;
  * The long side, where photos use the width: by width, every portrait A4 page would qualify.
  */
 export const MIN_OCR_PAGE_LONG_SIDE = 1400;
+/** The scale META renders a PDF page at for its first look (SPELL works out what that showed). */
+export const OCR_RENDER_SCALE = 2;
 
 /** The image as OCR should see it: small photos enlarged, everything else untouched. */
 async function upscaleSmallImage(
@@ -416,10 +418,15 @@ function ocrWorkers(): number {
 
 export class TesseractOcrPort implements OcrPort {
   private workers: Worker[] = [];
+  private closed = false;
 
   /** Grow the pool to `n` workers and hand back that many. Spun up once per run: creating
-   *  one (and loading its language data) costs seconds, far more than any single page. */
+   *  one (and loading its language data) costs seconds, far more than any single page.
+   *  Never after close(): a check the run timed out and abandoned keeps going, and SPELL's
+   *  next page would start a worker nothing terminates (ship review 2026-10-16). Every caller
+   *  catches, so the abandoned loop just reads nothing and ends. */
   private async getPool(n: number): Promise<Worker[]> {
+    if (this.closed) throw new Error('OCR port closed');
     while (this.workers.length < n) {
       this.workers.push(await createWorker('eng', undefined, { cachePath: OCR_CACHE_PATH }));
     }
@@ -479,8 +486,8 @@ export class TesseractOcrPort implements OcrPort {
       const rasterStartedAt = Date.now();
       const small = { minLongSide: MIN_OCR_PAGE_LONG_SIDE };
       const pages = onlyPages
-        ? await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, 2, onlyPages, small)
-        : await rasterizePdf(absolutePath, 12, 2, undefined, small);
+        ? await rasterizePdf(absolutePath, MAX_OCR_TARGETED_PAGES, OCR_RENDER_SCALE, onlyPages, small)
+        : await rasterizePdf(absolutePath, 12, OCR_RENDER_SCALE, undefined, small);
       const rasterMs = Date.now() - rasterStartedAt;
       if (pages.length === 0) return { text: '', words: [] };
       // One lane per worker, each pulling the next page off a shared cursor, so a page that
@@ -589,6 +596,7 @@ export class TesseractOcrPort implements OcrPort {
   async close(): Promise<void> {
     // Every worker, not just the first: a leaked thread holds its wasm instance and language
     // data for the life of the process, and the drainer creates a port per run.
+    this.closed = true;
     const open = this.workers;
     this.workers = [];
     await Promise.all(open.map((w) => w.terminate()));

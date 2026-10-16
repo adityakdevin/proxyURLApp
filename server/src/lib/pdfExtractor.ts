@@ -398,20 +398,25 @@ export async function rasterizePdf(
  * Largest image per page, because an ID-card page is one photo plus, sometimes, a small
  * logo or signature strip; the card is the one that matters.
  *
- * Returns an empty map rather than throwing — this only ever decorates a message.
+ * Read from the paint operators' own arguments: pdfjs's evaluator puts each image's size there
+ * (4.10: paintImageXObject [objId, width, height]; a mask or inline image carries an object
+ * with width and height), so nothing is decoded or waited for. Waiting on page.objs for the
+ * decoded image is what hung 045360's QR check to the 600s run timeout, when two pages shared
+ * an image pdfjs keeps in the document-wide pool. A monochrome scan arrives as an image MASK,
+ * which the old lookup never counted (ship review 2026-10-16).
+ *
+ * A page with no entry paints no image. null when the file could not be read at all: SPELL
+ * then leaves its doubtful words alone rather than re-reading a page it could not measure.
  */
 export async function largestImageWidthPerPage(
   absolutePath: string,
   pages: number[]
-): Promise<Map<number, { width: number; height: number }>> {
+): Promise<Map<number, { width: number; height: number }> | null> {
   const out = new Map<number, { width: number; height: number }>();
   try {
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
-    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false }).promise;
-    // One wait per image, not per paint: a page painting one unresolvable image N times waited
-    // N x 5s, enough for a crafted PDF to hold QR or SPELL to its timeout (ship review 2026-10-16).
-    const measured = new Map<string, { width?: number; height?: number } | null>();
+    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false, verbosity: 0 }).promise;
     try {
       for (const n of pages) {
         if (n < 1 || n > doc.numPages) continue;
@@ -419,47 +424,27 @@ export async function largestImageWidthPerPage(
         const ops = await page.getOperatorList();
         let best: { width: number; height: number } | undefined;
         for (let i = 0; i < ops.fnArray.length; i++) {
-          if (ops.fnArray[i] !== OPS.paintImageXObject) continue;
-          const name = ops.argsArray[i]?.[0];
-          if (typeof name !== 'string') continue;
-          // An image painted on two or more pages is moved to the document-wide pool under a
-          // "g_" name (pdfjs's own rule, see its canvas getObject). Asking page.objs for it
-          // waits forever: on 045360 two ID pages sharing a strip image hung the QR check until
-          // the 600s run timeout, so no QR result was ever stored. The cap is for any other
-          // object that never resolves — a missing measurement only loses a message detail.
-          const shared = name.startsWith('g_');
-          const key = shared ? name : `${n}:${name}`;
-          let wh = measured.get(key);
-          if (wh === undefined) {
-            const pool = shared ? page.commonObjs : page.objs;
-            wh = (await new Promise<unknown>((res) => {
-              const timer = setTimeout(() => res(null), 5_000);
-              try {
-                pool.get(name, (v: unknown) => {
-                  clearTimeout(timer);
-                  res(v);
-                });
-              } catch {
-                clearTimeout(timer);
-                res(null);
-              }
-            })) as { width?: number; height?: number } | null;
-            measured.set(key, wh);
-          }
-          if (wh?.width && wh?.height && (!best || wh.width > best.width)) {
-            best = { width: wh.width, height: wh.height };
+          const fn = ops.fnArray[i];
+          const args = ops.argsArray[i];
+          const [width, height] =
+            fn === OPS.paintImageXObject
+              ? [args?.[1], args?.[2]]
+              : fn === OPS.paintImageMaskXObject || fn === OPS.paintInlineImageXObject
+                ? [args?.[0]?.width, args?.[0]?.height]
+                : [undefined, undefined];
+          if (typeof width === 'number' && typeof height === 'number' && width > 0 && (!best || width > best.width)) {
+            best = { width, height };
           }
         }
         if (best) out.set(n, best);
+        page.cleanup();
       }
     } finally {
-      // Its decoded page images stay in memory until the document is let go, and SPELL now
-      // measures a page per doubtful word it re-reads, not once per failed QR check.
       await doc.cleanup?.();
       await doc.destroy?.();
     }
   } catch {
-    // Measurement is a nicety; never let it break a validation run.
+    return null;
   }
   return out;
 }

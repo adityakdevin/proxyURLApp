@@ -269,6 +269,18 @@ describe('redFlagValidator compares a card only with its own pages (client QA 20
     expect(await codes([front, back.replace('ABC1234569', 'NWM7654321')])).toContain('REDFLAG_VOTER_MISMATCH');
   });
 
+  // Value: protects=a policy page after a Voter ID is not compared as the card's back;
+  // fails_when=the voter filter stops excluding pages that classify as something else (its
+  // "facsimile signature" and intermediary code raise a false Voter ID mismatch); why_new=only
+  // RC and Gujarat-card neighbours were tested (ship review 2026-10-16); seam=none;
+  // no_claim=pages classifyDocType cannot place
+  it('a policy schedule after the card is not its back side', async () => {
+    const front = 'ELECTION COMMISSION OF INDIA IDENTITY CARD ABC1234569 signature';
+    const policy =
+      'CERTIFICATE OF INSURANCE CUM POLICY SCHEDULE\nPeriod of Insurance\nPremium\nThis document bears a facsimile signature\nIntermediary Code: IMD1234567';
+    expect(await codes([front, policy])).not.toContain('REDFLAG_VOTER_MISMATCH');
+  });
+
   it('an unreadable GSTIN is boxed on the page', async () => {
     const out = await redFlagValidator.run(
       ctx({
