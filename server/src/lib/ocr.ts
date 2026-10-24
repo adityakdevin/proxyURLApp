@@ -429,7 +429,17 @@ export class TesseractOcrPort implements OcrPort {
   private async getPool(n: number): Promise<Worker[]> {
     while (this.workers.length < n) {
       if (this.closed) throw new Error('OCR port closed');
-      const w = await createWorker('eng', undefined, { cachePath: OCR_CACHE_PATH });
+      const w = await createWorker('eng', undefined, {
+        cachePath: OCR_CACHE_PATH,
+        // Without a handler, tesseract.js 5 rejects the job AND rethrows from inside the
+        // worker's message listener — an uncaught exception that no try/catch here can reach.
+        // On production one unreadable page ("pixdata_malloc fail", then "Error attempting to
+        // read image.") took the whole server down, and the startup sweep re-queued the same
+        // claim to take it down again, every ~10 min. The rejection still reaches the caller,
+        // which already reads nothing for that page and moves on.
+        // Check: OCR_CACHE_DIR=. npx tsx scripts/ocr-bad-file.ts
+        errorHandler: (e) => console.error('Tesseract job failed:', e),
+      });
       if (this.closed) {
         await w.terminate().catch(() => undefined);
         throw new Error('OCR port closed');
