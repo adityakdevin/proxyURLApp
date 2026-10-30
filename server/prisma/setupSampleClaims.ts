@@ -24,13 +24,13 @@
  * MZBFB812LSN564344 and MZBB1811LSN014084 have no folder on purpose, so they stay
  * document-less and validate to DOCS_NOT_AVAILABLE.
  */
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import { DocumentService } from '../src/services/documentService.js';
 import { FsFileSystemPort } from '../src/services/fsFileSystemPort.js';
 import { enqueue, kickDrain } from '../src/services/validationQueue.js';
 import { registry } from '../src/validators/registry.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 
 /** SubCategory the sheet was imported into (default: the demo "Warranty Claims"). */
 const SUBCATEGORY_NAME = process.env.SAMPLE_SUBCATEGORY ?? 'Warranty Claims';

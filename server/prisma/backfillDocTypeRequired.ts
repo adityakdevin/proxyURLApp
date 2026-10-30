@@ -21,9 +21,9 @@
  *   npm run db:backfill-doctype-required           # dry run
  *   npm run db:backfill-doctype-required -- --apply
  */
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 
 async function main() {
   const apply = process.argv.includes('--apply');

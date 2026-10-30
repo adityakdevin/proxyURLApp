@@ -25,14 +25,14 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 // Imported after dotenv so the client reads the URL resolved above.
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 // The REAL parser, not a copy of it. This script originally reimplemented the key-splitting
 // inline, which meant it kept reporting the pre-fix behaviour after the fix shipped and
 // looked like a failed deploy. A diagnostic that does not exercise the code under test is
 // worse than no diagnostic.
 import { parseQrPayload } from '../src/validators/qrCompare.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 const FULL = process.argv.includes('--full');
 
 /** The five cases the review could not close from code alone. */

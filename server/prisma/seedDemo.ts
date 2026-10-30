@@ -21,10 +21,11 @@
  *   teamlead  / Lead@1234   (TEAM_LEAD)
  *   user      / User@1234   (USER)
  */
-import { PrismaClient, ValidationStatus } from '@prisma/client';
+import { ValidationStatus } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import bcrypt from 'bcrypt';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || '12', 10);
 const PASSWORD_POLICY = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
