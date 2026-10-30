@@ -22,7 +22,7 @@ import dotenv from 'dotenv';
 // Load server/.env explicitly, whatever the working directory. The REPO ROOT .env carries a
 // stale `postgresql://` DATABASE_URL while the datasource provider is mysql, so running this
 // from the root and letting the nearest .env win connects to nothing (or the wrong engine).
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
+dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 // Imported after dotenv so the client reads the URL resolved above.
 import { PrismaClient } from '@prisma/client';

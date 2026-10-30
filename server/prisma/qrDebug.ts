@@ -22,7 +22,7 @@ import fs from 'fs/promises';
 import dotenv from 'dotenv';
 
 // Load server/.env explicitly — a repo-root .env is read by nothing. See CLAUDE.md.
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
+dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 import { PrismaClient } from '@prisma/client';
 import { DocumentService } from '../src/services/documentService.js';
