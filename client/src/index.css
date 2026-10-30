@@ -86,6 +86,23 @@
   }
 }
 
+/*
+  Tailwind CSS v4 moved space-y-* from margin-top on every child but the first
+  to margin-bottom on every child but the last. A <Label> renders an inline
+  <label>, which ignores vertical margins, so the label-to-field gap in every
+  space-y form collapsed. Put the v3 margin back on the field after the label;
+  the forms only use space-y-1 and space-y-2. Unlayered on purpose: v4 sets
+  that field's margin-top to 0 from the utilities layer, which a layered rule
+  here could not override.
+  https://tailwindcss.com/docs/upgrade-guide#space-between-selector
+*/
+.space-y-1 > label + * {
+  margin-top: calc(var(--spacing) * 1);
+}
+.space-y-2 > label + * {
+  margin-top: calc(var(--spacing) * 2);
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
