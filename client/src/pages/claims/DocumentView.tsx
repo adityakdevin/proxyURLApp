@@ -258,7 +258,7 @@ export default function DocumentView() {
     <div className="flex h-screen min-h-0 flex-col overflow-x-hidden bg-gray-100">
       {/* Sticky identity bar: which claim, under which check. The file name lives in the
           viewer panel — with six tabs open it is the claim id that tells them apart. */}
-      <header className="flex shrink-0 items-center gap-3 border-b bg-white px-4 py-2.5 shadow-sm">
+      <header className="flex shrink-0 items-center gap-3 border-b bg-white px-4 py-2.5 shadow-xs">
         <h1 className="min-w-0 shrink truncate text-base font-semibold text-gray-900" title={claimLabel}>
           {claimLabel || 'Claim'}
         </h1>
@@ -284,7 +284,7 @@ export default function DocumentView() {
                 }
                 className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition ${
                   activeTab
-                    ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
+                    ? 'bg-white text-gray-900 shadow-xs ring-1 ring-gray-200'
                     : 'text-gray-500 hover:text-gray-800'
                 }`}
               >
@@ -346,7 +346,7 @@ export default function DocumentView() {
           <ClaimJumpBox
             onPick={jumpToClaim}
             collapsible
-            inputClassName="h-7 w-44 rounded-md border border-gray-200 pl-7 pr-8 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600"
+            inputClassName="h-7 w-44 rounded-md border border-gray-200 pl-7 pr-8 text-xs focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600"
           />
 
           <span className="mx-0.5 h-5 w-px bg-gray-200" />
@@ -419,7 +419,7 @@ export default function DocumentView() {
           panelOpen ? 'grid grid-cols-[minmax(0,1fr)_340px]' : 'flex'
         }`}
       >
-        <div className="min-h-0 flex-1 rounded-lg border border-gray-200 bg-white p-2 shadow-sm">
+        <div className="min-h-0 flex-1 rounded-lg border border-gray-200 bg-white p-2 shadow-xs">
           <DocumentViewerPanel
             claimId={id!}
             documentId={documentId!}

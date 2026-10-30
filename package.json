@@ -61,7 +61,7 @@
     "prisma@7.10.1": true,
     "@prisma/engines@7.10.1": true
   },
-  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and no other platform can resolve its own -- `npm ci` refuses to write the lockfile, so a binary absent from it is silently skipped, not fetched. Listing every platform we run on forces them all in; npm installs only the matching one because each declares os/cpu. win32-x64 is the deploy box, linux-x64 is CI (ubuntu-latest) -- without it esbuild is missing, `vite` dies at startup, and the ui-e2e job times out waiting for a dev server that never booted. Keep the versions in step with rollup/esbuild/@napi-rs/canvas.",
+  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and no other platform can resolve its own -- `npm ci` refuses to write the lockfile, so a binary absent from it is silently skipped, not fetched. Listing every platform we run on forces them all in; npm installs only the matching one because each declares os/cpu. win32-x64 is the deploy box, linux-x64 is CI (ubuntu-latest) -- without it a native binary is missing, `vite` dies at startup, and the ui-e2e job times out waiting for a dev server that never booted. Keep the versions in step with rolldown (vite), lightningcss and @tailwindcss/oxide (tailwind), esbuild (tsx) and @napi-rs/canvas. lightningcss is pinned at the hoisted 1.32.0 that @tailwindcss/node requires exactly; vite's own 1.33.0 sits nested under node_modules/vite and cannot be pinned from here, so check its win32/linux entries are still in the lockfile after an update.",
   "optionalDependencies": {
     "@esbuild/linux-x64": "0.28.2",
     "@esbuild/win32-x64": "0.28.2",
@@ -69,10 +69,14 @@
     "@napi-rs/canvas-win32-x64-msvc": "0.1.100",
     "@parcel/watcher-linux-x64-glibc": "2.6.0",
     "@parcel/watcher-win32-x64": "2.6.0",
-    "@rollup/rollup-linux-x64-gnu": "4.65.0",
-    "@rollup/rollup-win32-x64-msvc": "4.65.0",
+    "@rolldown/binding-linux-x64-gnu": "1.2.16",
+    "@rolldown/binding-win32-x64-msvc": "1.2.16",
+    "@tailwindcss/oxide-linux-x64-gnu": "4.3.3",
+    "@tailwindcss/oxide-win32-x64-msvc": "4.3.3",
     "@unrs/resolver-binding-linux-x64-gnu": "1.12.2",
-    "@unrs/resolver-binding-win32-x64-msvc": "1.12.2"
+    "@unrs/resolver-binding-win32-x64-msvc": "1.12.2",
+    "lightningcss-linux-x64-gnu": "1.32.0",
+    "lightningcss-win32-x64-msvc": "1.32.0"
   },
   "//overrides": "@types/express-serve-static-core is held at 5.0.7: 5.1 types every req.params value as string | string[] (for Express 5 wildcards), which breaks 101 `:id`-style reads in 18 route files whose handlers annotate `req: Request`. Runtime is unaffected; lift the hold together with typed route params. server also lists it as an exact devDependency: an override alone left it nested under @types/express, and declaration emit then failed (TS2883) on every exported router.",
   "overrides": {

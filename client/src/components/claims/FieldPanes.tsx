@@ -147,7 +147,7 @@ function FindingsCard({
   );
 
   return (
-    <section className="mb-3 flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+    <section className="mb-3 flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xs">
       <header className="flex items-center gap-2 border-b bg-gray-50/80 px-3 py-2">
         <ListChecks className="h-3.5 w-3.5 text-gray-400" />
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">Findings</span>
@@ -208,7 +208,7 @@ function FindingsCard({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter…"
               aria-label="Filter findings"
-              className="w-24 rounded border border-gray-200 py-0.5 pl-6 pr-1 text-[11px] focus:w-32 focus:outline-none focus:ring-1 focus:ring-blue-300"
+              className="w-24 rounded border border-gray-200 py-0.5 pl-6 pr-1 text-[11px] focus:w-32 focus:outline-hidden focus:ring-1 focus:ring-blue-300"
             />
           </div>
         </div>
@@ -220,7 +220,7 @@ function FindingsCard({
         <p className="px-3 py-3 text-xs text-gray-400">No finding matches this filter.</p>
       ) : (
         // No horizontal padding: rows run edge to edge so a selected row fills the card.
-        <div className={`overflow-auto pb-1 ${capHeight ? 'max-h-[26rem]' : ''}`}>
+        <div className={`overflow-auto pb-1 ${capHeight ? 'max-h-104' : ''}`}>
           {byPage.map(({ rank, page, list }) => (
             <div key={`${rank}:${page ?? 'none'}`} className="group/page">
               {/* Sticky, so the reviewer always knows which page the rows below are on.
@@ -230,7 +230,7 @@ function FindingsCard({
                 disabled={!page || !onJumpToPage}
                 onClick={() => page && onJumpToPage?.(page)}
                 title={page && onJumpToPage ? `Scroll the document to page ${page}` : undefined}
-                className={`sticky top-0 z-10 flex w-full items-center gap-1 border-b border-gray-100 bg-white/95 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide backdrop-blur ${
+                className={`sticky top-0 z-10 flex w-full items-center gap-1 border-b border-gray-100 bg-white/95 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide backdrop-blur-sm ${
                   page && onJumpToPage
                     ? 'cursor-pointer text-gray-500 hover:bg-blue-50 hover:text-blue-600'
                     : 'cursor-default text-gray-400'
@@ -295,7 +295,7 @@ function FindingsCard({
                         ) : (
                           <span className="mt-px shrink-0 text-gray-300">—</span>
                         )}
-                        <span className="min-w-0 break-words">{f.message}</span>
+                        <span className="min-w-0 wrap-break-word">{f.message}</span>
                       </button>
                       <span className="pt-1">
                         <CopyButton text={f.message} what="this finding" />
@@ -374,7 +374,7 @@ export function FieldPanes({
               </p>
             </div>
           ) : (
-            <section className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+            <section className="rounded-lg border border-gray-200 bg-white p-3 shadow-xs">
               <QrDataList entries={qrEntries} onJumpToPage={onJumpToPage} />
             </section>
           ))}

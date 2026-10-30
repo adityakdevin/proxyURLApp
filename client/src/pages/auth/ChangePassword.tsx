@@ -5,7 +5,7 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { useAuthStore } from '@/stores/authStore';
 
 const fieldClass =
-  'mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary';
+  'mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-xs focus:outline-hidden focus:ring-primary focus:border-primary';
 
 export default function ChangePassword() {
   const navigate = useNavigate();
@@ -60,7 +60,7 @@ export default function ChangePassword() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
+      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow-sm">
         <div>
           <h2 className="text-center text-3xl font-bold text-gray-900">Change Password</h2>
           {user?.forcePasswordChange && (
