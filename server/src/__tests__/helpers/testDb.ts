@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../../lib/prisma.js';
 
 let prisma: PrismaClient | null = null;
 
@@ -7,9 +8,7 @@ export function getTestPrisma(): PrismaClient {
     // Allow pointing tests at a dedicated database (recommended) without
     // changing default behaviour: set TEST_DATABASE_URL to isolate test data
     // from the dev DB referenced by DATABASE_URL.
-    prisma = process.env.TEST_DATABASE_URL
-      ? new PrismaClient({ datasources: { db: { url: process.env.TEST_DATABASE_URL } } })
-      : new PrismaClient();
+    prisma = createPrisma(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
   }
   return prisma;
 }

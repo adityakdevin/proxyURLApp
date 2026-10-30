@@ -24,12 +24,12 @@ import dotenv from 'dotenv';
 // Load server/.env explicitly — a repo-root .env is read by nothing. See CLAUDE.md.
 dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import { DocumentService } from '../src/services/documentService.js';
 import { rasterizePdf } from '../src/lib/pdfExtractor.js';
 import { decodeAll, isDecoderDegraded, resetDecoderDegraded } from '../src/validators/qrValidator.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 
 /** Production values, mirrored from qrValidator: the cheap first pass and the retry. */
 const SCALES = [3, 8];

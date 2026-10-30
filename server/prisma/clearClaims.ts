@@ -24,10 +24,10 @@ import dotenv from 'dotenv';
 // Load server/.env explicitly — the repo-root .env is stale (see CLAUDE.md).
 dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import { claimUploadDir } from '../src/lib/uploadPaths.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 
 async function main() {
   const confirmed = process.argv.includes('--yes');

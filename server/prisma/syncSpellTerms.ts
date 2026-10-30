@@ -24,10 +24,10 @@ import dotenv from 'dotenv';
 // value has caused confusion before. See CLAUDE.md.
 dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import { EXPECTED_TERMS, MIN_TERM_LEN } from '../src/validators/logic.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 const DRY = process.argv.includes('--dry');
 
 async function main() {

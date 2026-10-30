@@ -1,8 +1,9 @@
-import { PrismaClient, RuleField, RuleOperator } from '@prisma/client';
+import { RuleField, RuleOperator } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import bcrypt from 'bcrypt';
 import { EXPECTED_TERMS } from '../src/validators/logic.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 
 async function main() {
   const adminUsername = process.env.ADMIN_USERNAME || 'admin';
