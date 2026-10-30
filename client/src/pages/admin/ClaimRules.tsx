@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
@@ -171,7 +171,7 @@ export default function ClaimRules() {
     }
   };
 
-  const columns: ColumnDef<Rule>[] = [
+  const columns: DataTableColumn<Rule>[] = [
     { accessorKey: 'name', header: 'Name' },
     {
       id: 'rule',

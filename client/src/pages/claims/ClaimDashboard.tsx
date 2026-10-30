@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CHECK_FILTERS, CHECK_STATUS_OPTIONS, type CheckFilterKey } from '@/lib/checkFilters';
 import { useNavigate } from 'react-router-dom';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { Plus, Loader2 } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
@@ -305,7 +305,7 @@ export default function ClaimDashboard() {
     fetchData(pagination.page, pagination.limit, true)
   );
 
-  const columns: ColumnDef<ClaimRow>[] = [
+  const columns: DataTableColumn<ClaimRow>[] = [
     {
       accessorKey: 'claimId',
       header: 'Claim ID',

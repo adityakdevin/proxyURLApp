@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
 import { Badge } from '@/components/ui/badge';
@@ -97,7 +97,7 @@ export default function AuditLogs() {
 
   const formatDate = (dateStr: string) => new Date(dateStr).toLocaleString();
 
-  const columns: ColumnDef<AuditLog>[] = [
+  const columns: DataTableColumn<AuditLog>[] = [
     {
       accessorKey: 'accessedAt',
       header: 'Timestamp',
