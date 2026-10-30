@@ -3,7 +3,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { RotateCcw, RotateCw } from 'lucide-react';
 import { Finding } from '@/lib/claimTypes';
 
-// Bundle the pdfjs worker via Vite (react-pdf v9 uses pdfjs-dist v4).
+// Bundle the pdfjs worker via Vite (react-pdf v11 pins pdfjs-dist 6.3.289).
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url

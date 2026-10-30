@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, Copy } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { copyText } from '@/lib/utils';
@@ -187,7 +187,7 @@ export default function UrlConfigs() {
     );
   };
 
-  const columns: ColumnDef<UrlConfig>[] = [
+  const columns: DataTableColumn<UrlConfig>[] = [
     { accessorKey: 'label', header: 'Label', meta: { sortField: 'label' } },
     {
       id: 'scope',

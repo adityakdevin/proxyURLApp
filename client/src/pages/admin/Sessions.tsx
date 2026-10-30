@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { Trash2, UserCheck } from 'lucide-react';
 import { api, DataResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
@@ -100,7 +100,7 @@ export default function Sessions() {
     return `${hours}h ${mins % 60}m`;
   };
 
-  const columns: ColumnDef<Session>[] = [
+  const columns: DataTableColumn<Session>[] = [
     {
       accessorKey: 'fullName',
       header: 'User',

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, ScanLine } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
@@ -208,7 +208,7 @@ export default function ClaimIdRules() {
     }
   };
 
-  const columns: ColumnDef<Rule>[] = [
+  const columns: DataTableColumn<Rule>[] = [
     { accessorKey: 'startPosition', header: 'Start' },
     { accessorKey: 'length', header: 'Length' },
     { accessorKey: 'scanTarget', header: 'Target' },

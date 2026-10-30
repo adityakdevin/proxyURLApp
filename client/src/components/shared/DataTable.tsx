@@ -1,22 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ColumnDef,
-  RowData,
+  type CellData,
+  type ColumnDef,
+  type RowData,
+  type SortingState,
+  type TableFeatures,
+  createPaginatedRowModel,
+  createSortedRowModel,
   flexRender,
-  getCoreRowModel,
-  useReactTable,
-  SortingState,
-  getSortedRowModel,
-  getPaginationRowModel,
+  rowPaginationFeature,
+  rowSortingFeature,
+  sortFns,
+  tableFeatures,
+  useTable,
 } from '@tanstack/react-table';
 
 // Columns opt into server-side sorting by declaring the API sort key in `meta.sortField`.
 declare module '@tanstack/react-table' {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  interface ColumnMeta<TData extends RowData, TValue> {
+  interface ColumnMeta<TFeatures extends TableFeatures, TData extends RowData, TValue extends CellData = CellData> {
     sortField?: string;
   }
 }
+
+/** The TanStack features every DataTable uses. Module-level so the reference is stable. */
+const dataTableFeatures = tableFeatures({
+  rowSortingFeature,
+  rowPaginationFeature,
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  sortFns,
+});
+
+/** Column definition for a DataTable; pages type their `columns` arrays with this. */
+export type DataTableColumn<TData extends RowData, TValue extends CellData = CellData> = ColumnDef<
+  typeof dataTableFeatures,
+  TData,
+  TValue
+>;
 
 export interface ServerSort {
   field: string;
@@ -70,8 +91,11 @@ export interface RowSelection<TData> {
   isSelectable?: (row: TData) => boolean;
 }
 
-interface DataTableProps<TData, TValue> {
-  columns: ColumnDef<TData, TValue>[];
+interface DataTableProps<TData extends RowData> {
+  // Each column has its own value type; `any` here is how TanStack v9 types a mixed column
+  // array too (columnHelper.columns), since useTable takes ColumnDef<..., unknown>.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- per-column TValue
+  columns: DataTableColumn<TData, any>[];
   data: TData[];
   pagination?: {
     page: number;
@@ -117,7 +141,7 @@ function SelectBox({
   );
 }
 
-export function DataTable<TData, TValue>({
+export function DataTable<TData extends RowData>({
   columns,
   data,
   pagination,
@@ -127,7 +151,7 @@ export function DataTable<TData, TValue>({
   sort,
   onSortChange,
   selection,
-}: DataTableProps<TData, TValue>) {
+}: DataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
   const selected = new Set(selection?.selectedIds ?? []);
@@ -154,7 +178,7 @@ export function DataTable<TData, TValue>({
     });
   };
 
-  const selectColumn: ColumnDef<TData, TValue> = {
+  const selectColumn: DataTableColumn<TData> = {
     id: '__select',
     header: () => (
       <SelectBox
@@ -178,13 +202,12 @@ export function DataTable<TData, TValue>({
   };
   const allColumns = selection ? [selectColumn, ...columns] : columns;
 
-  const table = useReactTable({
+  // With server pagination (manualPagination), the paginated row model passes rows through.
+  const table = useTable({
+    features: dataTableFeatures,
     data,
     columns: allColumns,
-    getCoreRowModel: getCoreRowModel(),
     onSortingChange: setSorting,
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: pagination ? undefined : getPaginationRowModel(),
     state: {
       sorting,
     },
@@ -298,7 +321,9 @@ export function DataTable<TData, TValue>({
                     selection && selected.has(selection.rowId(row.original)) ? 'selected' : undefined
                   }
                 >
-                  {row.getVisibleCells().map((cell) => (
+                  {/* getAllCells: column visibility is an opt-in feature in TanStack v9, and no
+                      DataTable hides columns, so this is what getVisibleCells returned in v8. */}
+                  {row.getAllCells().map((cell) => (
                     <TableCell key={cell.id} className={stickyActions(cell.column.id)}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
@@ -353,7 +378,7 @@ export function DataTable<TData, TValue>({
               </>
             ) : (
               <>
-                Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
+                Page {table.state.pagination.pageIndex + 1} of {table.getPageCount()}
               </>
             )}
           </div>

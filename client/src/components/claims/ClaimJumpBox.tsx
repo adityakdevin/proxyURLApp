@@ -95,7 +95,7 @@ export function ClaimJumpBox({
     };
   }, [term]);
 
-  const flashTimer = useRef<ReturnType<typeof setTimeout>>();
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(flashTimer.current), []);
   const flash = (message: string) => {
     setError(message);

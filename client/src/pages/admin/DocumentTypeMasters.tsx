@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
@@ -194,7 +194,7 @@ export default function DocumentTypeMasters() {
     }
   };
 
-  const columns: ColumnDef<DocType>[] = [
+  const columns: DataTableColumn<DocType>[] = [
     { accessorKey: 'name', header: 'Name' },
     {
       id: 'category',
