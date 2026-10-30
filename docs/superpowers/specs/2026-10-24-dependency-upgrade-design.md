@@ -218,6 +218,16 @@ All of it must pass before the PR is handed to Aditya to merge.
 
 *(Filled in during the build: package, version kept, latest, reason.)*
 
+- `@napi-rs/canvas`: kept 1.0.11, latest 1.1.0. 1.0.12 changed how patterns are sampled
+  (Brooooooklyn/canvas#1357), which changes the raster of scanned pages, so OCR reads them
+  differently. On the QA set that dropped real findings (a duplicate address across two
+  claims, a Missing Bill) and added false ones (Missing Invoice, an impossible date read off
+  an amount). No `imageSmoothingQuality` value restores the old raster: `high` fixed those
+  pages and dropped duplicate policy and vehicle numbers on others. 1.0.11 rasterizes
+  byte-identical to 0.1.100 on the affected pages, satisfies pdfjs-dist's `^1.0.10`, and the
+  full re-validation with it matches the baseline exactly (0 lost, 0 new, 0 status changes).
+  Lift the hold only with an OCR before/after comparison.
+
 ## Left to the builder
 
 - Exact versions within the policy above, migration mechanics for each package, and commit
