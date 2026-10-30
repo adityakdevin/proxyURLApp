@@ -116,7 +116,7 @@ export default function SubCategoryUrls() {
             <button
               key={url.id}
               onClick={() => handleUrlClick(url.opaqueId)}
-              className="bg-white p-4 rounded-lg shadow border hover:border-blue-300 hover:shadow-md transition-all text-left group"
+              className="bg-white p-4 rounded-lg shadow-sm border hover:border-blue-300 hover:shadow-md transition-all text-left group"
             >
               <div className="flex items-start gap-3">
                 <div className="p-2 bg-blue-50 rounded-lg group-hover:bg-blue-100 transition-colors">

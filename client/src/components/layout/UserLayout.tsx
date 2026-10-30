@@ -135,7 +135,7 @@ export default function UserLayout() {
       <div className="min-h-screen bg-gray-50">
         {/* Impersonation Banner */}
         {user?.impersonatedBy && (
-          <div className="bg-amber-500 text-white px-4 py-2 flex items-center justify-between sticky top-0 z-[60]">
+          <div className="bg-amber-500 text-white px-4 py-2 flex items-center justify-between sticky top-0 z-60">
             <div className="flex items-center gap-2">
               <UserCheck className="h-4 w-4" />
               <span className="text-sm font-medium">
