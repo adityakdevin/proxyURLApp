@@ -3,7 +3,7 @@
 Runbook for pushing an **update** (e.g. the Forged-Documents Observation import/export feature)
 to a Windows server that is already running ProxyURLApp.
 
-> Assumes Node 18+, MySQL, and the app are already installed and running on the box.
+> Assumes Node 24, MySQL, and the app are already installed and running on the box.
 > Adjust the app path (`C:\apps\proxyURLApp` below) and the start/stop commands to match
 > however the server currently runs the process.
 
@@ -32,6 +32,8 @@ git rev-parse HEAD > last-good-commit.txt
 # Back up the database BEFORE the schema change (uses server/.env DATABASE_URL)
 npm run db:backup --workspace=server
 ```
+
+TODO: this page says MySQL 8.0 on :3307, but production runs WAMP MySQL 5.7.40 on :3306 (backup-db.js header, the box's boot.log); confirm on the box and fix the paths and ports below.
 
 > **If you get `spawnSync mysqldump ENOENT`**, `mysqldump.exe` isn't on PATH. Find it (it lives in
 > the MySQL `bin` folder of the install serving port 3307) and either add that folder to PATH or

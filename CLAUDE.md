@@ -8,9 +8,9 @@ ProxyURLApp is a full-stack web application providing controlled access to exter
 
 ## Tech Stack
 
-- **Backend:** Node.js 18+ / Express / TypeScript (CommonJS)
-- **Frontend:** React 18 / TypeScript / Vite / TailwindCSS / Radix UI (shadcn style)
-- **Database:** MySQL with Prisma ORM
+- **Backend:** Node.js 24 / Express / TypeScript (CommonJS)
+- **Frontend:** React 19 / TypeScript / Vite / TailwindCSS / Radix UI (shadcn style)
+- **Database:** MySQL with Prisma ORM 7 (MariaDB driver adapter, `server/src/lib/prisma.ts`)
 - **State:** Zustand (client auth), React Query (data fetching)
 - **Auth:** bcrypt, server-side sessions with httpOnly cookies
 
@@ -106,8 +106,8 @@ NODE_ENV=development
 CLIENT_URL=http://localhost:5173
 ```
 
-> A `.env` at the REPO ROOT is read by nothing. Prisma resolves its connection string next
-> to `server/prisma/schema.prisma`, and the app, seeds and backup script all run with
+> A `.env` at the REPO ROOT is read by nothing. The Prisma CLI loads `server/.env` from
+> `server/prisma.config.ts`, the app and scripts load it through `server/src/lib/prisma.ts`, and the app, seeds and backup script all run with
 > `server/` as their working directory. A stale root `.env` is not merely inert — it is
 > misleading, and one carrying a `postgresql://` URL was what made this confusing before.
 
@@ -132,5 +132,6 @@ Admin seed credentials configured via `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN
 - Use `npm run db:push` after schema changes. Do NOT run `db:migrate` (`prisma migrate
   dev`): the migration history is ~71 lines behind `schema.prisma`, so it would auto-author
   a migration dropping columns from three master tables. See `server/prisma/migrations/README.md`.
-- Prisma Client regenerates on `db:push`; run `npm run db:generate` if it does not
+- `db:push` does not regenerate Prisma Client (Prisma 7); run `npm run db:generate` after a
+  schema change, and after a fresh install
 - `server/prisma/seed.ts` creates initial admin user

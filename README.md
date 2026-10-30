@@ -16,8 +16,8 @@ A full-stack web application that provides controlled access to external and int
 
 | Layer | Technology |
 |-------|------------|
-| Backend | Node.js 18+, Express, TypeScript |
-| Frontend | React 18, TypeScript, Vite, TailwindCSS |
+| Backend | Node.js 24, Express, TypeScript |
+| Frontend | React 19, TypeScript, Vite, TailwindCSS |
 | Database | MySQL |
 | ORM | Prisma |
 | UI Components | Radix UI (shadcn style) |
@@ -27,9 +27,9 @@ A full-stack web application that provides controlled access to external and int
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 24
 - MySQL 8+
-- npm 9+
+- npm 11.17+
 
 ### Installation
 
@@ -67,6 +67,7 @@ A full-stack web application that provides controlled access to external and int
 
 4. **Set up the database**
    ```bash
+   npm run db:generate
    npm run db:push
    npm run db:seed
    ```
