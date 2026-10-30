@@ -1,6 +1,5 @@
 import { promises as fs } from 'fs';
-// Subpath import avoids pdf-parse's import-time debug-mode test-file read.
-import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import { PDFParse } from 'pdf-parse';
 import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox } from './types.js';
 import { metaOutcome } from './logic.js';
 import { extractPdf, readPdfInfo, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
@@ -99,8 +98,13 @@ async function extract(
     }
     try {
       const buf = await fs.readFile(doc.readablePath);
-      const data = await pdfParse(buf);
-      const text = (data.text ?? '').trim();
+      const parser = new PDFParse({ data: buf });
+      let text: string;
+      try {
+        text = ((await parser.getText()).text ?? '').trim();
+      } finally {
+        await parser.destroy();
+      }
       // pdf-parse gives no page boundaries → one page-null unit (spec decision 1 fallback).
       if (text) return { text, words: [], pageTexts: [text] };
     } catch {
