@@ -104,7 +104,8 @@ export async function extractPdf(absolutePath: string): Promise<{
     // so it loads under both tsx (dev) and compiled dist (prod).
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
-    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
+    const task = getDocument({ data, useSystemFonts: true });
+    const doc = await task.promise;
     // Read before the finally below destroys the document — the return statement runs after it.
     const totalPages = doc.numPages;
     const words: WordBox[] = [];
@@ -161,7 +162,7 @@ export async function extractPdf(absolutePath: string): Promise<{
       }
     } finally {
       await doc.cleanup?.();
-      await doc.destroy?.();
+      await task.destroy();
     }
     return { text: parts.join(' ').trim(), words, textlessPages, pageTexts, totalPages };
   } catch {
@@ -186,7 +187,8 @@ export async function readPdfInfo(absolutePath: string): Promise<Record<string, 
   try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
-    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
+    const task = getDocument({ data, useSystemFonts: true });
+    const doc = await task.promise;
     const out: Record<string, string> = {};
     try {
       const { info, metadata } = (await doc.getMetadata()) as unknown as {
@@ -242,7 +244,7 @@ export async function readPdfInfo(absolutePath: string): Promise<Record<string, 
       if (flag('IsLinearized')) out.Linearized = 'Yes';
     } finally {
       await doc.cleanup?.();
-      await doc.destroy?.();
+      await task.destroy();
     }
     return out;
   } catch {
@@ -267,6 +269,21 @@ export function rasterScale(width: number, height: number, scale: number, minLon
   const long = Math.max(width, height);
   return long ? Math.max(scale, minLongSide / long) : scale;
 }
+
+/** A directory inside the server's pdfjs-dist (trailing slash kept), for the asset URLs pdf.js
+ *  needs in Node. Undefined if it cannot be resolved: pdf.js then degrades rather than fails. */
+function pdfjsAssetDir(sub: string): string | undefined {
+  try {
+    return path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), sub);
+  } catch {
+    return undefined;
+  }
+}
+
+/** pdf.js 5+ decodes JPEG 2000 and JBIG2 images with wasm from this directory. Without it
+ *  those images fail to decode and pdf.js drops them: a scanned page renders blank, and its
+ *  operator list reports no image. */
+const pdfjsWasmUrl = () => pdfjsAssetDir('wasm/');
 
 /**
  * Rasterize a PDF's pages to PNG buffers via pdfjs + @napi-rs/canvas. This is the
@@ -303,22 +320,14 @@ export async function rasterizePdf(
     // Without the bundled standard fonts, pages using non-embedded fonts render
     // BLANK in Node ("Requesting object that isn't resolved yet Times_path_…"),
     // which hid whole policy pages from the QR scan and OCR.
-    let standardFontDataUrl: string | undefined;
-    try {
-      standardFontDataUrl = path.join(
-        path.dirname(require.resolve('pdfjs-dist/package.json')),
-        'standard_fonts/'
-      );
-    } catch {
-      // resolution failure → render without; scanned (image) pages still work
-    }
-    const doc = await getDocument({
+    const task = getDocument({
       data,
-      isEvalSupported: false,
       useSystemFonts: false,
       disableFontFace: true,
-      standardFontDataUrl,
-    }).promise;
+      standardFontDataUrl: pdfjsAssetDir('standard_fonts/'),
+      wasmUrl: pdfjsWasmUrl(),
+    });
+    const doc = await task.promise;
     const loadedAt = Date.now();
     const out: RasterPage[] = [];
     try {
@@ -356,7 +365,7 @@ export async function rasterizePdf(
       }
     } finally {
       await doc.cleanup?.();
-      await doc.destroy?.();
+      await task.destroy();
     }
     // Split LOAD from RENDER, because they answer different questions. Every call re-reads
     // the whole file and re-parses it, and the high-resolution retries in ocr.ts and
@@ -418,7 +427,8 @@ export async function largestImageWidthPerPage(
   try {
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
-    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false, verbosity: 0 }).promise;
+    const task = getDocument({ data, useSystemFonts: false, verbosity: 0, wasmUrl: pdfjsWasmUrl() });
+    const doc = await task.promise;
     try {
       for (const n of pages) {
         if (n < 1 || n > doc.numPages) continue;
@@ -443,7 +453,7 @@ export async function largestImageWidthPerPage(
       }
     } finally {
       await doc.cleanup?.();
-      await doc.destroy?.();
+      await task.destroy();
     }
   } catch {
     return null;
@@ -468,7 +478,8 @@ export async function pdfPageTextStats(
     // verbosity 0: the operator list makes pdf.js try to load every font, and each one it
     // cannot ("standardFontDataUrl") logs a warning — six per PDF in production. Only paint
     // and text operators are read here, never glyphs, so the fonts are irrelevant.
-    const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: false, verbosity: 0 }).promise;
+    const task = getDocument({ data, useSystemFonts: false, verbosity: 0, wasmUrl: pdfjsWasmUrl() });
+    const doc = await task.promise;
     // Every way a page paints a raster — a monochrome scan arrives as an image MASK — and
     // every text-show operator, including the ' and " shorthands.
     const IMAGE_OPS = new Set([
@@ -505,7 +516,7 @@ export async function pdfPageTextStats(
         out.push(stat);
       }
     } finally {
-      await doc.destroy();
+      await task.destroy();
     }
   } catch {
     return [];

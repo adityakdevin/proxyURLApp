@@ -65,8 +65,8 @@
   "optionalDependencies": {
     "@esbuild/linux-x64": "0.28.2",
     "@esbuild/win32-x64": "0.28.2",
-    "@napi-rs/canvas-linux-x64-gnu": "0.1.100",
-    "@napi-rs/canvas-win32-x64-msvc": "0.1.100",
+    "@napi-rs/canvas-linux-x64-gnu": "1.0.13",
+    "@napi-rs/canvas-win32-x64-msvc": "1.0.13",
     "@parcel/watcher-linux-x64-glibc": "2.6.0",
     "@parcel/watcher-win32-x64": "2.6.0",
     "@rolldown/binding-linux-x64-gnu": "1.2.16",
@@ -78,12 +78,17 @@
     "lightningcss-linux-x64-gnu": "1.32.0",
     "lightningcss-win32-x64-msvc": "1.32.0"
   },
-  "//overrides": "@types/express-serve-static-core is held at 5.0.7: 5.1 types every req.params value as string | string[] (for Express 5 wildcards), which breaks 101 `:id`-style reads in 18 route files whose handlers annotate `req: Request`. Runtime is unaffected; lift the hold together with typed route params. server also lists it as an exact devDependency: an override alone left it nested under @types/express, and declaration emit then failed (TS2883) on every exported router.",
+  "//overrides": "@types/express-serve-static-core is held at 5.0.7: 5.1 types every req.params value as string | string[] (for Express 5 wildcards), which breaks 101 `:id`-style reads in 18 route files whose handlers annotate `req: Request`. Runtime is unaffected; lift the hold together with typed route params. server also lists it as an exact devDependency: an override alone left it nested under @types/express, and declaration emit then failed (TS2883) on every exported router. zod is forced to >=4.6.6 for GHSA-mrhx-c7xc-m3w5: jimp 1.6.1, still the latest jimp, pins zod 3.25.76. pdf-parse 2 pins its own pdfjs-dist 5; it is pointed at the server's pdfjs-dist version. @napi-rs/canvas is held at 1.0.13 everywhere (pdf-parse pins 0.1, and both pdfjs-dist copies would otherwise nest the newest 1.x): one native canvas per process, and the copy that matches the win32/linux pins in optionalDependencies.",
   "overrides": {
+    "@napi-rs/canvas": "1.0.13",
     "@types/express-serve-static-core": "5.0.7",
     "brace-expansion": "^1.1.17",
     "browserslist": "^4.28.8",
+    "pdf-parse": {
+      "pdfjs-dist": "6.4.299"
+    },
     "qs": "^6.16.0",
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "zod": "^4.6.6"
   }
 }

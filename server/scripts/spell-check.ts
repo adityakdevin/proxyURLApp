@@ -7,18 +7,7 @@ import path from 'path';
 import { extractPdf } from '../src/lib/pdfExtractor.js';
 import { TesseractOcrPort } from '../src/lib/ocr.js';
 import { spellCandidates, findTermMisspellings, EXPECTED_TERMS } from '../src/validators/logic.js';
-import nspell from 'nspell';
-import enDictionary from 'dictionary-en';
-
-interface Spell {
-  correct(word: string): boolean;
-}
-
-function loadSpell(): Promise<Spell> {
-  return new Promise((resolve, reject) =>
-    enDictionary((err, dict) => (err ? reject(err) : resolve(nspell(dict))))
-  );
-}
+import { getSpell } from '../src/validators/dictionary.js';
 
 /** Same extraction path metaValidator takes for a PDF. */
 async function textOf(file: string, ocr: TesseractOcrPort): Promise<string> {
@@ -36,7 +25,7 @@ async function main() {
     console.error('usage: npx tsx scripts/spell-check.ts <file.pdf|image> [...]');
     process.exit(1);
   }
-  const spell = await loadSpell();
+  const spell = await getSpell();
   const isRealWord = (w: string) => spell.correct(w) || spell.correct(w.toLowerCase());
   const ocr = new TesseractOcrPort();
   try {
