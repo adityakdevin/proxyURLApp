@@ -216,17 +216,34 @@ All of it must pass before the PR is handed to Aditya to merge.
 
 ## Held back
 
-*(Filled in during the build: package, version kept, latest, reason.)*
+As of 2026-10-30. Everything else is at its latest stable version.
 
-- `@napi-rs/canvas`: kept 1.0.11, latest 1.1.0. 1.0.12 changed how patterns are sampled
-  (Brooooooklyn/canvas#1357), which changes the raster of scanned pages, so OCR reads them
-  differently. On the QA set that dropped real findings (a duplicate address across two
-  claims, a Missing Bill) and added false ones (Missing Invoice, an impossible date read off
-  an amount). No `imageSmoothingQuality` value restores the old raster: `high` fixed those
-  pages and dropped duplicate policy and vehicle numbers on others. 1.0.11 rasterizes
-  byte-identical to 0.1.100 on the affected pages, satisfies pdfjs-dist's `^1.0.10`, and the
-  full re-validation with it matches the baseline exactly (0 lost, 0 new, 0 status changes).
-  Lift the hold only with an OCR before/after comparison.
+| Package | Kept | Latest | Reason |
+|---|---|---|---|
+| `typescript` (both workspaces) | `~6.0.3` | 7.0.2 | `typescript-eslint` peers `<6.1.0` and `ts-jest` peers `<7`. The tilde keeps a 6.1 that typescript-eslint doesn't support out. |
+| `prisma`, `@prisma/client` | 7.10.1 | 8.0.0-rc.29 | 8 is a release candidate; the policy is latest stable. |
+| `pdfjs-dist` (client) | exactly 6.3.289 | 6.4.299 | react-pdf 11.0.0 pins it. The server's copy is 6.4.299. |
+| `@types/node` | `^24` (24.19.2) | 26.6.6 | It follows the runtime, Node 24. |
+| `@types/express-serve-static-core` | 5.0.7 | 5.1.3 | 5.1 types every `req.params` value as `string \| string[]`, which fails the server typecheck on the `req.params` reads across 18 route files. Runtime is unaffected. Lift it together with typed route params. |
+| `@napi-rs/canvas` | 1.0.11 | 1.1.0 | See below. |
+
+`@napi-rs/canvas`: 1.0.12 changed how patterns are sampled (Brooooooklyn/canvas#1357), which
+changes the raster of scanned pages, so OCR reads them differently. On the QA set that dropped
+real findings (a duplicate address across two claims, a Missing Bill) and added false ones
+(Missing Invoice, an impossible date read off an amount). No `imageSmoothingQuality` value
+restores the old raster: `high` fixed those pages and dropped duplicate policy and vehicle
+numbers on others. 1.0.11 rasterizes byte-identical to 0.1.100 on the affected pages,
+satisfies pdfjs-dist's `^1.0.10`, and the full re-validation with it matches the baseline
+exactly (0 lost, 0 new, 0 status changes). Lift the hold only with an OCR before/after
+comparison.
+
+Not holds, but listed as outdated by `npm outdated`: the `lightningcss-*` binaries are pinned
+at 1.32.0 because `@tailwindcss/node` requires exactly that version; vite's own nested 1.33.0
+carries its own binaries in the lockfile.
+
+`npm audit`: 0 advisories in production dependencies. The dev tree has one low advisory,
+GHSA-gcqx-w48m-w2h4 (deepmerge, via jest-config), which has no patched deepmerge; npm's only
+offer is a downgrade to jest 25.
 
 ## Left to the builder
 
