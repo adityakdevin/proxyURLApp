@@ -76,7 +76,9 @@
     "@unrs/resolver-binding-linux-x64-gnu": "1.12.2",
     "@unrs/resolver-binding-win32-x64-msvc": "1.12.2"
   },
+  "//overrides": "@types/express-serve-static-core is held at 5.0.7: 5.1 types every req.params value as string | string[] (for Express 5 wildcards), which breaks 101 `:id`-style reads in 18 route files whose handlers annotate `req: Request`. Runtime is unaffected; lift the hold together with typed route params. server also lists it as an exact devDependency: an override alone left it nested under @types/express, and declaration emit then failed (TS2883) on every exported router.",
   "overrides": {
+    "@types/express-serve-static-core": "5.0.7",
     "brace-expansion": "^1.1.17",
     "browserslist": "^4.28.8",
     "qs": "^6.16.0",

@@ -86,7 +86,10 @@ function runStartupSweeps() {
     .finally(() => kickDrain(prisma, validatorRegistry));
 }
 
-const server = app.listen(PORT, () => {
+// Express 5 also calls this on a bind error. Bail out so a failed bind never logs
+// "Server running" or re-queues claims; server.on('error') below reports and exits.
+const server = app.listen(PORT, (err?: Error) => {
+  if (err) return;
   console.log(`Server running on port ${PORT}`);
   runStartupSweeps(); // once, regardless of whether HTTPS is also enabled
 });

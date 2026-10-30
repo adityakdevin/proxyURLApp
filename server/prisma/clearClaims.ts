@@ -22,7 +22,7 @@ import fs from 'fs/promises';
 import dotenv from 'dotenv';
 
 // Load server/.env explicitly — the repo-root .env is stale (see CLAUDE.md).
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
+dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 import { PrismaClient } from '@prisma/client';
 import { claimUploadDir } from '../src/lib/uploadPaths.js';

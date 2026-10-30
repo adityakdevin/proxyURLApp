@@ -22,7 +22,7 @@ import dotenv from 'dotenv';
 
 // Load server/.env explicitly — a repo-root .env is read by nothing, and one carrying a stale
 // value has caused confusion before. See CLAUDE.md.
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
+dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 import { PrismaClient } from '@prisma/client';
 import { EXPECTED_TERMS, MIN_TERM_LEN } from '../src/validators/logic.js';
