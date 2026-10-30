@@ -221,7 +221,7 @@ export default function UserLayout() {
                 Dashboard
               </Link>
 
-              <div className="pt-4 mt-4 border-t">
+              <div className="pt-4 border-t">
                 <span className="px-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                   Claims
                 </span>
@@ -262,7 +262,7 @@ export default function UserLayout() {
               )}
 
               {!isLoading && menuData && menuData.menu.length > 0 && (
-                <div className="pt-4 border-t mt-4">
+                <div className="pt-4 border-t">
                   <span className="px-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     My URLs
                   </span>
