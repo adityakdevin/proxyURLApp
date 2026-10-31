@@ -28,7 +28,7 @@ A full-stack web application that provides controlled access to external and int
 ### Prerequisites
 
 - Node.js 24
-- MySQL 5.7 or 8 (production runs 5.7; CI tests both)
+- MySQL 5.7 or 8 (production and CI run 5.7; 8 is not tested in CI)
 - npm 11.17+
 
 ### Installation
