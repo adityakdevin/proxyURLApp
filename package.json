@@ -51,7 +51,7 @@
     "node": ">=24",
     "npm": ">=11.17.0"
   },
-  "//allowScripts": "npm 11 blocks dependency install scripts until they are approved here; bcrypt and canvas need theirs to resolve their native bindings. Write entries with `npm install-scripts approve <pkg>` rather than by hand -- the key must carry the version (`pkg@1.2.3`), and a plain `pkg: version` entry is silently ignored. Pinning means a version bump re-prompts instead of inheriting approval. tesseract.js is denied: its postinstall is only an Open Collective funding message.",
+  "//allowScripts": "npm 11 blocks dependency install scripts until they are approved here; bcrypt needs its to resolve its native binding, and prisma and @prisma/engines are approved for Prisma's own install hooks. Write entries with `npm install-scripts approve <pkg>` rather than by hand -- the key must carry the version (`pkg@1.2.3`), and a plain `pkg: version` entry is silently ignored. Pinning means a version bump re-prompts instead of inheriting approval. tesseract.js is denied: its postinstall is only an Open Collective funding message. @parcel/watcher and unrs-resolver (both via jest 30) are denied: their scripts only build or fetch a native binding, and the win32/linux bindings are pinned in optionalDependencies.",
   "allowScripts": {
     "tesseract.js": false,
     "bcrypt@6.0.0": true,
@@ -62,7 +62,7 @@
     "prisma@7.10.1": true,
     "@prisma/engines@7.10.1": true
   },
-  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and no other platform can resolve its own -- `npm ci` refuses to write the lockfile, so a binary absent from it is silently skipped, not fetched. Listing every platform we run on forces them all in; npm installs only the matching one because each declares os/cpu. win32-x64 is the deploy box, linux-x64 is CI (ubuntu-latest) -- without it a native binary is missing, `vite` dies at startup, and the ui-e2e job times out waiting for a dev server that never booted. Keep the versions in step with rolldown (vite), lightningcss and @tailwindcss/oxide (tailwind), esbuild (tsx) and @napi-rs/canvas. lightningcss is pinned at the hoisted 1.32.0 that @tailwindcss/node requires exactly; vite's own 1.33.0 sits nested under node_modules/vite and cannot be pinned from here, so check its win32/linux entries are still in the lockfile after an update.",
+  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and no other platform can resolve its own -- `npm ci` refuses to write the lockfile, so a binary absent from it is silently skipped, not fetched. Listing every platform we run on forces them all in; npm installs only the matching one because each declares os/cpu. win32-x64 is the deploy box, linux-x64 is CI (ubuntu-latest) -- without it a native binary is missing, `vite` dies at startup, and the ui-e2e job times out waiting for a dev server that never booted. Keep the versions in step with rolldown (vite), lightningcss and @tailwindcss/oxide (tailwind), esbuild (tsx), @napi-rs/canvas, and @parcel/watcher and @unrs/resolver-binding (jest). lightningcss is pinned at the hoisted 1.32.0 that @tailwindcss/node requires exactly; vite's own 1.33.0 sits nested under node_modules/vite and cannot be pinned from here, so check its win32/linux entries are still in the lockfile after an update.",
   "optionalDependencies": {
     "@esbuild/linux-x64": "0.28.2",
     "@esbuild/win32-x64": "0.28.2",

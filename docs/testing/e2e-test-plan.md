@@ -45,7 +45,8 @@ port is bound.
 
 **Dedicated MySQL test schema via `TEST_DATABASE_URL`, schema applied with
 `prisma db push`, self-contained fixture seeding, claim tables truncated between
-tests. CI uses an ephemeral MySQL 8 service container.**
+tests. CI uses ephemeral MySQL service containers (5.7 for `api-e2e`, 8.0 for
+`ui-e2e`).**
 
 Rationale:
 - Reuses the existing `server/src/__tests__/helpers/testDb.ts` pattern
@@ -119,7 +120,7 @@ e2e/
   global-setup.ts            # form login → storageState
   claims.smoke.spec.ts
   tsconfig.json / .gitignore
-.github/workflows/e2e.yml    # api-e2e + ui-e2e jobs (MySQL 8 service)
+.github/workflows/e2e.yml    # api-e2e (MySQL 5.7) + ui-e2e (MySQL 8.0) jobs
 ```
 
 ---
@@ -213,9 +214,10 @@ npm run test:e2e               # api then ui
 ```
 
 ### CI
-`.github/workflows/e2e.yml` runs `api-e2e` and `ui-e2e` on push/PR with a MySQL 8
-service container (`prisma db push` → run). `ui-e2e` additionally seeds the admin
-and installs the Chromium browser.
+`.github/workflows/e2e.yml` runs `api-e2e` and `ui-e2e` on push/PR, each against a MySQL
+service container (5.7, production's version, for `api-e2e`; 8.0 for `ui-e2e`) with
+`prisma db push`, then the suite. `api-e2e` also seeds and runs the server unit suite;
+`ui-e2e` additionally seeds the admin and installs the Chromium browser.
 
 ---
 

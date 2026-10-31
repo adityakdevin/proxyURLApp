@@ -47,8 +47,9 @@ npm run start            # Run production server
 - Root `package.json` uses npm workspaces
 
 ### Key Backend Files
-- `server/src/index.ts` - Express app setup, middleware stack, route mounting
-- `server/src/routes/proxy.ts` - Main proxy handler (~700 lines) with HTML/CSS/JS URL rewriting
+- `server/src/app.ts` - `createApp(prisma)`: Express app setup, middleware stack, route mounting
+- `server/src/index.ts` - Boot: imports `lib/prisma.ts` first (it loads `server/.env`), then `createApp`, `listen()` and startup sweeps
+- `server/src/routes/proxy.ts` - Main proxy handler (~1,100 lines) with HTML/CSS/JS URL rewriting
 - `server/src/services/authService.ts` - Login, password changes, session creation
 - `server/src/services/proxyService.ts` - URL access validation
 - `server/src/routes/claims.ts` - Claim routes; the `bulk/*` routes are registered before `/:id/*` so "bulk" is never parsed as a claim id
