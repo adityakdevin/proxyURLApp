@@ -20,4 +20,14 @@ jobs:
       - run: npm ci
       - run: npm run db:generate
       - run: npm run build
+      # DocumentViewer loads pdf.js's JPEG 2000 and JBIG2 decoders from /pdfjs-wasm/. A build
+      # without them still succeeds, and scanned pages then render blank (#119).
+      - name: Client build ships the pdf.js decoders
+        shell: bash
+        run: test -f client/dist/pdfjs-wasm/jbig2.wasm && test -f client/dist/pdfjs-wasm/openjpeg.wasm
       - run: npm run lint
+      # The DB-free part of the server unit suite, on the deploy box's OS: path handling
+      # differs on Windows (#119: pdf.js rejected asset dirs ending in a backslash, which
+      # silently stopped OCR). The DB-backed suites run in e2e.yml's api-e2e job.
+      - name: Unit tests (DB-free)
+        run: npm test --workspace=server -- src/lib src/middleware src/__tests__/spaFallback.test.ts

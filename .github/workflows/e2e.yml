@@ -47,6 +47,12 @@ jobs:
         run: npm run db:push
       - name: Run API E2E suite
         run: npm run test:e2e:api
+      # The server unit suite's DB-backed tests expect an admin, statuses, and a
+      # category/sub-category with a USER, which these two seeds create.
+      - name: Seed for the unit suite
+        run: npm run db:seed && npm run db:seed:demo
+      - name: Run server unit suite
+        run: npm test
 
   # ----------------------------------------------------------------- #
   # Browser smoke (Playwright). Heavier; boots the full dev stack.    #
