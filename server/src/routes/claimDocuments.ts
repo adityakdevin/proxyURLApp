@@ -1,7 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fsSync from 'fs';
-import { promises as fs } from 'fs';
 import path from 'path';
 import { param } from 'express-validator';
 import { ClaimService } from '../services/claimService.js';
@@ -171,18 +170,33 @@ router.get(
         );
         return res.status(404).json({ error: 'File not found', code: 'FILE_NOT_FOUND' });
       }
-      const stat = await fs.stat(resolved.absolutePath).catch((e) => {
-        console.warn(`[documents] ${doc.id} stat failed for ${resolved.absolutePath}: ${(e as Error).message}`);
-        return null;
-      });
-      if (!stat) return res.status(404).json({ error: 'File not found', code: 'FILE_NOT_FOUND' });
       res.setHeader('Content-Type', resolved.mimeType);
-      res.setHeader('Content-Length', String(stat.size));
       res.setHeader(
         'Content-Disposition',
         `${isInline(resolved.mimeType) ? 'inline' : 'attachment'}; filename="${encodeURIComponent(resolved.fileName)}"`
       );
-      fsSync.createReadStream(resolved.absolutePath).pipe(res);
+      // send (under sendFile) stats the file, streams only the stat's length (a scan still being
+      // written can grow after the stat), and closes the file when the client hangs up, which
+      // stepping through claims in the viewer does constantly.
+      res.sendFile(
+        resolved.absolutePath,
+        // Scan-share paths can hold dot segments, which the default 'ignore' answers 404.
+        // No ranges or cache lifetime. Express sets the ETag from the app's 'etag' setting
+        // (a per-call etag option is ignored), so a revisit may revalidate to a 304.
+        { dotfiles: 'allow', acceptRanges: false, cacheControl: false, lastModified: false },
+        (e?: NodeJS.ErrnoException) => {
+          if (!e || e.code === 'ECONNABORTED') return;
+          // The file can vanish, or the scan share drop, before or during the read.
+          console.warn(
+            `[documents] ${doc.id} read failed for ${JSON.stringify(resolved.absolutePath)}: ${JSON.stringify(e.message)}`
+          );
+          if (res.headersSent) return res.destroy(e);
+          // res.json keeps a Content-Type already set, so the file's own would label the JSON.
+          res.removeHeader('Content-Type');
+          res.removeHeader('Content-Disposition');
+          res.status(404).json({ error: 'File not found', code: 'FILE_NOT_FOUND' });
+        }
+      );
     } catch (err) {
       next(err);
     }

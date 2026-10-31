@@ -1,3 +1,5 @@
+import fsSync, { promises as fs, type ReadStream } from 'fs';
+import type { IncomingMessage } from 'http';
 import os from 'os';
 import path from 'path';
 import type { Express } from 'express';
@@ -102,4 +104,126 @@ describe('E2E: documents + validation', () => {
     // Let the fire-and-forget AUTO validation drain before teardown.
     await waitForValidation(tl, id, { timeoutMs: 25000 }).catch(() => undefined);
   });
+
+  it('answers 404 when the file cannot be read after stat, instead of crashing', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const created = await tl
+      .post('/api/claims')
+      .send({ subCategoryId: g.subCategoryId, claimId: 'C-UNREADABLE' });
+    const id = created.body.data.id as string;
+
+    // stat() succeeds on a directory but reading it fails with EISDIR: the same shape as
+    // a file deleted, or a scan share dropped, between the stat and the stream.
+    const storagePath = path.join(process.env.UPLOADS_ROOT!, id, 'gone.pdf');
+    await fs.mkdir(storagePath, { recursive: true });
+    const doc = await prisma.document.create({
+      data: { claimId: id, source: 'UPLOADED', fileName: 'gone.pdf', storagePath },
+    });
+
+    const res = await tl.get(`/api/claims/${id}/documents/${doc.id}/content`);
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'File not found', code: 'FILE_NOT_FOUND' });
+    expect(res.headers['content-disposition']).toBeUndefined();
+  });
+
+  it('serves an empty document as an empty 200', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const created = await tl
+      .post('/api/claims')
+      .send({ subCategoryId: g.subCategoryId, claimId: 'C-EMPTYDOC' });
+    const id = created.body.data.id as string;
+
+    const storagePath = path.join(process.env.UPLOADS_ROOT!, id, 'empty.pdf');
+    await fs.mkdir(path.dirname(storagePath), { recursive: true });
+    await fs.writeFile(storagePath, '');
+    const doc = await prisma.document.create({
+      data: { claimId: id, source: 'UPLOADED', fileName: 'empty.pdf', storagePath, mimeType: 'application/pdf' },
+    });
+
+    const res = await tl.get(`/api/claims/${id}/documents/${doc.id}/content`).buffer(true);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-length']).toBe('0');
+    expect(res.body.length).toBe(0);
+  });
+
+  it('serves the file bytes with its type and disposition, from a dot-segment path too', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const created = await tl
+      .post('/api/claims')
+      .send({ subCategoryId: g.subCategoryId, claimId: 'C-SERVED' });
+    const id = created.body.data.id as string;
+
+    // A dot segment, as scan-share paths can have: sendFile's default would 404 it.
+    const storagePath = path.join(process.env.UPLOADS_ROOT!, id, '.scans', 'policy copy.pdf');
+    await fs.mkdir(path.dirname(storagePath), { recursive: true });
+    const bytes = Buffer.from('%PDF-1.4\n% not a real document\n');
+    await fs.writeFile(storagePath, bytes);
+    const doc = await prisma.document.create({
+      data: { claimId: id, source: 'UPLOADED', fileName: 'policy copy.pdf', storagePath, mimeType: 'application/pdf' },
+    });
+
+    const res = await tl.get(`/api/claims/${id}/documents/${doc.id}/content`).buffer(true);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(res.headers['content-disposition']).toBe('inline; filename="policy%20copy.pdf"');
+    expect(res.headers['content-length']).toBe(String(bytes.length));
+    expect(Buffer.from(res.body as Buffer).equals(bytes)).toBe(true);
+    // No ranges and no cache lifetime; only Express's app-level ETag.
+    expect(res.headers['accept-ranges']).toBeUndefined();
+    expect(res.headers['cache-control']).toBeUndefined();
+    expect(res.headers['last-modified']).toBeUndefined();
+  });
+
+  it('closes the file when the client aborts mid-download', async () => {
+    const tl = await loginAs(app, g.teamLead.username);
+    const created = await tl
+      .post('/api/claims')
+      .send({ subCategoryId: g.subCategoryId, claimId: 'C-ABORTED' });
+    const id = created.body.data.id as string;
+
+    // Big enough that the response is still streaming when the client hangs up.
+    const storagePath = path.join(process.env.UPLOADS_ROOT!, id, 'big.pdf');
+    await fs.mkdir(path.dirname(storagePath), { recursive: true });
+    await fs.writeFile(storagePath, Buffer.alloc(16 * 1024 * 1024));
+    const doc = await prisma.document.create({
+      data: { claimId: id, source: 'UPLOADED', fileName: 'big.pdf', storagePath, mimeType: 'application/pdf' },
+    });
+
+    const opened: ReadStream[] = [];
+    const real = fsSync.createReadStream;
+    const spy = jest.spyOn(fsSync, 'createReadStream').mockImplementation(((...args: Parameters<typeof real>) => {
+      const s = real(...args);
+      opened.push(s);
+      return s;
+    }) as typeof real);
+    try {
+      await tl
+        .get(`/api/claims/${id}/documents/${doc.id}/content`)
+        .buffer(false)
+        .parse((res, done) => {
+          // superagent types this as its Response; at runtime it is the raw IncomingMessage.
+          const raw = res as unknown as IncomingMessage;
+          raw.once('data', () => {
+            raw.destroy();
+            done(null, null);
+          });
+        })
+        .catch(() => undefined);
+
+      // pipe() only unpipes on an aborted response; without an explicit destroy the
+      // ReadStream stays paused with its fd open (a held handle on the scan share).
+      expect(opened).toHaveLength(1);
+      await waitUntil(() => opened[0].destroyed);
+      expect(opened[0].destroyed).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
+
+async function waitUntil(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (!cond() && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setImmediate(r));
+  }
+}
