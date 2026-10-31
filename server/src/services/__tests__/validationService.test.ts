@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { ValidationService } from '../validationService.js';
-import { enqueue, kickDrain } from '../validationQueue.js';
+import { enqueue, idle, kickDrain } from '../validationQueue.js';
 import { DUP_CLAIMS_CAP } from '../../validators/dupValidator.js';
 import { Validator } from '../../validators/types.js';
 import {
@@ -525,6 +525,35 @@ describe('ValidationService + drainer', () => {
     }
   });
 
+  // Value: protects=test cleanup waits for the in-process drainer before deleting claims;
+  // fails_when=idle() resolves while a worker still writes a run; why_new=CI deadlocked a
+  // claim.deleteMany against a drain a previous e2e test left running; seam=none;
+  // no_claim=a drain in another process
+  it('idle() resolves only once the drain in flight has finished every run', async () => {
+    const slow: Validator[] = [
+      {
+        key: 'FULL',
+        column: 'fullScanStatus',
+        run: async () => {
+          await new Promise((r) => setTimeout(r, 40));
+          return { status: 'PASSED', summary: 'ok' };
+        },
+      },
+    ];
+    const ids: string[] = [];
+    for (const no of ['C-IDLE1', 'C-IDLE2']) {
+      const c = await makeClaim(no);
+      await prisma.document.create({
+        data: { claimId: c.id, source: 'UPLOADED', fileName: 'doc.pdf', storagePath: `/tmp/${SUF}-${no}.pdf`, createdBy: adminId },
+      });
+      ids.push(c.id);
+    }
+    for (const id of ids) await enqueue(prisma, slow, id, 'AUTO');
+    await idle();
+    const runs = await prisma.validationRun.findMany({ where: { claimId: { in: ids } } });
+    expect(runs.map((r) => r.status)).toEqual(['COMPLETED', 'COMPLETED']);
+  });
+
   // Value: protects=a finding with no severity on a failed check is stored visible (ERROR);
   // fails_when=the persistence default goes back to WARNING, which reviewers never see;
   // why_new=every plain "Missing docs" line was hidden this way; seam=none; no_claim=UI rendering
@@ -760,6 +789,9 @@ describe('ValidationService + drainer', () => {
       });
       const run = await enqueue(prisma, fakes, claim.id, 'MANUAL', adminId);
       await new ValidationService(prisma, fakes).runOne(run.id);
+      // enqueue also kicks the drainer, and its worker can claim the run first; runOne then
+      // returns at once, so wait for whichever worker has it before reading the status.
+      await drained();
 
       const moved = await prisma.claim.findUnique({
         where: { id: claim.id },
@@ -822,6 +854,8 @@ describe('ValidationService + drainer', () => {
       });
       const run = await enqueue(prisma, fakes, claim.id, 'MANUAL', adminId);
       await new ValidationService(prisma, fakes).runOne(run.id);
+      // Same race as above; without the wait this passes before the run has even finished.
+      await drained();
 
       // A machine must not be able to close a claim, even by misconfiguration.
       const after = await prisma.claim.findUnique({

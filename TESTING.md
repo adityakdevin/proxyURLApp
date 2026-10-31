@@ -38,7 +38,7 @@ upload, sync, and delete.
 
 | Action                          | USER                  | TEAM_LEAD              | ADMIN |
 |---------------------------------|-----------------------|-----------------------|-------|
-| View claims                     | own scope, if assignee| own scope (UType+PType)| all  |
+| View claims                     | own scope, if assignee| own scope              | all  |
 | Create claim                    | ❌                    | ✅ (in scope)         | ✅    |
 | Add remark / change status      | ✅ if assignee        | ✅ in scope           | ✅    |
 | Reassign claim                  | ❌                    | ✅                    | ✅    |
@@ -50,8 +50,9 @@ upload, sync, and delete.
 | Trigger a **folder scan job**   | ❌                    | ❌                    | ✅ only|
 | Soft-delete / restore claim     | ❌                    | ❌                    | ✅ only|
 
-**Scope:** every non-admin user has exactly one `(UserType, Project)` assignment and
-can only see/act on claims under that pair. Admin is unrestricted.
+**Scope:** every non-admin user is assigned exactly one Project and is granted specific
+Sub-Categories within it; they can only see/act on claims in those Sub-Categories.
+Admin is unrestricted.
 
 ### Where things live (routes)
 
@@ -82,7 +83,7 @@ can only see/act on claims under that pair. Admin is unrestricted.
 
 2. **A fresh seed creates ZERO sample claims.** `seed.ts` only adds sample claim data
    *if an ACTIVE SubCategory already exists*. On a brand-new DB there is no
-   UserType / Project / Category / SubCategory, so the seed prints
+   Project / Category / SubCategory, so the seed prints
    *"No active SubCategory found. Skipping..."*. You must **build the hierarchy in the
    admin UI first**, then **re-run the seed** (it is idempotent) to get the sample
    statuses, document types, scan rule, and claims.
@@ -127,10 +128,9 @@ on first login (≥8 chars, with uppercase, lowercase, and a number).
 Log in as admin, go to `http://localhost:5173/admin`.
 
 ### A. Build the hierarchy (required before any claim can exist)
-1. **User Types** → create one (e.g. `Insurance`).
-2. **Projects** → create one (e.g. `Health`).
-3. **Categories** → create one scoped to that UserType + Project.
-4. **Sub Categories** → create one under that Category. ← this unblocks the seed.
+1. **Projects** → create one (e.g. `Health`).
+2. **Categories** → create one in that Project.
+3. **Sub Categories** → create one under that Category. ← this unblocks the seed.
 
 ### B. Generate sample claim data
 Re-run the seed; it now finds your ACTIVE SubCategory:
@@ -190,17 +190,19 @@ document types (`Aadhar Card`, `PAN Card`, `Bill`), a ClaimIdRule
 ## 5. Test as TEAM_LEAD (end-to-end)
 
 ### A. Create the Team Lead account (as admin)
-Admin → **Users** → New user → **role = TEAM_LEAD**, assign the **same UserType +
-Project** from §4.A (a TL is confined to that pair). Save.
-*(Optionally also create a plain USER on the same pair, to test the assignee path.)*
+Admin → **Users** → New user → **role = TEAM_LEAD**, assign the **same Project** from
+§4.A and grant the Sub-Category you created (a TL is confined to its granted
+Sub-Categories). Save.
+*(Optionally also create a plain USER with the same Project and Sub-Category, to test the
+assignee path.)*
 
 ### B. Log in as the Team Lead
-Use a **separate browser / private window** (sessions are single-per-user, so logging in
-elsewhere would kill the admin session). The TL lands on `/claims` with **no** `/admin`
+Use a **separate browser / private window** (the session cookie is per browser, so
+logging in as the TL in the same window would replace the admin's session there). The TL lands on `/claims` with **no** `/admin`
 access.
 
 ### C. Scope check
-The TL sees **only** claims under their UserType + Project. Confirm claims outside
+The TL sees **only** claims in their granted Sub-Categories. Confirm claims outside
 that scope are not visible.
 
 ### D. Create a claim (TL can; USER cannot)

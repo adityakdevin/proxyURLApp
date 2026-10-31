@@ -3,11 +3,16 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { RotateCcw, RotateCw } from 'lucide-react';
 import { Finding } from '@/lib/claimTypes';
 
-// Bundle the pdfjs worker via Vite (react-pdf v9 uses pdfjs-dist v4).
+// Bundle the pdfjs worker via Vite (react-pdf v11 pins pdfjs-dist 6.3.289).
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url
 ).toString();
+
+// Decoders for JPEG 2000, JBIG2 and CCITT fax images; vite.config.ts copies them here.
+// Without them pdf.js drops those images and a scanned page renders blank. Module-level so
+// react-pdf does not reload the document on every render.
+const pdfOptions = { wasmUrl: '/pdfjs-wasm/' };
 
 interface DocumentViewerProps {
   claimId: string;
@@ -412,6 +417,7 @@ export function DocumentViewerPanel({
           <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
             <Document
               file={pdfFile}
+              options={pdfOptions}
               onLoadSuccess={(pdf: { numPages: number }) => setNumPages(pdf.numPages)}
               onLoadError={() => setPdfFailed(true)}
               loading={<p className="p-4 text-sm text-gray-500">Loading PDF…</p>}

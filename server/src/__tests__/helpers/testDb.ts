@@ -1,4 +1,6 @@
 import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../../lib/prisma.js';
+import { idle } from '../../services/validationQueue.js';
 
 let prisma: PrismaClient | null = null;
 
@@ -7,9 +9,7 @@ export function getTestPrisma(): PrismaClient {
     // Allow pointing tests at a dedicated database (recommended) without
     // changing default behaviour: set TEST_DATABASE_URL to isolate test data
     // from the dev DB referenced by DATABASE_URL.
-    prisma = process.env.TEST_DATABASE_URL
-      ? new PrismaClient({ datasources: { db: { url: process.env.TEST_DATABASE_URL } } })
-      : new PrismaClient();
+    prisma = createPrisma(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
   }
   return prisma;
 }
@@ -24,6 +24,9 @@ export async function disconnectTestPrisma(): Promise<void> {
 export async function truncateClaimsTables(client: PrismaClient): Promise<void> {
   // DELETE in dependency order (children first) — safer than TRUNCATE+FK toggle, which
   // doesn't persist across Prisma's pooled connections.
+  // A validate call earlier in the file leaves the drainer writing runs; deleting their claims
+  // under it deadlocked claim.deleteMany in CI.
+  await idle();
   await client.claimRemark.deleteMany({});
   // Cleared here rather than left to cleanupScopeGraph: the row references a user with no
   // cascade (an audit trail must outlive the actor), so a leftover row blocks the user

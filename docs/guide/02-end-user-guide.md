@@ -4,7 +4,7 @@ This guide is for **End Users** — staff who work the claims that have been **a
 to them**. It walks through every step of handling a claim, plus using your website
 menu.
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)
 
 > **In short:** Open your assigned claim → add/refresh its documents → run the
 > automatic checks → review the results and rules → change the status and write a

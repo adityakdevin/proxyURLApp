@@ -1,7 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import bcrypt from 'bcrypt';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 
 async function main() {
   const username = process.env.ADMIN_USERNAME || 'admin';

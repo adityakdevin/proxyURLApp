@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable } from '@/components/shared/DataTable';
@@ -128,7 +128,7 @@ export default function StatusMasters() {
     }
   };
 
-  const columns: ColumnDef<StatusMaster>[] = [
+  const columns: DataTableColumn<StatusMaster>[] = [
     { accessorKey: 'name', header: 'Name' },
     { accessorKey: 'displayOrder', header: 'Order' },
     {

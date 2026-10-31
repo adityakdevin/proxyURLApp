@@ -53,7 +53,10 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     cwd: ROOT,
-    url: BASE_URL,
+    // Through Vite's /api proxy, so this waits for both servers: 502 while the API on
+    // :3001 is still booting, 401 (which Playwright counts as ready) once it answers.
+    // Waiting on BASE_URL alone let global-setup log in before the API listened.
+    url: `${BASE_URL}/api/auth/me`,
     // Always start a fresh stack bound to the TEST DB. Reusing an already-running
     // dev server would silently point the suite at the dev DB. Stop `npm run dev`
     // (free :5173 / :3001) before running the UI suite.

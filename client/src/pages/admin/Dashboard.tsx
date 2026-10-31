@@ -73,7 +73,7 @@ export default function AdminDashboard() {
             <Link
               key={card.label}
               to={card.link}
-              className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow border"
+              className="bg-white p-6 rounded-lg shadow-sm hover:shadow-md transition-shadow border"
             >
               <div className="flex items-center justify-between">
                 <div>
@@ -96,7 +96,7 @@ export default function AdminDashboard() {
       </div>
 
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow border">
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Zap className="h-5 w-5" />
             Quick Actions
@@ -117,7 +117,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow border">
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
           <h2 className="text-lg font-semibold mb-4">System Overview</h2>
           <div className="space-y-3 text-sm">
             <div className="flex justify-between py-2 border-b">

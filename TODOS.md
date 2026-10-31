@@ -62,8 +62,10 @@ Found by: /ship adversarial pass, 2026-08-16.
 ### ~900 lines of new claims UI have no automated coverage
 **Priority:** P1
 `ClaimBulkBar`, `ClaimActionDialog`, `ClaimRowActions`, `ClaimJumpBox` and the selection
-logic in `DataTable` have no unit runner (the client workspace has none) and
-`e2e/claims.smoke.spec.ts` is 21 lines asserting two screens render. The risky semantics
+logic in `DataTable` have no unit runner (the client workspace has none), and
+`e2e/claims.smoke.spec.ts` only checks that two claims screens render, the DataTable pager
+in both pagination modes, the pdf.js decoder files and Tailwind 4 styling; none of it
+drives the bulk bar or the row menu. The risky semantics
 are the ids-vs-filters switch in the bulk bar and the role gates on the row menu.
 Fix: Playwright specs covering tick-rows → bulk bar count → "select all N matching" →
 Clear, plus non-admin storage states (only an ADMIN state exists today) to drive the
@@ -215,7 +217,7 @@ COMPARE 7, QR 8, REDFLAG 4 (junk names, impossible dates, Aadhaar mismatches fro
 QR DOB compare is format-sensitive (QR "1985-07-15" vs printed "15/07/1985") and is now
 reached on more card pages. The QR holder-name page rescue was removed in review; redo it so
 it rescues only junk-name misreads (612342, 631650 flag again). Also open: 627998 PAN read
-with a space, 045360 name misread, cardText's pdf-parse fallback.
+with a space, 045360 name misread.
 Fix: classify each new red on the 570-claim diff, then fix by cause.
 Found by: 570-claim comparison, 2026-10-16.
 
@@ -238,8 +240,95 @@ Found by: /ship review passes 1-3, 2026-10-16/17.
 - `qrPresentUnread` is decided per page; the bundled "No QR" line can disagree with it.
 Found by: /ship review passes 1-3, 2026-10-16/17.
 
+## Found while shipping PR #119
+
+### Creating an Admin from the Users screen fails validation
+**Priority:** P1
+`POST /api/admin/users` (`server/src/routes/admin/users.ts`) requires `projectId` to be a UUID
+and `subCategoryIds` to be an array for every role, but `client/src/pages/admin/Users.tsx`
+sends neither for an ADMIN, so the request should fail with 400 "Valid Project is required".
+Found by code reading, not reproduced; not caused by PR #119.
+Fix: make both validators conditional on `role !== 'ADMIN'` (and ignore them for admins), with
+an API e2e test that creates an admin.
+Found by: /ship spec review of PR #119, 2026-10-31.
+
+### Proxy sub-resources skip the access check once the target is cached
+**Priority:** P1
+In `server/src/routes/proxy.ts` the `/proxy/:opaqueId/*` handler calls
+`proxyService.validateAccess` only when `targetUrlCache` (a process-lifetime Map keyed by
+`opaqueId` alone) misses. After any authorized user has opened a URL, any authenticated user
+who knows its UUID reaches the target's sub-paths, including a user whose grant was revoked or
+whose URL config was deactivated, until the process restarts. Pre-existing, not from PR #119.
+Fix: call `validateAccess(userId, opaqueId)` on every sub-resource request (cache only the
+target URL), and add an e2e test: user A warms the cache, user B without a grant gets 403.
+Found by: /ship security specialist, PR #119, 2026-10-31.
+
+### A slow or hung PDF turns into silent empty text
+**Priority:** P2
+META wraps each document's extraction in `withTimeout` (`PDF_EXTRACT_TIMEOUT_MS`, 300 s, in
+`server/src/validators/metaValidator.ts`) and on timeout returns empty text with no flag, so
+SPELL, INTRA and FULL read nothing and FULL can report required documents as missing. PR #119
+made pdf.js open one document at a time per process (`oneDocumentAtATime` in
+`server/src/lib/pdfExtractor.ts`), so time spent waiting behind another claim's pdf.js turn
+now counts against that budget; the turn bound (`PDFJS_TURN_MAX_MS`, 600 s) also releases
+silently.
+Fix: mark a timed-out document as unread (as `truncatedPages` does) instead of empty, log a
+warning when the turn bound fires, and keep that bound well below the check timeout.
+Found by: /ship performance, state-machines and adversarial reviews, PR #119, 2026-10-31.
+
+### Windows deploy scripts can stop or damage production
+**Priority:** P2
+- `scripts/deploy.bat` runs `prisma migrate deploy` and falls back to
+  `prisma db push --accept-data-loss` on the production database; this project uses
+  `db push` only. Delete the script or point it at `npm run deploy`.
+- The Node 24 floor is only a warning on an existing box (`engines` without
+  `engine-strict`), and `scripts/pm2-boot.bat` starts PM2 even when the deploy step failed.
+  Add `.npmrc` `engine-strict=true` and check the deploy exit code.
+- `npm run redeploy` stops the app first, and `deploy` ends with
+  `playwright install chromium`; a failed download leaves the app stopped. Make that step
+  non-fatal or run it after `pm2 startOrRestart`.
+- The rollback steps in `docs/DEPLOYMENT.md` run `npm install` and the build without
+  `npm run db:generate`, which Prisma 7 needs.
+Found by: /ship red team and adversarial reviews, PR #119, 2026-10-31.
+
+### Env-loading and comment leftovers from PR #119
+**Priority:** P3
+- `server/scripts/backup-db.js` calls `dotenv.config` without `override: false`, so a set
+  `DOTENV_OVERRIDE` makes it back up the database in `server/.env` instead of the exported one.
+- `server/prisma.config.ts` passes no `path`, so `DOTENV_PATH` can redirect which `.env` the
+  Prisma CLI loads.
+- `.githooks/pre-push` runs `prisma db push` but never `db:generate`, so after a schema pull it
+  tests against a stale client.
+- `scripts/start-app.bat` generates the client on every start; moving that step into the
+  `npm install` block would match the old postinstall and keep a schema change without
+  `db:push` failing at build time rather than at runtime.
+- Stale comments: `extractPdf`'s docstring still mentions a text-only fallback (now OCR);
+  `cardImageResolution.test.ts` says no neighbouring test runs pdf.js (pdfExtractor.test.ts
+  does, in a child process); `server/src/lib/prisma.ts` names `SESSION_SECRET`, which no
+  code reads.
+Found by: /ship maintainability specialist, fix-check and adversarial reviews, PR #119,
+2026-10-31.
+
+## CI
+
+### `main` has no branch protection, so a red dependency bump can still merge
+**Priority:** P1
+The `build`, `api-e2e` and `ui-e2e` checks run on every PR, but nothing requires them: a
+grouped Dependabot PR (or any PR) can merge with a failing check. Deferred from plan:
+`docs/superpowers/plans/2026-10-24-dependency-upgrade.md` (Task 11, Step 5).
+Fix: once `build` has run on `main`, require the three contexts with `enforce_admins` on
+(the plan has the exact `gh api -X PUT .../branches/main/protection` call). Needs the repo
+owner's go-ahead at that moment.
+Found by: /ship plan-completion audit, 2026-10-30.
+
 ## Completed
 
+- **Docs described a 30-minute, single-session login** - README, TESTING, CLAUDE.md, SPEC and
+  the user guides now describe the 8h sliding idle timeout (`SESSION_MAX_AGE_MS`) and up to 3
+  concurrent sessions (`SESSION_MAX_PER_USER`). (2026-10-31, PR #119)
+- **Docs described a "User Type + Project" access scope** - rewritten for one Project per user
+  plus the Sub-Categories granted within it, including the docs/README.md scope diagram.
+  (2026-10-31, PR #119)
 - **Bulk actions on a filter set could target claims the reviewer never selected** — `allMatching`
   survived the bulk bar rendering `null`, so unticking every row and ticking a different one
   came back still aimed at every matching claim. Reset on an empty selection. (2026-08-16)

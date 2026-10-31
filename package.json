@@ -6,6 +6,7 @@
     "client",
     "server"
   ],
+  "//scripts": "deploy ends by installing the Chromium build that the installed Playwright expects: every Playwright version pins its own browser revision, and without it headless proxying (HeadlessManager) cannot launch and every HEADLESS URL answers 503. Run deploy as the Windows user PM2 runs under, since browsers install per user. Already-installed revisions make it a no-op.",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "npm run dev --workspace=server",
@@ -38,43 +39,54 @@
     "test:e2e:ui": "npm run db:seed:e2e && playwright test",
     "test:e2e": "npm run test:e2e:api && npm run test:e2e:ui",
     "lint": "npm run lint --workspaces",
-    "deploy": "npm run db:generate && npm run db:push && npm run build",
+    "deploy": "npm run db:generate && npm run db:push && npm run build && playwright install chromium",
     "pm2:stop": "pm2 stop proxyurl-server || echo skip",
     "redeploy": "npm run pm2:stop && npm run deploy && pm2 startOrRestart ecosystem.config.js"
   },
   "devDependencies": {
-    "@playwright/test": "^1.57.0",
-    "concurrently": "^8.2.2"
+    "@playwright/test": "^1.64.1",
+    "concurrently": "^10.0.6"
   },
   "engines": {
-    "node": ">=18.0.0",
+    "node": ">=24",
     "npm": ">=11.17.0"
   },
-  "//allowScripts": "npm 11 blocks dependency install scripts until they are approved here; bcrypt and canvas need theirs to resolve their native bindings. Write entries with `npm install-scripts approve <pkg>` rather than by hand -- the key must carry the version (`pkg@1.2.3`), and a plain `pkg: version` entry is silently ignored. Pinning means a version bump re-prompts instead of inheriting approval. tesseract.js is denied: its postinstall is only an Open Collective funding message.",
+  "//allowScripts": "npm 11 blocks dependency install scripts until they are approved here; bcrypt needs its to resolve its native binding, and prisma and @prisma/engines are approved for Prisma's own install hooks. Write entries with `npm install-scripts approve <pkg>` rather than by hand -- the key must carry the version (`pkg@1.2.3`), and a plain `pkg: version` entry is silently ignored. Pinning means a version bump re-prompts instead of inheriting approval. tesseract.js is denied: its postinstall is only an Open Collective funding message. @parcel/watcher and unrs-resolver (both via jest 30) are denied: their scripts only build or fetch a native binding, and the win32/linux bindings are pinned in optionalDependencies.",
   "allowScripts": {
     "tesseract.js": false,
-    "@prisma/client@5.22.0": true,
-    "@prisma/engines@5.22.0": true,
     "bcrypt@6.0.0": true,
-    "canvas@3.2.3": true,
-    "esbuild@0.28.1": true,
-    "prisma@5.22.0": true,
-    "fsevents@2.3.2": true,
-    "fsevents@2.3.3": true
+    "fsevents@2.3.3": true,
+    "esbuild@0.28.2": true,
+    "@parcel/watcher": false,
+    "unrs-resolver": false,
+    "prisma@7.10.1": true,
+    "@prisma/engines@7.10.1": true
   },
-  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and no other platform can resolve its own -- `npm ci` refuses to write the lockfile, so a binary absent from it is silently skipped, not fetched. Listing every platform we run on forces them all in; npm installs only the matching one because each declares os/cpu. win32-x64 is the deploy box, linux-x64 is CI (ubuntu-latest) -- without it esbuild is missing, `vite` dies at startup, and the ui-e2e job times out waiting for a dev server that never booted. Keep the versions in step with rollup/esbuild/@napi-rs/canvas.",
+  "//optionalDependencies": "The lockfile is generated on macOS, so it only carries darwin-arm64 native binaries and no other platform can resolve its own -- `npm ci` refuses to write the lockfile, so a binary absent from it is silently skipped, not fetched. Listing every platform we run on forces them all in; npm installs only the matching one because each declares os/cpu. win32-x64 is the deploy box, linux-x64 is CI (ubuntu-latest) -- without it a native binary is missing, `vite` dies at startup, and the ui-e2e job times out waiting for a dev server that never booted. Keep the versions in step with rolldown (vite), lightningcss and @tailwindcss/oxide (tailwind), esbuild (tsx), @napi-rs/canvas, and @parcel/watcher and @unrs/resolver-binding (jest). lightningcss is pinned at the hoisted 1.32.0 that @tailwindcss/node requires exactly; vite's own 1.33.0 sits nested under node_modules/vite and cannot be pinned from here, so check its win32/linux entries are still in the lockfile after an update.",
   "optionalDependencies": {
-    "@esbuild/linux-x64": "0.28.1",
-    "@esbuild/win32-x64": "0.28.1",
-    "@napi-rs/canvas-linux-x64-gnu": "0.1.100",
-    "@napi-rs/canvas-win32-x64-msvc": "0.1.100",
-    "@rollup/rollup-linux-x64-gnu": "4.62.2",
-    "@rollup/rollup-win32-x64-msvc": "4.62.2"
+    "@esbuild/linux-x64": "0.28.2",
+    "@esbuild/win32-x64": "0.28.2",
+    "@napi-rs/canvas-linux-x64-gnu": "1.0.11",
+    "@napi-rs/canvas-win32-x64-msvc": "1.0.11",
+    "@parcel/watcher-linux-x64-glibc": "2.6.0",
+    "@parcel/watcher-win32-x64": "2.6.0",
+    "@rolldown/binding-linux-x64-gnu": "1.2.16",
+    "@rolldown/binding-win32-x64-msvc": "1.2.16",
+    "@tailwindcss/oxide-linux-x64-gnu": "4.3.3",
+    "@tailwindcss/oxide-win32-x64-msvc": "4.3.3",
+    "@unrs/resolver-binding-linux-x64-gnu": "1.12.2",
+    "@unrs/resolver-binding-win32-x64-msvc": "1.12.2",
+    "lightningcss-linux-x64-gnu": "1.32.0",
+    "lightningcss-win32-x64-msvc": "1.32.0"
   },
+  "//overrides": "@types/express-serve-static-core is held at 5.0.7: 5.1 types every req.params value as string | string[] (for Express 5 wildcards), which fails the server typecheck on the `req.params` reads across 18 route files whose handlers annotate `req: Request`. Runtime is unaffected; lift the hold together with typed route params. server also lists it as an exact devDependency: an override alone left it nested under @types/express, and declaration emit then failed (TS2883) on every exported router. zod is forced to >=4.6.6 for GHSA-mrhx-c7xc-m3w5: jimp 1.6.1, still the latest jimp, pins zod 3.25.76. @napi-rs/canvas is held at 1.0.11 everywhere (both pdfjs-dist copies would otherwise nest the newest 1.x): one native canvas per process, and the copy that matches the win32/linux pins in optionalDependencies. Not 1.0.12+: that release changed how patterns are sampled (Brooooooklyn/canvas#1357), which changed the raster of scanned pages and so what OCR reads. On the QA set it dropped real duplicate-address and Missing Bill findings and added a false invoice/date flag, and no imageSmoothingQuality setting restores the old output. 1.0.11 rasterizes byte-identical to the 0.1.x line and satisfies pdfjs-dist ^1.0.10. Lift the hold only after an OCR before/after comparison.",
   "overrides": {
+    "@napi-rs/canvas": "1.0.11",
+    "@types/express-serve-static-core": "5.0.7",
     "brace-expansion": "^1.1.17",
     "browserslist": "^4.28.8",
     "qs": "^6.16.0",
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "zod": "^4.6.6"
   }
 }
