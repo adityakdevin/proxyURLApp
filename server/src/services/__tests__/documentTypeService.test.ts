@@ -81,6 +81,21 @@ describe('DocumentTypeService', () => {
       )
     ).rejects.toMatchObject({ code: 'DUPLICATE_GOVT_CODE' });
   });
+
+  // The race cases below use a hand-built P2002; this one lets MySQL and the real adapter
+  // raise it, so a driver upgrade that renames or drops the index in the error shows here.
+  it('maps the real adapter P2002 for a govt_code race to DUPLICATE_GOVT_CODE', async () => {
+    await service.create({ name: 'PAN', category: 'GOVT', govtCode: 'PAN' }, actorId);
+    const preCheckMissed = new DocumentTypeService({
+      documentTypeMaster: {
+        findUnique: async () => null,
+        create: (args: Prisma.DocumentTypeMasterCreateArgs) => prisma.documentTypeMaster.create(args),
+      },
+    } as unknown as PrismaClient);
+    await expect(
+      preCheckMissed.create({ name: 'PAN 2', category: 'GOVT', govtCode: 'PAN' }, actorId)
+    ).rejects.toMatchObject({ code: 'DUPLICATE_GOVT_CODE' });
+  });
 });
 
 describe('DocumentTypeService create race', () => {

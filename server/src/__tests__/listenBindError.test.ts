@@ -27,6 +27,9 @@ describe('server startup on a port that is already in use', () => {
         HTTPS_CERT: '',
         DATABASE_URL: 'mysql://nobody@127.0.0.1:9/none',
       },
+      // A regressed startup that keeps listening would never exit; kill it so it fails
+      // here instead of outliving the run. Shorter than the test's own timeout below.
+      timeout: 20_000,
     });
     let stdout = '';
     let stderr = '';
@@ -37,5 +40,5 @@ describe('server startup on a port that is already in use', () => {
     expect(code).toBe(1);
     expect(stderr).toContain(`FATAL: port ${port} is already in use`);
     expect(stdout).not.toContain('Server running');
-  });
+  }, 30_000);
 });
