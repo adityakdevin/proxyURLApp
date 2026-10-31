@@ -19,6 +19,17 @@ echo Running database migrations...
 call npm run db:migrate:deploy --workspace=server
 echo.
 
+REM Prisma 7's client has no postinstall, so npm install does not generate it; the build
+REM imports it. Regenerating every start also picks up a pulled schema change.
+echo Generating Prisma client...
+call npm run db:generate
+if %ERRORLEVEL% NEQ 0 (
+    echo Prisma client generation failed with error code %ERRORLEVEL%
+    pause
+    exit /b %ERRORLEVEL%
+)
+echo.
+
 REM Build the application
 echo Building application...
 call npm run build
