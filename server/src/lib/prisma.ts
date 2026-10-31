@@ -11,7 +11,17 @@ import type { PoolConfig } from 'mariadb';
 // src/lib and dist/lib. Variables already set (e.g. by the shell) are never overridden.
 dotenv.config({ path: path.join(__dirname, '..', '..', '.env'), quiet: true });
 
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+/** Percent-decode each valid escape run; a stray "%" (new URL keeps it) stays literal, as in Prisma 5. */
+const decode = (s: string) =>
+  s.replace(/(%[0-9A-Fa-f]{2})+/g, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run;
+    }
+  });
 
 /**
  * Translate a Prisma-style `mysql://` URL into mariadb pool options that behave like
@@ -26,27 +36,51 @@ export function mariadbConfigFromUrl(url: string): PoolConfig {
     // Not rethrown as-is: Node's error carries the whole URL, password included.
     throw new Error('DATABASE_URL is not a valid URL (percent-encode special characters in the user and password)');
   }
+  const params = [...u.searchParams.keys()];
+  // Prisma 5 honoured sslaccept, sslcert, sslidentity and sslpassword. Nothing here sets up TLS,
+  // and dropping them with a warning would connect in plaintext to a database that asked for it.
+  const tls = params.filter((k) => k.startsWith('ssl'));
+  if (tls.length) {
+    throw new Error(`DATABASE_URL asks for TLS (${tls.join(', ')}), which lib/prisma.ts does not configure`);
+  }
   const limit = u.searchParams.get('connection_limit');
-  const ignored = [...u.searchParams.keys()].filter((k) => k !== 'connection_limit');
+  const ignored = params.filter((k) => k !== 'connection_limit');
   if (ignored.length) {
     console.warn(`DATABASE_URL parameters ignored by the MariaDB adapter: ${ignored.join(', ')}`);
   }
+  // mariadb keeps NaN, 0 or a negative limit as given, and that pool never connects (every
+  // query: "pool timeout"), so anything but a positive integer is reported and not used.
+  const requested = Number(limit);
+  const valid = Number.isInteger(requested) && requested > 0;
+  if (limit !== null && !valid) {
+    console.warn(`DATABASE_URL connection_limit=${limit} ignored: not a positive integer`);
+  }
+  const connectionLimit = valid ? requested : os.availableParallelism() * 2 + 1;
+  // mariadb unwraps "[::1]" only when it parses a URL itself; options go to net.connect as given.
+  const host = u.hostname.replace(/^\[(.*)\]$/, '$1');
   return {
-    host: u.hostname,
+    host,
     port: Number(u.port) || 3306,
-    user: decodeURIComponent(u.username),
-    password: decodeURIComponent(u.password),
-    database: decodeURIComponent(u.pathname.slice(1)) || undefined,
-    // Prisma 5 defaults: 5 s to connect, idle connections closed after 300 s (seconds here).
+    user: decode(u.username),
+    password: decode(u.password),
+    database: decode(u.pathname.slice(1)) || undefined,
+    // Prisma's v6-compatible settings: 5 s to connect, idleTimeout 300 (seconds here). mariadb
+    // keeps minimumIdle = connectionLimit, so idleTimeout never actually closes a connection:
+    // the pool stays full, as mariadb recommends, and its validation ping replaces any
+    // connection MySQL dropped while idle.
     connectTimeout: 5_000,
     idleTimeout: 300,
+    // No prepareCacheLength: the adapter's 0 (no statement cache) is deliberate. With the
+    // driver's cache on, evicted statements were not reliably closed and piled up until MySQL's
+    // server-wide max_prepared_stmt_count was hit (prisma/prisma#29364).
     // MySQL 8+ caching_sha2_password over a non-TLS connection needs the server's public
     // key. Fetched unencrypted, so a man in the middle could swap it and read the password:
     // only trusted when the database is on this host, as every one is today.
-    allowPublicKeyRetrieval: LOOPBACK_HOSTS.has(u.hostname),
-    // ponytail: Prisma 5 used physical CPUs x 2 + 1; logical CPUs + 1 approximates that on
-    // SMT hardware. Set connection_limit in DATABASE_URL to pin an exact size.
-    connectionLimit: limit ? Number(limit) : os.availableParallelism() + 1,
+    allowPublicKeyRetrieval: LOOPBACK_HOSTS.has(host),
+    // ponytail: Prisma 5 used physical CPUs x 2 + 1. Node only knows logical CPUs, so this
+    // matches on hardware without SMT and doubles it with SMT, well inside MySQL's default 151
+    // connections. Set connection_limit in DATABASE_URL to pin an exact size.
+    connectionLimit,
   };
 }
 
