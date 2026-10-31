@@ -19,13 +19,11 @@
  */
 import path from 'path';
 import fs from 'fs/promises';
-import dotenv from 'dotenv';
 
-// Load server/.env explicitly — a repo-root .env is read by nothing. See CLAUDE.md.
-dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
-
+// First local import: it loads server/.env, whatever the working directory.
 import { createPrisma } from '../src/lib/prisma.js';
 import { DocumentService } from '../src/services/documentService.js';
+import { FsFileSystemPort } from '../src/services/fsFileSystemPort.js';
 import { rasterizePdf } from '../src/lib/pdfExtractor.js';
 import { decodeAll, isDecoderDegraded, resetDecoderDegraded } from '../src/validators/qrValidator.js';
 
@@ -129,7 +127,7 @@ async function main() {
   await fs.mkdir(outDir, { recursive: true });
   console.log(`Claim ${claim.claimId}: ${docs.length} document(s). PNGs -> ${outDir}\n`);
 
-  const svc = new DocumentService(prisma);
+  const svc = new DocumentService(prisma, new FsFileSystemPort());
   for (const doc of docs) {
     const resolved = await svc.resolveServingPath(doc.id);
     if (!resolved) {

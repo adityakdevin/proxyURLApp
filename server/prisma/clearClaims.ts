@@ -17,13 +17,9 @@
  *   npm run db:clear-claims -- --yes
  *   npm run db:clear-claims -- --yes --all
  */
-import path from 'path';
 import fs from 'fs/promises';
-import dotenv from 'dotenv';
 
-// Load server/.env explicitly — the repo-root .env is stale (see CLAUDE.md).
-dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
-
+// First local import: it loads server/.env, whatever the working directory.
 import { createPrisma } from '../src/lib/prisma.js';
 import { claimUploadDir } from '../src/lib/uploadPaths.js';
 

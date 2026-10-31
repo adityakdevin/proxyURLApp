@@ -16,15 +16,7 @@
  *   npx tsx prisma/qaCaseDiagnostics.ts                 # from server/
  *   ... --full                                          # print QR values in the clear
  */
-import path from 'path';
-import dotenv from 'dotenv';
-
-// Load server/.env explicitly, whatever the working directory. The REPO ROOT .env carries a
-// stale `postgresql://` DATABASE_URL while the datasource provider is mysql, so running this
-// from the root and letting the nearest .env win connects to nothing (or the wrong engine).
-dotenv.config({ path: path.join(__dirname, '..', '.env'), quiet: true });
-
-// Imported after dotenv so the client reads the URL resolved above.
+// First local import: it loads server/.env, whatever the working directory.
 import { createPrisma } from '../src/lib/prisma.js';
 // The REAL parser, not a copy of it. This script originally reimplemented the key-splitting
 // inline, which meant it kept reporting the pre-fix behaviour after the fix shipped and
