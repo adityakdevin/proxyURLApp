@@ -270,19 +270,20 @@ export function rasterScale(width: number, height: number, scale: number, minLon
   return long ? Math.max(scale, minLongSide / long) : scale;
 }
 
-/** A directory inside the server's pdfjs-dist (trailing slash kept), for the asset URLs pdf.js
- *  needs in Node. Undefined if it cannot be resolved: pdf.js then degrades rather than fails. */
-function pdfjsAssetDir(sub: string): string | undefined {
+/** A directory inside the server's pdfjs-dist, for the asset URLs pdf.js needs in Node.
+ *  Always ends in "/": pdf.js 5+ throws on any other ending, and on Windows path.join ends it
+ *  in a backslash (fs accepts the mixed separators). Undefined if it cannot be resolved: pdf.js then
+ *  degrades rather than fails. */
+export function pdfjsAssetDir(sub: string, p: path.PlatformPath = path): string | undefined {
   try {
-    return path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), sub);
+    return p.join(p.dirname(require.resolve('pdfjs-dist/package.json')), sub).replace(/\\$/, '/');
   } catch {
     return undefined;
   }
 }
 
 /** pdf.js 5+ decodes JPEG 2000 and JBIG2 images with wasm from this directory. Without it
- *  those images fail to decode and pdf.js drops them: a scanned page renders blank, and its
- *  operator list reports no image. */
+ *  those images fail to decode and pdf.js drops them, so a scanned page renders blank. */
 const pdfjsWasmUrl = () => pdfjsAssetDir('wasm/');
 
 /**
