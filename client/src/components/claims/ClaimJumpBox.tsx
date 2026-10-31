@@ -224,7 +224,7 @@ export function ClaimJumpBox({
         autoComplete="off"
         className={
           inputClassName ??
-          'h-9 w-52 rounded-md border border-gray-200 pl-7 pr-8 text-sm focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600'
+          'h-9 w-52 rounded-md border border-gray-200 bg-white pl-7 pr-8 text-sm focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600'
         }
       />
       <button
