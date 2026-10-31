@@ -11,13 +11,21 @@ import type { PoolConfig } from 'mariadb';
 // src/lib and dist/lib. Variables already set (e.g. by the shell) are never overridden.
 dotenv.config({ path: path.join(__dirname, '..', '..', '.env'), quiet: true });
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 /**
  * Translate a Prisma-style `mysql://` URL into mariadb pool options that behave like
  * Prisma 5's built-in pool. Only `connection_limit` is honoured; any other search
  * parameter is reported and ignored.
  */
 export function mariadbConfigFromUrl(url: string): PoolConfig {
-  const u = new URL(url);
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    // Not rethrown as-is: Node's error carries the whole URL, password included.
+    throw new Error('DATABASE_URL is not a valid URL (percent-encode special characters in the user and password)');
+  }
   const limit = u.searchParams.get('connection_limit');
   const ignored = [...u.searchParams.keys()].filter((k) => k !== 'connection_limit');
   if (ignored.length) {
@@ -33,8 +41,9 @@ export function mariadbConfigFromUrl(url: string): PoolConfig {
     connectTimeout: 5_000,
     idleTimeout: 300,
     // MySQL 8+ caching_sha2_password over a non-TLS connection needs the server's public
-    // key. Every database is on the same host as the app.
-    allowPublicKeyRetrieval: true,
+    // key. Fetched unencrypted, so a man in the middle could swap it and read the password:
+    // only trusted when the database is on this host, as every one is today.
+    allowPublicKeyRetrieval: LOOPBACK_HOSTS.has(u.hostname),
     // ponytail: Prisma 5 used physical CPUs x 2 + 1; logical CPUs + 1 approximates that on
     // SMT hardware. Set connection_limit in DATABASE_URL to pin an exact size.
     connectionLimit: limit ? Number(limit) : os.availableParallelism() + 1,
