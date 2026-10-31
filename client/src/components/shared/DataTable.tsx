@@ -1,16 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import {
   type CellData,
   type ColumnDef,
   type RowData,
-  type SortingState,
   type TableFeatures,
   createPaginatedRowModel,
-  createSortedRowModel,
   flexRender,
   rowPaginationFeature,
-  rowSortingFeature,
-  sortFns,
   tableFeatures,
   useTable,
 } from '@tanstack/react-table';
@@ -23,13 +19,11 @@ declare module '@tanstack/react-table' {
   }
 }
 
-/** The TanStack features every DataTable uses. Module-level so the reference is stable. */
+/** The TanStack features every DataTable uses. Module-level so the reference is stable.
+ *  No client-side sorting: headers sort on the server through `meta.sortField`. */
 const dataTableFeatures = tableFeatures({
-  rowSortingFeature,
   rowPaginationFeature,
-  sortedRowModel: createSortedRowModel(),
   paginatedRowModel: createPaginatedRowModel(),
-  sortFns,
 });
 
 /** Column definition for a DataTable; pages type their `columns` arrays with this. */
@@ -152,8 +146,6 @@ export function DataTable<TData extends RowData>({
   onSortChange,
   selection,
 }: DataTableProps<TData>) {
-  const [sorting, setSorting] = useState<SortingState>([]);
-
   const selected = new Set(selection?.selectedIds ?? []);
   const pageIds = selection
     ? data.filter((r) => selection.isSelectable?.(r) ?? true).map(selection.rowId)
@@ -207,12 +199,10 @@ export function DataTable<TData extends RowData>({
     features: dataTableFeatures,
     data,
     columns: allColumns,
-    onSortingChange: setSorting,
-    state: {
-      sorting,
-    },
     manualPagination: !!pagination,
-    pageCount: pagination?.totalPages ?? -1,
+    // Left unset for client pagination so it is counted from the rows. -1 means "unknown"
+    // to TanStack: the pager read "Page 1 of -1" and Next stayed enabled.
+    pageCount: pagination?.totalPages,
   });
 
   const pageSizeOptions = [10, 25, 50, 100];
