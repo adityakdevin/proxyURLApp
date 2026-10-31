@@ -9,10 +9,10 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString();
 
-// Decoders for JPEG 2000, JBIG2 and CCITT fax images; vite.config.ts copies them here.
+// Decoders for JPEG 2000, JBIG2 and CCITT fax images; vite.config.ts serves them at the root.
 // Without them pdf.js drops those images and a scanned page renders blank. Module-level so
 // react-pdf does not reload the document on every render.
-const pdfOptions = { wasmUrl: '/pdfjs-wasm/' };
+const pdfOptions = { wasmUrl: '/' };
 
 interface DocumentViewerProps {
   claimId: string;
