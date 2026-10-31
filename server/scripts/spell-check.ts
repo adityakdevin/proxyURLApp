@@ -7,7 +7,7 @@ import path from 'path';
 import { extractPdf } from '../src/lib/pdfExtractor.js';
 import { TesseractOcrPort } from '../src/lib/ocr.js';
 import { spellCandidates, findTermMisspellings, EXPECTED_TERMS } from '../src/validators/logic.js';
-import { getSpell } from '../src/validators/dictionary.js';
+import { getSpell, isRealWord } from '../src/validators/dictionary.js';
 
 /** Same extraction path metaValidator takes for a PDF. */
 async function textOf(file: string, ocr: TesseractOcrPort): Promise<string> {
@@ -26,12 +26,13 @@ async function main() {
     process.exit(1);
   }
   const spell = await getSpell();
-  const isRealWord = (w: string) => spell.correct(w) || spell.correct(w.toLowerCase());
+  // The validator's own check, plural fallback included, so this script flags what SPELL flags.
+  const isKnown = (w: string) => isRealWord(spell, w);
   const ocr = new TesseractOcrPort();
   try {
     for (const file of files) {
       const text = await textOf(file, ocr);
-      const hits = findTermMisspellings(spellCandidates(text), isRealWord, EXPECTED_TERMS);
+      const hits = findTermMisspellings(spellCandidates(text), isKnown, EXPECTED_TERMS);
       const bad = hits.filter((h) => !h.doubtful);
       const soft = hits.filter((h) => h.doubtful);
       console.log(
