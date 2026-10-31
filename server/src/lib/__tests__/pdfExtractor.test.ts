@@ -3,7 +3,7 @@ import fs from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { mulTransform, pdfjsAssetDir, runToWords } from '../pdfExtractor.js';
+import { mulTransform, oneDocumentAtATime, pdfjsAssetDir, runToWords, withActiveTimeout } from '../pdfExtractor.js';
 
 describe('pdfExtractor coordinate math', () => {
   it('mulTransform matches affine matrix composition', () => {
@@ -145,6 +145,22 @@ console.log(JSON.stringify({ rendered: pages !== null, centre }));
 process.exit(0);
 `;
 
+// A file pdf.js refuses to open, then a good one: the failed open must not escape, hang the
+// queue, or leave pdf.js unable to open the next document.
+const UNOPENABLE_CHILD = `
+const [, bad, good] = process.argv;
+const m = await import(process.env.TARGET_URL);
+const empty = [
+  await m.extractPdf(bad),
+  await m.readPdfInfo(bad),
+  await m.rasterizePdf(bad),
+  await m.largestImageWidthPerPage(bad, [1]),
+  await m.pdfPageTextStats(bad),
+];
+console.log(JSON.stringify({ empty, after: await m.pdfPageTextStats(good) }));
+process.exit(0);
+`;
+
 /** Runs `script` in a Node child under tsx with pdfExtractor at TARGET_URL; returns its last stdout line, parsed. */
 function runPdfChild(script: string, args: string[]): unknown {
   const src = path.join(__dirname, '..', '..');
@@ -192,5 +208,70 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // Value: protects=every export returns its documented empty value when pdf.js cannot open the file, and the next PDF still opens; fails_when=a failed open escapes the catch, hangs the queue, or leaves pdf.js unable to open the next document; why_new=no test opened an unreadable file; seam=none; no_claim=that the task's worker is released (pdf.js exposes nothing to observe it)
+  it('returns empty results for a file pdf.js cannot open, then opens the next one', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'pdf-unopenable-'));
+    try {
+      const bad = path.join(dir, 'bad.pdf');
+      const good = path.join(dir, 'good.pdf');
+      fs.writeFileSync(bad, 'not a pdf');
+      fs.writeFileSync(good, jpxScanPdf());
+      expect(runPdfChild(UNOPENABLE_CHILD, [bad, good])).toEqual({
+        empty: [null, {}, [], null, []],
+        after: [{ image: true, visibleText: false }],
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('withActiveTimeout', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  /** Holds the pdf.js queue until released, like the other claim's long QR raster pass. */
+  function holdQueue(): () => void {
+    let release!: () => void;
+    void oneDocumentAtATime(() => new Promise<void>((r) => (release = r)))();
+    return () => release();
+  }
+  const quickRead = oneDocumentAtATime(async () => 'read');
+
+  it('does not charge a check for time spent queued behind another PDF', async () => {
+    const release = holdQueue();
+    const result = withActiveTimeout(() => quickRead(), 50, () => 'timed out');
+    await jest.advanceTimersByTimeAsync(500);
+    release();
+    await expect(result).resolves.toBe('read');
+  });
+
+  it('does not charge an outer budget either when timers nest', async () => {
+    const release = holdQueue();
+    const result = withActiveTimeout(
+      () => withActiveTimeout(() => quickRead(), 1_000, () => 'inner timed out'),
+      50,
+      () => 'outer timed out'
+    );
+    await jest.advanceTimersByTimeAsync(500);
+    release();
+    await expect(result).resolves.toBe('read');
+  });
+
+  it('still times out work that is slow on its own', async () => {
+    const result = withActiveTimeout(() => new Promise<string>(() => {}), 50, () => 'timed out');
+    await jest.advanceTimersByTimeAsync(50);
+    await expect(result).resolves.toBe('timed out');
+  });
+
+  it('rejects with what onTimeout throws', async () => {
+    const result = withActiveTimeout(() => new Promise<string>(() => {}), 50, () => {
+      throw new Error('META timed out after 0s');
+    });
+    const settled = expect(result).rejects.toThrow('META timed out after 0s');
+    await jest.advanceTimersByTimeAsync(50);
+    await settled;
   });
 });
