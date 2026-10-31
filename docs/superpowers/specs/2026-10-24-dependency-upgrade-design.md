@@ -204,8 +204,10 @@ All of it must pass before the PR is handed to Aditya to merge.
 ## Staying current
 
 - `.github/dependabot.yml` covers npm for the root, `client/` and `server/`, plus GitHub Actions.
-  It checks weekly. Minor and patch updates are grouped per directory; each major gets its own
-  PR.
+  It checks weekly. One npm entry at `/` updates all three workspaces from the root lockfile, so
+  minor and patch updates are grouped into one PR across them; each major gets its own PR.
+  Every hold in its `ignore` list names version-update types only, so security updates for a
+  held package still open PRs.
 - CI gets a job that runs `npm ci` and `npm run build` (plus lint) on every pull request. It
   runs on `windows-latest`, the same OS as production (free, since the repo is public), with
   the same Node major as production. A bump that breaks the build fails before merge.
@@ -223,6 +225,7 @@ As of 2026-10-30. Everything else is at its latest stable version.
 | `typescript` (both workspaces) | `~6.0.3` | 7.0.2 | `typescript-eslint` peers `<6.1.0` and `ts-jest` peers `<7`. The tilde keeps a 6.1 that typescript-eslint doesn't support out. |
 | `prisma`, `@prisma/client` | 7.10.1 | 8.0.0-rc.29 | 8 is a release candidate; the policy is latest stable. |
 | `pdfjs-dist` (client) | exactly 6.3.289 | 6.4.299 | react-pdf 11.0.0 pins it. The server's copy is 6.4.299. |
+| `react-pdf` | `^11.0.0` (11.0.0) | 11.0.0 | Not behind, but held in Dependabot with `pdfjs-dist`: it pins pdfjs-dist exactly, so a release that moves the pin must move the client's pdfjs-dist, DocumentViewer's worker and the copied wasm with it. |
 | `@types/node` | `^24` (24.19.2) | 26.6.6 | It follows the runtime, Node 24. |
 | `@types/express-serve-static-core` | 5.0.7 | 5.1.3 | 5.1 types every `req.params` value as `string \| string[]`, which fails the server typecheck on the `req.params` reads across 18 route files. Runtime is unaffected. Lift it together with typed route params. |
 | `@napi-rs/canvas` | 1.0.11 | 1.1.0 | See below. |
