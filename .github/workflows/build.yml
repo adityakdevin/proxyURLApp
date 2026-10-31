@@ -6,6 +6,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   # A clean-install build on the deploy box's OS. e2e.yml never runs `npm run build`, which
   # is how #115 (tailwindcss 3 -> 4) merged with a client that no longer built.
