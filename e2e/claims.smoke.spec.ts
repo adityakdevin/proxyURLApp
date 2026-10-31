@@ -23,23 +23,36 @@ test.describe('Claims UI smoke', () => {
 /**
  * The shared DataTable backs every admin list. A heading proves the page mounted, not
  * that the table rendered rows, so assert one row and the pager on each of its two
- * paths: server pagination (Users) and client pagination (Sessions). Neither list is
- * ever empty: the E2E admin is a user, and global-setup's login is an active session.
+ * paths: server pagination (Projects) and client pagination (Sessions). A fresh CI
+ * database holds only the E2E admin, whom the Users list leaves out, so the server path
+ * creates a project for itself; global-setup's login is already an active session.
  */
 test.describe('DataTable smoke', () => {
   for (const [path, mode] of [
-    ['/admin/users', 'server'],
+    ['/admin/projects', 'server'],
     ['/admin/sessions', 'client'],
   ] as const) {
     test(`renders rows and the pager with ${mode} pagination (${path})`, async ({ page }) => {
-      await page.goto(path);
-      // The pager reads "of 0" until rows arrive, so it goes first: only then do the absent
-      // placeholders ("Loading...", "No results.", rows too) prove row 1 is data. Not a named
-      // user's row: on a reused test DB the admin need not be on page 1.
-      await expect(page.getByText(/^Page 1 of [1-9]\d*$/)).toBeVisible();
-      await expect(page.getByText('Loading...')).toHaveCount(0);
-      await expect(page.getByText('No results.')).toHaveCount(0);
-      await expect(page.getByRole('row').nth(1)).toBeVisible();
+      let projectId: string | undefined;
+      if (mode === 'server') {
+        const res = await page.request.post('/api/admin/projects', {
+          data: { name: `E2E smoke ${Date.now()}` },
+        });
+        expect(res.status()).toBe(201);
+        projectId = (await res.json()).id;
+      }
+      try {
+        await page.goto(path);
+        // The pager reads "of 0" until rows arrive, so it goes first: only then do the absent
+        // placeholders ("Loading...", "No results.", rows too) prove row 1 is data. Not the
+        // created project's row: on a reused test DB it need not be on page 1.
+        await expect(page.getByText(/^Page 1 of [1-9]\d*$/)).toBeVisible();
+        await expect(page.getByText('Loading...')).toHaveCount(0);
+        await expect(page.getByText('No results.')).toHaveCount(0);
+        await expect(page.getByRole('row').nth(1)).toBeVisible();
+      } finally {
+        if (projectId) await page.request.delete(`/api/admin/projects/${projectId}`);
+      }
     });
   }
 });
