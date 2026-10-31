@@ -215,7 +215,7 @@ COMPARE 7, QR 8, REDFLAG 4 (junk names, impossible dates, Aadhaar mismatches fro
 QR DOB compare is format-sensitive (QR "1985-07-15" vs printed "15/07/1985") and is now
 reached on more card pages. The QR holder-name page rescue was removed in review; redo it so
 it rescues only junk-name misreads (612342, 631650 flag again). Also open: 627998 PAN read
-with a space, 045360 name misread, cardText's pdf-parse fallback.
+with a space, 045360 name misread.
 Fix: classify each new red on the 570-claim diff, then fix by cause.
 Found by: 570-claim comparison, 2026-10-16.
 
@@ -237,6 +237,39 @@ Found by: /ship review passes 1-3, 2026-10-16/17.
 - A single-sided voter card (front only, back never scanned) still reads "Back side NA".
 - `qrPresentUnread` is decided per page; the bundled "No QR" line can disagree with it.
 Found by: /ship review passes 1-3, 2026-10-16/17.
+
+## CI
+
+### `main` has no branch protection, so a red dependency bump can still merge
+**Priority:** P1
+The `build`, `api-e2e` and `ui-e2e` checks run on every PR, but nothing requires them: a
+grouped Dependabot PR (or any PR) can merge with a failing check. Deferred from plan:
+`docs/superpowers/plans/2026-10-24-dependency-upgrade.md` (Task 11, Step 5).
+Fix: once `build` has run on `main`, require the three contexts with `enforce_admins` on
+(the plan has the exact `gh api -X PUT .../branches/main/protection` call). Needs the repo
+owner's go-ahead at that moment.
+Found by: /ship plan-completion audit, 2026-10-30.
+
+## Documentation
+
+### Docs still describe a 30-minute, single-session login
+**Priority:** P2
+`README.md` (Features, Security), `TESTING.md:198`, `docs/SPEC.md` (5.4, 10.3),
+`docs/guide/01-getting-started.md`, `docs/guide/05-glossary-and-faq.md`,
+`docs/guide/07-demo-script.md` and the CLAUDE.md Auth Flow say sessions expire after 30
+idle minutes and one login replaces the last. `server/src/services/sessionService.ts` has
+`SESSION_MAX_AGE_MS` (8h default) and `SESSION_MAX_PER_USER` (3), as CLAUDE.md Security
+Features says.
+Fix: correct each mention to the 8h sliding idle timeout and up to 3 concurrent sessions.
+Found by: /ship docs audit of PR #119, 2026-10-31.
+
+### Docs describe a "User Type + Project" access scope that does not exist
+**Priority:** P2
+`README.md` (Features, User Roles), `docs/README.md` (scope diagram), `TESTING.md` and
+guides 04/05/06 describe access scoped by User Type and Project. `schema.prisma` has no
+UserType model and `UserAssignment` holds one project per user.
+Fix: rewrite those sections, and the diagram, for the single-Project model.
+Found by: /ship docs audit of PR #119, 2026-10-31.
 
 ## Completed
 
