@@ -19,6 +19,37 @@ export const MAX_PDF_PAGES = Number(process.env.SCAN_MAX_PAGES ?? 60);
 const BANDS = 10;
 const MIXED_PAGE_COVERAGE = 0.4;
 
+// pdf.js 6 fetches its JPEG 2000 and JBIG2/CCITT wasm decoders through process-wide state that
+// every document it opens overwrites, so the first such decode in a process goes through the
+// document opened LAST. With two claims validating at once that could be one already closed,
+// and the page then waited on a fetch nobody answered (or, opened without wasmUrl, rendered
+// blank). So each export below opens its document only once the previous one has finished.
+// ponytail: one queue per process; pdf.js already runs its worker on this thread in Node. If
+// PDF throughput matters, move pdf.js into worker_threads, which each get their own copy.
+let pdfjsTail: Promise<void> = Promise.resolve();
+// A document that never settles must not stall every later PDF. Matches the default
+// VALIDATION_CHECK_TIMEOUT_MS, by which time the check waiting on it has failed anyway.
+const PDFJS_TURN_MAX_MS = 600_000;
+
+function oneDocumentAtATime<A extends unknown[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  return (...args) => {
+    const run = pdfjsTail.then(() => fn(...args));
+    pdfjsTail = pdfjsTail.then(
+      () =>
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, PDFJS_TURN_MAX_MS);
+          timer.unref();
+          const done = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          run.then(done, done);
+        })
+    );
+    return run;
+  };
+}
+
 type Matrix = number[]; // [a, b, c, d, e, f]
 
 /** 2D affine matrix product (same semantics as pdfjs Util.transform). */
@@ -91,7 +122,7 @@ interface PdfTextItem {
  * failure (image-only/scanned PDFs still return {text:'',words:[]}; hard errors return null)
  * so the caller can fall back to text-only extraction — highlighting degrades to no boxes.
  */
-export async function extractPdf(absolutePath: string): Promise<{
+async function extractPdfUnqueued(absolutePath: string): Promise<{
   text: string;
   words: WordBox[];
   textlessPages: number[];
@@ -169,6 +200,7 @@ export async function extractPdf(absolutePath: string): Promise<{
     return null;
   }
 }
+export const extractPdf = oneDocumentAtATime(extractPdfUnqueued);
 
 /** Turn a PDF date string (`D:20250610123456+05'30'`) into a readable ISO-ish stamp.
  *  Leaves anything that isn't a recognisable PDF date untouched. */
@@ -183,7 +215,7 @@ export function formatPdfDate(raw: string): string {
 /** Document properties (Info dictionary + page count), NOT body text. Used by the META
  *  validator so reviewers can see created/modified/author/producer. Returns {} on any
  *  failure or an encrypted/imageless PDF — the caller degrades to file-level metadata. */
-export async function readPdfInfo(absolutePath: string): Promise<Record<string, string>> {
+async function readPdfInfoUnqueued(absolutePath: string): Promise<Record<string, string>> {
   try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
@@ -251,6 +283,7 @@ export async function readPdfInfo(absolutePath: string): Promise<Record<string, 
     return {};
   }
 }
+export const readPdfInfo = oneDocumentAtATime(readPdfInfoUnqueued);
 
 /** One rendered page: PNG bytes plus the raster dimensions (for box normalization). */
 export interface RasterPage {
@@ -301,7 +334,7 @@ const pdfjsWasmUrl = () => pdfjsAssetDir('wasm/');
  * `minLongSide` raises the scale for a page that would otherwise come out shorter than that
  * on its long side — a card saved as its own small page. See MIN_OCR_PAGE_LONG_SIDE in ocr.ts.
  */
-export async function rasterizePdf(
+async function rasterizePdfUnqueued(
   absolutePath: string,
   maxPages = MAX_PDF_PAGES,
   scale = 2,
@@ -395,6 +428,7 @@ export async function rasterizePdf(
     return [];
   }
 }
+export const rasterizePdf = oneDocumentAtATime(rasterizePdfUnqueued);
 
 /**
  * The NATIVE pixel width of the largest image embedded on each of the given pages.
@@ -420,7 +454,7 @@ export async function rasterizePdf(
  * A page with no entry paints no image. null when the file could not be read at all: SPELL
  * then leaves its doubtful words alone rather than re-reading a page it could not measure.
  */
-export async function largestImageWidthPerPage(
+async function largestImageWidthPerPageUnqueued(
   absolutePath: string,
   pages: number[]
 ): Promise<Map<number, { width: number; height: number }> | null> {
@@ -461,6 +495,7 @@ export async function largestImageWidthPerPage(
   }
   return out;
 }
+export const largestImageWidthPerPage = oneDocumentAtATime(largestImageWidthPerPageUnqueued);
 
 /**
  * Per page (index 0 = page 1): does it paint an image, and does it draw text a viewer SHOWS?
@@ -468,7 +503,7 @@ export async function largestImageWidthPerPage(
  * and real text is what an editor can change. Feeds the "text insertable" red-flag rule.
  * Returns [] on any failure — a nicety, never a reason to break a validation run.
  */
-export async function pdfPageTextStats(
+async function pdfPageTextStatsUnqueued(
   absolutePath: string,
   maxPages = MAX_PDF_PAGES
 ): Promise<{ image: boolean; visibleText: boolean }[]> {
@@ -524,3 +559,4 @@ export async function pdfPageTextStats(
   }
   return out;
 }
+export const pdfPageTextStats = oneDocumentAtATime(pdfPageTextStatsUnqueued);

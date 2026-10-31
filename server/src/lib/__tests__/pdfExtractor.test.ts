@@ -67,13 +67,14 @@ describe('pdfjsAssetDir', () => {
 const BLACK_32PX_J2K =
   '/0//UQApAAAAAAAgAAAAIAAAAAAAAAAAAAAAIAAAACAAAAAAAAAAAAABBwEB/1IADAAAAAEAAQQEAAH/XAAHQEBISFD/ZAAlAAFDcmVhdGVkIGJ5IE9wZW5KUEVHIHZlcnNpb24gMi41LjT/kAAKAAAAAAAZAAH/k9+AOBFQVK/0yH+A/9k=';
 
-/** A one-page 100x100pt PDF whose only content is that image, drawn over the whole page. */
-function jpxScanPdf(): Buffer {
+/** A 100x100pt page whose only content is that image, drawn over the whole page. With
+ *  `blankFirstPage`, a large empty page comes first, so the scan is page 2. */
+function jpxScanPdf(blankFirstPage = false): Buffer {
   const j2k = Buffer.from(BLACK_32PX_J2K, 'base64');
   const content = 'q 100 0 0 100 0 0 cm /Im1 Do Q';
   const objs = [
     Buffer.from('<</Type/Catalog/Pages 2 0 R>>'),
-    Buffer.from('<</Type/Pages/Kids[3 0 R]/Count 1>>'),
+    Buffer.from(blankFirstPage ? '<</Type/Pages/Kids[6 0 R 3 0 R]/Count 2>>' : '<</Type/Pages/Kids[3 0 R]/Count 1>>'),
     Buffer.from('<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/Resources<</XObject<</Im1 5 0 R>>>>/Contents 4 0 R>>'),
     Buffer.from(`<</Length ${content.length}>>\nstream\n${content}\nendstream`),
     Buffer.concat([
@@ -81,6 +82,7 @@ function jpxScanPdf(): Buffer {
       j2k,
       Buffer.from('\nendstream'),
     ]),
+    ...(blankFirstPage ? [Buffer.from('<</Type/Page/Parent 2 0 R/MediaBox[0 0 1200 1600]>>')] : []),
   ];
   const parts = [Buffer.from('%PDF-1.5\n')];
   let size = parts[0].length;
@@ -120,6 +122,42 @@ if (page) {
 console.log(JSON.stringify({ size: sizes?.get(1) ?? null, stats, centre }));
 `;
 
+// Two claims validate at once, so another claim can open and close a PDF while this one is
+// still rendering. The first wait loads pdf.js, so the 100 ms wait lands inside page 1's render.
+const OVERLAP_CHILD = `
+const [, scan, other] = process.argv;
+const { rasterizePdf, readPdfInfo } = await import(process.env.TARGET_URL);
+const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+await readPdfInfo(other);
+const raster = rasterizePdf(scan, 2, 4);
+await new Promise((r) => setTimeout(r, 100));
+await readPdfInfo(other);
+const pages = await Promise.race([raster, new Promise((r) => setTimeout(() => r(null), 20_000))]);
+const page = pages?.find((p) => p.page === 2);
+let centre = null;
+if (page) {
+  const img = await loadImage(page.png);
+  const ctx = createCanvas(img.width, img.height).getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  centre = Array.from(ctx.getImageData(img.width >> 1, img.height >> 1, 1, 1).data);
+}
+console.log(JSON.stringify({ rendered: pages !== null, centre }));
+process.exit(0);
+`;
+
+/** Runs `script` in a Node child under tsx with pdfExtractor at TARGET_URL; returns its last stdout line, parsed. */
+function runPdfChild(script: string, args: string[]): unknown {
+  const src = path.join(__dirname, '..', '..');
+  const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script, ...args], {
+    cwd: path.join(src, '..'),
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: { ...process.env, TARGET_URL: pathToFileURL(path.join(src, 'lib', 'pdfExtractor.ts')).href },
+  });
+  if (r.status !== 0) throw new Error(`child exited ${r.status}: ${r.stderr}`);
+  return JSON.parse(r.stdout.trim().split('\n').pop()!);
+}
+
 describe('pdfExtractor on a JPEG 2000 scan', () => {
   // pdf.js sizes a JPX image from its header without decoding it, so only the render needs the
   // wasm decoder; the two measures are pinned here because nothing else runs them on pdfjs 6.
@@ -129,20 +167,28 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
     try {
       const file = path.join(dir, 'scan.pdf');
       fs.writeFileSync(file, jpxScanPdf());
-      const src = path.join(__dirname, '..', '..');
-      const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', JPX_CHILD, file], {
-        cwd: path.join(src, '..'),
-        encoding: 'utf8',
-        timeout: 60_000,
-        env: { ...process.env, TARGET_URL: pathToFileURL(path.join(src, 'lib', 'pdfExtractor.ts')).href },
-      });
-      if (r.status !== 0) throw new Error(`child exited ${r.status}: ${r.stderr}`);
-      expect(JSON.parse(r.stdout.trim().split('\n').pop()!)).toEqual({
+      expect(runPdfChild(JPX_CHILD, [file])).toEqual({
         size: { width: 32, height: 32 },
         stats: [{ image: true, visibleText: false }],
         // Opaque black: a page whose image was dropped renders white.
         centre: [0, 0, 0, 255],
       });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // pdf.js 6 fetches its wasm decoders through the document opened last, so a document opened
+  // and closed mid-render left this page waiting on a fetch nobody answered.
+  // Value: protects=a scan's JPEG 2000 page renders while another claim opens and closes a PDF; fails_when=pdfExtractor lets pdf.js documents overlap again; why_new=the hang needs two documents in one process, which no other test opens; seam=none; no_claim=JBIG2 or CCITT scans, the turn bound
+  it('renders it while another PDF is opened and closed mid-render', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'jpx-overlap-'));
+    try {
+      const scan = path.join(dir, 'scan.pdf');
+      const other = path.join(dir, 'other.pdf');
+      fs.writeFileSync(scan, jpxScanPdf(true));
+      fs.writeFileSync(other, jpxScanPdf());
+      expect(runPdfChild(OVERLAP_CHILD, [scan, other])).toEqual({ rendered: true, centre: [0, 0, 0, 255] });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
