@@ -8,8 +8,10 @@ import type { PoolConfig } from 'mariadb';
 // Prisma 5 loaded server/.env as a side effect of importing @prisma/client, and the server
 // relied on that for SESSION_SECRET, CLIENT_URL and the rest. Prisma 7 does not, so this
 // module does it instead; index.ts imports it first. Resolves to server/.env from both
-// src/lib and dist/lib. Variables already set (e.g. by the shell) are never overridden.
-dotenv.config({ path: path.join(__dirname, '..', '..', '.env'), quiet: true });
+// src/lib and dist/lib. Variables already set (e.g. by the shell) are never overridden:
+// override is explicit because dotenv 18 otherwise takes it from DOTENV_OVERRIDE, and a test
+// run's DATABASE_URL must never lose to the dev database in .env.
+dotenv.config({ path: path.join(__dirname, '..', '..', '.env'), quiet: true, override: false });
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
@@ -25,8 +27,9 @@ const decode = (s: string) =>
 
 /**
  * Translate a Prisma-style `mysql://` URL into mariadb pool options that behave like
- * Prisma 5's built-in pool. Only `connection_limit` is honoured; any other search
- * parameter is reported and ignored.
+ * Prisma 5's built-in pool. Only `connection_limit` is honoured; an `ssl*` parameter
+ * throws (TLS is not configured here), and any other search parameter is reported and
+ * ignored.
  */
 export function mariadbConfigFromUrl(url: string): PoolConfig {
   let u: URL;
