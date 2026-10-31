@@ -59,13 +59,13 @@ test.describe('DataTable smoke', () => {
 
 /**
  * pdf.js 5+ decodes JPEG 2000 and JBIG2 images (most office scans) with wasm it fetches
- * from DocumentViewer's `wasmUrl`, '/pdfjs-wasm/', which vite.config.ts copies there.
+ * from DocumentViewer's `wasmUrl`, the site root, where vite.config.ts's publicDir puts them.
  * The SPA fallback answers any missing path with index.html and a 200, so check the bytes.
  */
-// Value: protects=the PDF viewer's JBIG2 and JPEG 2000 decoders are served where DocumentViewer looks; fails_when=the static-copy target or the wasmUrl path drifts and scanned pages render blank; why_new=build and smoke never fetch them; seam=none; no_claim=decoding a real scan, the production dist
+// Value: protects=the PDF viewer's JBIG2 and JPEG 2000 decoders are served where DocumentViewer looks; fails_when=the publicDir or the wasmUrl path drifts and scanned pages render blank; why_new=build and smoke never fetch them; seam=none; no_claim=decoding a real scan, the production dist
 test('serves the pdf.js image decoders the document viewer loads', async ({ request }) => {
   for (const file of ['jbig2.wasm', 'openjpeg.wasm']) {
-    const res = await request.get(`/pdfjs-wasm/${file}`);
+    const res = await request.get(`/${file}`);
     expect(res.status(), file).toBe(200);
     // Every wasm module starts with "\0asm".
     expect((await res.body()).subarray(0, 4).toString('latin1'), file).toBe('\0asm');
