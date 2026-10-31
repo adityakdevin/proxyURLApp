@@ -45,15 +45,15 @@ port is bound.
 
 **Dedicated MySQL test schema via `TEST_DATABASE_URL`, schema applied with
 `prisma db push`, self-contained fixture seeding, claim tables truncated between
-tests. CI uses ephemeral MySQL service containers (5.7 for `api-e2e`, 8.0 for
-`ui-e2e`).**
+tests. CI uses ephemeral MySQL 5.7 service containers (production's version) for
+both `api-e2e` and `ui-e2e`.**
 
 Rationale:
 - Reuses the existing `server/src/__tests__/helpers/testDb.ts` pattern
   (`getTestPrisma` already honors `TEST_DATABASE_URL`; `truncateClaimsTables`
   already exists) — lowest friction, consistent with current unit/integration
   tests.
-- MySQL 8 defaults to **InnoDB + DYNAMIC** row format, which sidesteps the
+- MySQL 5.7.9+ (like 8) defaults to **InnoDB + DYNAMIC** row format, which sidesteps the
   2144-byte key-length failure that hit the legacy MyISAM/COMPACT Windows box on
   the `documents` table — so CI "just works" without `my.ini` tuning.
 - No Docker tooling required beyond GitHub Actions `services:`.
@@ -123,7 +123,7 @@ e2e/
   global-setup.ts            # form login → storageState
   claims.smoke.spec.ts
   tsconfig.json / .gitignore
-.github/workflows/e2e.yml    # api-e2e (MySQL 5.7) + ui-e2e (MySQL 8.0) jobs
+.github/workflows/e2e.yml    # api-e2e + ui-e2e jobs (both MySQL 5.7)
 ```
 
 ---
@@ -166,7 +166,7 @@ e2e/
   because a fresh CI database holds only the E2E admin and the Users list leaves admins out
 - DataTable, client pagination: `/admin/sessions` shows a data row and the pager
   (global-setup's login is an active session)
-- `/pdfjs-wasm/jbig2.wasm` and `openjpeg.wasm` are served as real wasm, not the SPA
+- `/jbig2.wasm` and `/openjpeg.wasm` are served as real wasm, not the SPA
   fallback's `index.html`
 - Signed out, the `/login` Sign in button gets the `--primary` theme colour and the pointer
   cursor (Tailwind 4 compiled)
@@ -227,7 +227,7 @@ npm run test:e2e               # api then ui
 
 ### CI
 `.github/workflows/e2e.yml` runs `api-e2e` and `ui-e2e` on push/PR, each against a MySQL
-service container (5.7, production's version, for `api-e2e`; 8.0 for `ui-e2e`) with
+5.7 service container (production's version) with
 `prisma db push`, then the suite. `api-e2e` also seeds and runs the server unit suite;
 `ui-e2e` additionally seeds the admin and installs the Chromium browser.
 
