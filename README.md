@@ -28,7 +28,7 @@ A full-stack web application that provides controlled access to external and int
 ### Prerequisites
 
 - Node.js 24
-- MySQL 8+
+- MySQL 5.7 or 8 (production runs 5.7; CI tests both)
 - npm 11.17+
 
 ### Installation
@@ -50,8 +50,9 @@ A full-stack web application that provides controlled access to external and int
    ```
 
    Every variable here is read by the server, so the file belongs in `server/`. A `.env` at
-   the repo root is read by nothing — Prisma resolves its connection string next to
-   `server/prisma/schema.prisma`, and the app, seeds and backup script all run with `server/`
+   the repo root is read by nothing: the Prisma CLI loads `server/.env` from
+   `server/prisma.config.ts`, the app and the `server/prisma/` scripts load it through
+   `server/src/lib/prisma.ts`, and the app, seeds and backup script all run with `server/`
    as their working directory.
 
    Update `server/.env` with your database credentials:
