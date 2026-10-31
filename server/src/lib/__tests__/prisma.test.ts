@@ -13,8 +13,12 @@ describe('mariadbConfigFromUrl', () => {
       connectTimeout: 5_000,
       idleTimeout: 300,
       allowPublicKeyRetrieval: true,
-      connectionLimit: os.availableParallelism() + 1,
+      connectionLimit: os.availableParallelism() * 2 + 1,
     });
+  });
+
+  it('leaves the prepared-statement cache to the adapter, which turns it off', () => {
+    expect(mariadbConfigFromUrl('mysql://u:p@localhost/db')).not.toHaveProperty('prepareCacheLength');
   });
 
   it('defaults the port to 3306', () => {
@@ -23,6 +27,49 @@ describe('mariadbConfigFromUrl', () => {
 
   it('honours connection_limit like Prisma 5 did', () => {
     expect(mariadbConfigFromUrl('mysql://u:p@h/db?connection_limit=7').connectionLimit).toBe(7);
+  });
+
+  // mariadb keeps NaN, 0 or a negative limit as given, and that pool never opens a
+  // connection: every query fails with "pool timeout". A typo must not get that far.
+  it.each(['abc', '0', '-1', '2.5', ''])('reports connection_limit=%s and uses the default', (value) => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { connectionLimit } = mariadbConfigFromUrl(`mysql://u:p@h/db?connection_limit=${value}`);
+    expect(connectionLimit).toBe(os.availableParallelism() * 2 + 1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('connection_limit'));
+    warn.mockRestore();
+  });
+
+  // Prisma 5 read pool_timeout, socket_timeout and friends from the URL; the adapter does not,
+  // so a URL carried over from Prisma 5 must say what it lost rather than quietly drop it.
+  // Value: protects=an unsupported DATABASE_URL option is reported, never silently dropped; fails_when=the ignored-params warning is removed or lists connection_limit; why_new=only connection_limit warnings are asserted; seam=none; no_claim=TLS support itself
+  it('reports every unsupported URL parameter, and not connection_limit', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    mariadbConfigFromUrl('mysql://u@h/db?socket_timeout=5&connection_limit=5&pool_timeout=10');
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [message] = warn.mock.calls[0];
+    expect(message).toEqual(expect.stringContaining('socket_timeout'));
+    expect(message).toEqual(expect.stringContaining('pool_timeout'));
+    expect(message).not.toEqual(expect.stringContaining('connection_limit'));
+    warn.mockRestore();
+  });
+
+  // Dropping a TLS parameter with a warning would connect in plaintext to a database that
+  // asked for TLS, so these stop the server instead.
+  it.each(['sslaccept=strict', 'sslcert=/ca.pem'])('refuses %s rather than connect without TLS', (param) => {
+    expect(() => mariadbConfigFromUrl(`mysql://u:secretpw@db.example.com/db?${param}`)).toThrow(/TLS/);
+    expect(() => mariadbConfigFromUrl(`mysql://u:secretpw@db.example.com/db?${param}`)).not.toThrow(/secretpw/);
+  });
+
+  // WHATWG URL keeps the brackets ("[::1]"), and mariadb only unwraps them when it parses a
+  // URL string itself; an options object goes to net.connect as given, which cannot resolve it.
+  it('unwraps an IPv6 literal host', () => {
+    expect(mariadbConfigFromUrl('mysql://u:p@[::1]:3306/db').host).toBe('::1');
+  });
+
+  // new URL keeps a bare "%" as is, and decodeURIComponent throws on it. Prisma 5 accepted
+  // such a password; here the throw would crash the server at import with no hint why.
+  it('keeps a user or password containing a bare %', () => {
+    expect(mariadbConfigFromUrl('mysql://a%b:Pa%ss@127.0.0.1/db')).toMatchObject({ user: 'a%b', password: 'Pa%ss' });
   });
 
   // Node's ERR_INVALID_URL keeps the whole input, password included, and index.ts builds the
