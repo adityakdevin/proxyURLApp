@@ -4,7 +4,7 @@ A one-page script for presenting the **Claim Module** on a live call. Read it to
 bottom while sharing your screen — every step has the exact click and the one line to
 say out loud.
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)
 
 > **Total time:** ~10 minutes demo + 5 minutes setup beforehand.
 > **Goal of the demo:** show a claim travel from creation → documents → automatic
@@ -163,10 +163,10 @@ This is the moment that sells the product. The checks start **Pending** — you 
 | Problem | Fix on the spot |
 |---|---|
 | Badges stuck on "Validating…" | Refresh the page; they update on completion. Move on and come back. |
-| Logged out mid-demo | 30-min idle timeout / single-session — just log back in. |
+| Logged out mid-demo | 8-hour idle timeout, or a 4th login on the same account signed out its least recently used session (max 3 per account). Just log back in. |
 | A claim looks wrong / edited | Re-run the seed: `npm run db:seed:demo` (idempotent — safe to re-run). |
 | Can't open a claim as `user` | It isn't assigned to them — that's the access rule working, not a bug. |
 
 ---
 
-[← Back to the manual index](README.md) · Related: [End-User Guide](02-end-user-guide.md) · [Demo Seed](06-demo-seed.md)
+[← Back to the manual index](../README.md) · Related: [End-User Guide](02-end-user-guide.md) · [Demo Seed](06-demo-seed.md)

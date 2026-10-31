@@ -133,7 +133,7 @@ dialog shows a banner pointing you here.
 ## 8. Smoke test
 
 1. Log in as an admin.
-2. **Claims → Upload Observations** → choose User Type → Project → Category → Sub-Category.
+2. **Claims → Upload Observations** → choose Project → Category → Sub-Category.
 3. Upload `docs/samples/Forged Documents Observations.xlsx` → **Import** → expect *created/updated* counts.
 4. **Export** → confirm the 10-column sheet downloads with the **Status** column filled.
 
@@ -143,6 +143,7 @@ dialog shows a banner pointing you here.
 # stop the app (step 2), then:
 git checkout (Get-Content last-good-commit.txt)
 npm install
+npm run db:generate   # Prisma 7's npm install does not generate the client; the build needs it
 npm run build
 # Schema rollback is usually unnecessary (the new columns are nullable and ignored by old code).
 # Only if required: restore the DB backup from step 1, then re-run prisma db push.
