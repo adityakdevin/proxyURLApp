@@ -372,7 +372,7 @@ export function DataTable<TData extends RowData>({
               </>
             )}
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center gap-2">
             <Button
               variant="outline"
               className="hidden h-8 w-8 p-0 lg:flex"

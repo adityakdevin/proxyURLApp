@@ -87,6 +87,15 @@
   margin-top: calc(var(--spacing) * 2);
 }
 
+/*
+  v4 only applies hover: (and group-hover:) on devices that can hover. Controls
+  revealed with opacity-0 group-hover:opacity-100, like the field copy button and
+  the toast close button, then never appear on a touch screen. Tapping applied
+  :hover in v3; keep that.
+  https://tailwindcss.com/docs/upgrade-guide#hover-styles-on-mobile
+*/
+@custom-variant hover (&:hover);
+
 @layer base {
   :root {
     --background: 0 0% 100%;

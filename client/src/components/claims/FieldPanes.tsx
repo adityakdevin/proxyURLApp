@@ -253,11 +253,13 @@ function FindingsCard({
                       key={f.id}
                       // Full-bleed row with a left accent bar for the selection. Selected is
                       // blue, not yellow: on this screen colour means severity, so the
-                      // selection tint must not read as a third severity.
+                      // selection tint must not read as a third severity. The colours name
+                      // the left edge only: Tailwind 4's divide-* has zero specificity, so a
+                      // plain border-* colour would repaint the row dividers too.
                       className={`group flex items-start gap-1 border-l-4 pr-2 transition-colors ${
                         active
-                          ? 'border-blue-600 bg-blue-100/80 shadow-inner'
-                          : 'border-transparent hover:border-gray-300 hover:bg-gray-50'
+                          ? 'border-l-blue-600 bg-blue-100/80 shadow-inner'
+                          : 'border-l-transparent hover:border-l-gray-300 hover:bg-gray-50'
                       }`}
                     >
                       <button
