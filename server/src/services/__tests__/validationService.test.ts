@@ -760,6 +760,9 @@ describe('ValidationService + drainer', () => {
       });
       const run = await enqueue(prisma, fakes, claim.id, 'MANUAL', adminId);
       await new ValidationService(prisma, fakes).runOne(run.id);
+      // enqueue also kicks the drainer, and its worker can claim the run first; runOne then
+      // returns at once, so wait for whichever worker has it before reading the status.
+      await drained();
 
       const moved = await prisma.claim.findUnique({
         where: { id: claim.id },
@@ -822,6 +825,8 @@ describe('ValidationService + drainer', () => {
       });
       const run = await enqueue(prisma, fakes, claim.id, 'MANUAL', adminId);
       await new ValidationService(prisma, fakes).runOne(run.id);
+      // Same race as above; without the wait this passes before the run has even finished.
+      await drained();
 
       // A machine must not be able to close a claim, even by misconfiguration.
       const after = await prisma.claim.findUnique({
