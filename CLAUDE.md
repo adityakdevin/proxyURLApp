@@ -72,13 +72,14 @@ SubCategory (inherits scope from parent Category)
 UrlConfiguration (explicit refs to Project/Category/SubCategory, uses UUID opaqueId for masking)
 ```
 
-User → UserAssignment (single Project) → determines menu/URL access
+User → UserAssignment (single Project) + UserSubCategory grants → determine menu/URL access and claim scope
 
 ### Auth Flow
 1. Login creates server-side Session with 64-char token
-2. Token stored in httpOnly cookie (30 min timeout)
+2. Token stored in httpOnly cookie; the session expires after `SESSION_MAX_AGE_MS` (8h) idle,
+   and the cookie is re-issued on each request so the window slides with activity
 3. `authMiddleware` validates session on protected routes
-4. `adminMiddleware` checks `isAdmin` flag for `/admin/*` routes
+4. `adminMiddleware` requires `role === 'ADMIN'` for `/admin/*` routes
 
 ### Proxy Flow
 1. User accesses `/view/:opaqueId` (full-page iframe)

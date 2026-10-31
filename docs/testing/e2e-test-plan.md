@@ -69,8 +69,8 @@ Rationale:
 don't depend on `db:seed` specifics:
 
 ```
-UserType + Project ─ Category ─ SubCategory ─ (StatusMaster, Claims)
-(a second, disjoint pair) ─ … ─ SubCategory   ← used for OUT_OF_SCOPE
+Project ─ Category ─ SubCategory ─ (StatusMaster, Claims)
+(a second, disjoint project) ─ … ─ SubCategory   ← used for OUT_OF_SCOPE
 Users: admin (scope ALL), teamLead + user (in-scope), otherTeamLead (disjoint)
 ```
 
@@ -115,6 +115,9 @@ server/
       documentsValidation.e2e.test.ts
       observations.e2e.test.ts
       claimRules.e2e.test.ts
+      claimBulk.e2e.test.ts
+      claimListValidationState.e2e.test.ts
+      upgradeCompat.e2e.test.ts
 playwright.config.ts         # UI E2E (webServer = npm run dev)
 e2e/
   global-setup.ts            # form login → storageState
@@ -158,6 +161,15 @@ e2e/
 ### UI smoke (`claims.smoke.spec.ts`)
 - ✅ admin opens `/admin/claims` (not bounced to `/login`)
 - ✅ `/claims` dashboard renders for the authenticated session
+- DataTable, server pagination: `/admin/projects` shows a data row and `Page 1 of N`. The
+  test creates its own project via `POST /api/admin/projects` and deletes it afterwards,
+  because a fresh CI database holds only the E2E admin and the Users list leaves admins out
+- DataTable, client pagination: `/admin/sessions` shows a data row and the pager
+  (global-setup's login is an active session)
+- `/pdfjs-wasm/jbig2.wasm` and `openjpeg.wasm` are served as real wasm, not the SPA
+  fallback's `index.html`
+- Signed out, the `/login` Sign in button gets the `--primary` theme colour and the pointer
+  cursor (Tailwind 4 compiled)
 
 ### Backlog (next iterations)
 - Pagination/filter/search on list + `GET /claims/export` workbook assertions
