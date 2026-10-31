@@ -6,6 +6,7 @@
     "client",
     "server"
   ],
+  "//scripts": "deploy ends by installing the Chromium build that the installed Playwright expects: every Playwright version pins its own browser revision, and without it headless proxying (HeadlessManager) cannot launch and every HEADLESS URL answers 503. Run deploy as the Windows user PM2 runs under, since browsers install per user. Already-installed revisions make it a no-op.",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "npm run dev --workspace=server",
@@ -38,7 +39,7 @@
     "test:e2e:ui": "npm run db:seed:e2e && playwright test",
     "test:e2e": "npm run test:e2e:api && npm run test:e2e:ui",
     "lint": "npm run lint --workspaces",
-    "deploy": "npm run db:generate && npm run db:push && npm run build",
+    "deploy": "npm run db:generate && npm run db:push && npm run build && playwright install chromium",
     "pm2:stop": "pm2 stop proxyurl-server || echo skip",
     "redeploy": "npm run pm2:stop && npm run deploy && pm2 startOrRestart ecosystem.config.js"
   },

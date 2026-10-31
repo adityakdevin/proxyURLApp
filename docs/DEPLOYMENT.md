@@ -73,18 +73,21 @@ git pull origin main
 
 ## 4. Install, apply schema, build — one command
 
-The repo ships a `deploy` script that does all three:
+The repo ships a `deploy` script that does all three, then installs the Chromium that
+headless proxying needs:
 
 ```powershell
 npm install            # safe even with no new deps; ensures parity
-npm run deploy         # = prisma generate  +  prisma db push  +  build (client + server)
+npm run deploy         # = prisma generate  +  prisma db push  +  build (client + server)  +  playwright install chromium
 ```
 
 `prisma db push` applies the 7 nullable columns non-destructively (no `--accept-data-loss`
-needed). `build` produces `server/dist` and `client/dist`.
+needed). `build` produces `server/dist` and `client/dist`. Each Playwright version pins its
+own Chromium revision, so run `deploy` as the Windows user PM2 runs under: browsers install
+per user, and without the matching one every HEADLESS URL answers 503.
 
 > If you prefer the steps individually:
-> `npm run db:generate` → `npm run db:push` → `npm run build`
+> `npm run db:generate` → `npm run db:push` → `npm run build` → `npx playwright install chromium`
 
 ## 5. Confirm the production environment
 
