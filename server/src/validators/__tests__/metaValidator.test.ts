@@ -41,6 +41,28 @@ describe('metaValidator', () => {
   it('PASSES (N/A) when there are no documents', async () => {
     expect((await metaValidator.run(ctx([], ''))).status).toBe('PASSED');
   });
+  it('reports a document that ran out of time as unread, not as empty', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    try {
+      let started!: () => void;
+      const ocrStarted = new Promise<void>((r) => (started = r));
+      const c = ctx([doc({ id: 'd1', fileName: 'slow.png' })], '');
+      c.ocr = {
+        extractImageText: () => {
+          started();
+          return new Promise<string>(() => {});
+        },
+      };
+      const run = metaValidator.run(c);
+      await ocrStarted;
+      await jest.advanceTimersByTimeAsync(30_000);
+      const codes = ((await run).findings ?? []).map((f) => f.code);
+      expect(codes).toContain('META_EXTRACT_TIMEOUT');
+      expect(codes).not.toContain('META_NO_TEXT');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 /** A one-page PDF; with `content`, the page draws that content stream in Helvetica. */
