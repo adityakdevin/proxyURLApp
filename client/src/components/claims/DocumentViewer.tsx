@@ -9,6 +9,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString();
 
+// Decoders for JPEG 2000, JBIG2 and CCITT fax images; vite.config.ts copies them here.
+// Without them pdf.js drops those images and a scanned page renders blank. Module-level so
+// react-pdf does not reload the document on every render.
+const pdfOptions = { wasmUrl: '/pdfjs-wasm/' };
+
 interface DocumentViewerProps {
   claimId: string;
   documentId: string;
@@ -412,6 +417,7 @@ export function DocumentViewerPanel({
           <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
             <Document
               file={pdfFile}
+              options={pdfOptions}
               onLoadSuccess={(pdf: { numPages: number }) => setNumPages(pdf.numPages)}
               onLoadError={() => setPdfFailed(true)}
               loading={<p className="p-4 text-sm text-gray-500">Loading PDF…</p>}
