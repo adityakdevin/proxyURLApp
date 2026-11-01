@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, UserCheck, X } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { DataTable, ServerSort, nextSort } from '@/components/shared/DataTable';
@@ -428,7 +428,7 @@ export default function Users() {
     }
   };
 
-  const columns: ColumnDef<User>[] = [
+  const columns: DataTableColumn<User>[] = [
     { accessorKey: 'username', header: 'Username', meta: { sortField: 'username' } },
     { accessorKey: 'fullName', header: 'Full Name', meta: { sortField: 'fullName' } },
     {

@@ -2,7 +2,7 @@
 
 Plain-English definitions and answers to common questions.
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)
 
 ---
 
@@ -10,11 +10,10 @@ Plain-English definitions and answers to common questions.
 
 | Term | What it means |
 |---|---|
-| **User Type** | A label for a kind of user (e.g. _Claims Officer_). Half of a user's "scope." |
-| **Project** | A label for a project, region, or year (e.g. _FY2025_). The other half of the scope. |
-| **Scope** | A **User Type + Project** pair. It decides what a user can see. Each user has exactly one. |
-| **Assignment** | The link between a user and their scope. |
-| **Category** | A top-level grouping, built for one scope (e.g. _Vehicle Claims_). |
+| **Project** | A label for a project, region, or year (e.g. _FY2025_). Each non-admin user belongs to exactly one. |
+| **Scope** | A user's **one Project** plus the **Sub-Categories** an admin granted them inside it. Together with their **Role**, it decides what they can see and do. |
+| **Assignment** | The link between a user and their Project. |
+| **Category** | A top-level grouping inside one Project (e.g. _Vehicle Claims_). |
 | **Sub-Category** | A section inside a category (e.g. _Warranty Claims_). Claims and website links live here. |
 | **Claim** | A single case you work on. Has documents, a status, checks, and a history. |
 | **Claim ID** | The reference number of a claim. |
@@ -60,8 +59,9 @@ You only see claims **assigned to you**. Ask your Team Lead to assign one, or �
 you're a Team Lead/Admin — untick "Assigned to Me" on the dashboard.
 
 **Q: I can't see my menu / it's empty.**
-Your scope (User Type + Project) may be set to Inactive, or there are no links in
-it yet. Ask an administrator to check your assignment.
+Your Project may be set to Inactive, you may not have been granted any Sub-Categories
+yet, or there are no links in them yet. Ask an administrator to check your Project and
+Sub-Category access.
 
 **Q: Why can't I change a claim's status?**
 The claim is probably **Closed**, which is final and locks the claim. Closed claims
@@ -76,8 +76,9 @@ No. **Failed** means that automatic check found something worth a closer human l
 not an automatic rejection. Review the documents and decide.
 
 **Q: The app keeps logging me out.**
-You're logged out after **30 minutes** of no activity, and logging in elsewhere ends
-your other session. Just log back in.
+You're logged out after **8 hours** of no activity; any use of the app restarts that
+clock. You can also be logged in on up to **3 devices or browsers** at once, and
+logging in on a fourth logs out the one used least recently. Just log back in.
 
 **Q: My account is locked.**
 After **5 wrong passwords** the account locks for **15 minutes**. Wait, or ask an
@@ -96,13 +97,14 @@ For safety, paths must be on a drive letter **other than C:** (the system drive)
 `D:\...` or another data drive.
 
 **Q (Admin): A user can't see a category I made.**
-Their **scope must match the category's scope exactly** (same User Type **and** Project
-Type). Use **impersonation** to see exactly what they see, then fix the assignment or
-the category.
+The category must be in the user's **Project**, and you must grant them at least one
+of its **Sub-Categories** on the **Users** page (edit the user, then **Category
+access**). Use **impersonation** to see exactly what they see, then fix the user's
+Project or Sub-Category access.
 
 **Q (Admin): I can't create a claim / import — it complains about status.**
 The sub-category needs **one Default status**. Add statuses and mark one as Default.
 
 ---
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)

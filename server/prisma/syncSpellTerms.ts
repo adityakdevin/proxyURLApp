@@ -17,17 +17,11 @@
  *   npm run db:sync-spell-terms            # from the repo root or server/
  *   npm run db:sync-spell-terms -- --dry   # report what WOULD be inserted, write nothing
  */
-import path from 'path';
-import dotenv from 'dotenv';
-
-// Load server/.env explicitly — a repo-root .env is read by nothing, and one carrying a stale
-// value has caused confusion before. See CLAUDE.md.
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
-
-import { PrismaClient } from '@prisma/client';
+// First local import: it loads server/.env, whatever the working directory.
+import { createPrisma } from '../src/lib/prisma.js';
 import { EXPECTED_TERMS, MIN_TERM_LEN } from '../src/validators/logic.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 const DRY = process.argv.includes('--dry');
 
 async function main() {

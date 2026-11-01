@@ -1,0 +1,45 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    # Holds recorded in docs/superpowers/specs/2026-10-24-dependency-upgrade-design.md.
+    # Lift one only with the check its reason names. Every hold lists update-types: a bare
+    # ignore also blocks security updates, which version-update types never match.
+    ignore:
+      # 1.0.12+ changes the raster of scanned pages, and so what OCR reads. Lift only
+      # with an OCR before/after comparison.
+      - dependency-name: "@napi-rs/canvas*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      # The client's copy must match the version react-pdf pins exactly. One rule covers
+      # both workspaces, so this also holds the server's copy: bump that by hand, with
+      # the same OCR comparison, since it renders the scanned pages.
+      - dependency-name: "pdfjs-dist"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      # It pins pdfjs-dist exactly, so a react-pdf bump alone would nest a second pdfjs-dist
+      # that no longer matches the worker and wasm the client loads. Move the two together.
+      - dependency-name: "react-pdf"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      # 5.1 types req.params values as string | string[] and fails the server typecheck.
+      - dependency-name: "@types/express-serve-static-core"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      # typescript-eslint peers typescript <6.1, ts-jest <7.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # Follows the Node 24 runtime.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # 8 is a release candidate; the move to it is a planned migration, not a weekly bump.
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

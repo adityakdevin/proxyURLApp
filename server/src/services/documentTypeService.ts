@@ -80,7 +80,8 @@ export class DocumentTypeService {
       });
     } catch (err) {
       if ((err as { code?: string }).code === 'P2002') {
-        const target = String((err as { meta?: { target?: unknown } }).meta?.target ?? '');
+        // Prisma 7's driver adapter drops meta.target; the violated index is named in the message.
+        const target = String((err as { meta?: { target?: unknown } }).meta?.target ?? (err as Error).message);
         if (target.includes('govt_code')) {
           throw new DocumentTypeServiceError(
             'DUPLICATE_GOVT_CODE',

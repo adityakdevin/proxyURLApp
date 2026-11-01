@@ -57,6 +57,25 @@ export function createApp(prisma: PrismaClient): Express {
 
   // Parse JSON body only for API routes (after proxy to not consume body stream)
   app.use('/api', express.json());
+  // Express 5 leaves req.body undefined when there is no JSON body (Express 4 gave {}),
+  // and the route handlers destructure it. One guard here instead of one per handler.
+  app.use('/api', (req, _res, next) => {
+    req.body ??= {};
+    next();
+  });
+  // Express 5 makes req.query a getter that re-parses on every read, so express-validator's
+  // query sanitizers (toInt, toBoolean) are silently dropped: `take: "50"` reached Prisma.
+  // Pin one parsed, writable object per request, as Express 4 had, instead of rewriting
+  // every handler to matchedData().
+  app.use('/api', (req, _res, next) => {
+    Object.defineProperty(req, 'query', {
+      value: req.query,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    next();
+  });
 
   // Health check
   app.get('/health', (req, res) => {
@@ -72,7 +91,7 @@ export function createApp(prisma: PrismaClient): Express {
   if (process.env.NODE_ENV === 'production') {
     const clientPath = path.resolve(process.cwd(), '../client/dist');
     app.use(express.static(clientPath));
-    app.get('*', (req, res, next) => {
+    app.get('/{*splat}', (req, res, next) => {
       if (
         !req.path.startsWith('/api') &&
         !req.path.startsWith('/proxy') &&

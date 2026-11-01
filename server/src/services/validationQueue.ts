@@ -111,6 +111,13 @@ export function kickDrain(prisma: PrismaClient, validators: Validator[]): Promis
   return done;
 }
 
+/** Resolves once no drain is running in this process; starts none. Test cleanup awaits it so
+ *  a claim is never deleted under a worker that is still writing its run. Loops because a
+ *  re-armed pass can replace `draining` while the caller waits. */
+export async function idle(): Promise<void> {
+  while (draining) await draining;
+}
+
 async function worker(prisma: PrismaClient, svc: ValidationService): Promise<void> {
   for (;;) {
     // No reservation here: runOne claims the row atomically and returns immediately if

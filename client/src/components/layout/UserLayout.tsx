@@ -135,7 +135,7 @@ export default function UserLayout() {
       <div className="min-h-screen bg-gray-50">
         {/* Impersonation Banner */}
         {user?.impersonatedBy && (
-          <div className="bg-amber-500 text-white px-4 py-2 flex items-center justify-between sticky top-0 z-[60]">
+          <div className="bg-amber-500 text-white px-4 py-2 flex items-center justify-between sticky top-0 z-60">
             <div className="flex items-center gap-2">
               <UserCheck className="h-4 w-4" />
               <span className="text-sm font-medium">
@@ -221,7 +221,7 @@ export default function UserLayout() {
                 Dashboard
               </Link>
 
-              <div className="pt-4 mt-4 border-t">
+              <div className="pt-4 border-t">
                 <span className="px-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                   Claims
                 </span>
@@ -262,7 +262,7 @@ export default function UserLayout() {
               )}
 
               {!isLoading && menuData && menuData.menu.length > 0 && (
-                <div className="pt-4 border-t mt-4">
+                <div className="pt-4 border-t">
                   <span className="px-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     My URLs
                   </span>

@@ -13,10 +13,11 @@
  * Idempotent: each run appends a fresh ValidationRun and overwrites the columns.
  */
 import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import { enqueue, kickDrain } from '../src/services/validationQueue.js';
 import { registry } from '../src/validators/registry.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 
 /**
  * Block until the runs just queued for these claims have actually finished.

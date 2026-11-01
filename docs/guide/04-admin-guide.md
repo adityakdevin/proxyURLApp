@@ -4,7 +4,7 @@ Administrators set up and run the whole system: accounts, the menu structure, cl
 rules, bulk scans, and data import/export. This guide is written so a non-technical
 administrator can follow it step by step.
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)
 
 > **The golden rule of setup order.** Build from the top of the hierarchy down. If you
 > try to create something before its "parent" exists, the app won't let you. The
@@ -20,10 +20,12 @@ All admin screens live under the **Admin** area, which only administrators can s
 
 Set things up in this order the first time:
 
-1. **User Types** and **Projects** — the building blocks of a "scope."
-2. **Users** — the people, each given a User Type + Project.
-3. **Categories** — top-level groupings, each tied to a scope.
-4. **Sub-Categories** — sections inside a category.
+1. **Projects**: the top of the hierarchy, and the outer boundary of a user's "scope."
+2. **Categories**: top-level groupings, each inside one Project.
+3. **Sub-Categories**: sections inside a category.
+4. **Users**: the people, each given a role, one Project, and the Sub-Categories they
+   may use. (Sub-Categories must exist first, because a non-admin user needs at least
+   one.)
 5. For each Sub-Category that holds claims:
    - **Statuses** (the workflow stages),
    - **Document Types**,
@@ -34,26 +36,27 @@ Set things up in this order the first time:
 
 ---
 
-## 4.2 User Types & Projects (the "scope")
+## 4.2 Projects (the "scope")
 
-Every user is given **one User Type + one Project**. Together these form their
-**scope** — the boundary of what they can see. Categories are also built for a scope,
+Every non-admin user is given a **Role**, **one Project**, and the **Sub-Categories**
+you grant them inside that Project, all on the **Users** page
+([section 4.3](#43-users)). The Project plus those granted Sub-Categories form their
+**scope**: the boundary of what they can see. Categories are built inside a Project,
 so the two line up.
 
-- **User Type** — usually a role or function, e.g. _Claims Officer_.
 - **Project** — usually a project, region, or financial year, e.g. _FY2025_.
 
 ### To create one
-1. Go to **Admin → User Types** (or **Projects**).
+1. Go to **Admin → Projects**.
 2. Click **Add**.
 3. Enter a **Name** (required) and optional **Description**.
 4. Leave **Status** as **Active**.
 5. Click **Save**.
 
-> 📷 **Screenshot placeholder:** _The User Types list and the Add dialog._
+> 📷 **Screenshot placeholder:** _The Projects list and the Add dialog._
 
-> ⚠️ Setting a User Type or Project to **Inactive** hides everything in that
-> scope from users — including their whole menu. Only deactivate when you mean to.
+> ⚠️ Setting a Project to **Inactive** hides everything in that Project from its
+> users, including their whole menu. Only deactivate when you mean to.
 
 ---
 
@@ -67,10 +70,15 @@ so the two line up.
    - **Full Name**,
    - **Temporary Password** (must be 8+ chars with uppercase, lowercase, and a number),
    - **Role** — **User**, **Team Lead**, or **Admin**,
-   - **Assignment** — the **User Type + Project** this person belongs to.
+   - **Project**: the one Project this person belongs to (not shown for **Admin**;
+     admins get no Project),
+   - **Category access**: click **Add Category**, pick a category in that Project, and
+     tick the **Sub-Categories** this person may use. Repeat for other categories. At
+     least one Sub-Category is required. These grants decide both their website menu
+     and which claims they can reach.
 4. Click **Save**.
 
-> 📷 **Screenshot placeholder:** _The Add User form showing role and assignment fields._
+> 📷 **Screenshot placeholder:** _The Add User form showing the Role, Project and Category access fields._
 
 The new user logs in with the temporary password and is asked to set their own on
 first login.
@@ -87,31 +95,29 @@ Administrators can **impersonate** a user to see exactly what that person sees �
 for troubleshooting "I can't find my claim" reports. Every impersonation is recorded in
 the audit trail. Stop impersonating to return to your own account.
 
-> ⚠️ Each user can only have **one assignment** (one User Type + Project). To move
-> someone to a different scope, edit their assignment.
+> ⚠️ Each user can only have **one Project**. To move someone to a different Project,
+> edit the user, pick the new Project, and grant the Sub-Categories they need there.
 
 ---
 
 ## 4.4 Categories
 
-A **Category** is a top-level grouping that is **bound to one scope** (a User Type +
-Project).
+A **Category** is a top-level grouping that is **bound to one Project**.
 
 1. Go to **Admin → Categories**.
 2. Click **Add Category**.
 3. Fill in:
    - **Name** (required),
    - **Description** (optional),
-   - **User Type** (required),
    - **Project** (required).
 4. Click **Save** / **Create**.
 
-> 📷 **Screenshot placeholder:** _The Create Category dialog with User Type and Project dropdowns._
+> 📷 **Screenshot placeholder:** _The Create Category dialog with the Project dropdown._
 
-> ⚠️ The **User Type** and **Project** are locked once the category is created —
-> you can't move a category to a different scope afterwards. Choose carefully.
+> ⚠️ The **Project** is locked once the category is created, so you can't move a
+> category to a different Project afterwards. Choose carefully.
 
-The list shows each category's scope and a **usage** count (how many sub-categories it
+The list shows each category's Project and a **usage** count (how many sub-categories it
 holds).
 
 ---
@@ -119,20 +125,19 @@ holds).
 ## 4.5 Sub-Categories
 
 A **Sub-Category** sits **inside a Category**. It automatically **inherits the
-category's scope**, so you don't pick a User Type/Project here — you just pick the
-parent category.
+category's Project**, so you don't pick a Project here; you just pick the parent
+category.
 
 1. Go to **Admin → Sub-Categories**.
 2. Click **Add Sub-Category**.
 3. Fill in:
    - **Name** (required),
    - **Description** (optional),
-   - **Category** (required) — the dropdown shows each category with its scope in
-     brackets, e.g. **"Vehicle Claims (Claims Officer / FY2025)"**, so you can tell
-     them apart.
+   - **Category** (required): the dropdown shows each category with its Project in
+     brackets, e.g. **"Vehicle Claims (FY2025)"**, so you can tell them apart.
 4. Click **Save** / **Create**.
 
-> 📷 **Screenshot placeholder:** _The Create Sub-Category dialog with the Category dropdown showing scope in brackets._
+> 📷 **Screenshot placeholder:** _The Create Sub-Category dialog with the Category dropdown showing the Project in brackets._
 
 Sub-Categories are where **claims** and **website links** live, so most further setup
 (statuses, rules, scanning) happens **per sub-category**.
@@ -316,23 +321,24 @@ On export, **column 9 (Status)** is calculated from the five checks:
 ## 4.11 Website Links (proxy URLs)
 
 These build the **website menu** users see. A link lives under a specific
-**Category → Sub-Category** and is tied to a **scope**, so only the right users get it.
+**Project, Category and Sub-Category**, so only users granted that Sub-Category get it.
 
 1. Go to **Admin → URL Configurations** (or **Website Links**).
 2. Click **Add**.
 3. Fill in:
    - **Label** — the name users see in the menu,
    - **Target URL** — the real website address,
-   - **User Type**, **Project**, **Category**, **Sub-Category** — where it belongs
-     and who may see it,
+   - **Project**, **Category**, **Sub-Category**: where it belongs and who may see
+     it,
    - (Advanced) the **proxy mode** and timeouts — leave at defaults unless you have a
      reason to change them.
 4. Save.
 
 > 📷 **Screenshot placeholder:** _The Add Website Link form._
 
-The link now appears in the menu for users in that scope, under that
-Category → Sub-Category. The app opens it safely "through" itself and logs the access.
+The link now appears in the menu for users in that Project who were granted that
+Sub-Category, under that Category → Sub-Category. The app opens it safely "through"
+itself and logs the access.
 
 > 💡 A Category or Sub-Category with **no links** is hidden from the menu — so users
 > never see empty sections.
@@ -348,9 +354,10 @@ Category → Sub-Category. The app opens it safely "through" itself and logs the
   marked deleted and drop out of everyone else's list. One batch covers at most 500
   claims; larger selections are refused outright rather than half-applied.
 - **One default status** per sub-category, always.
-- **Match scopes** — a user only sees a Category if their User Type + Project
-  match it exactly. "User can't see anything" almost always means a scope mismatch;
-  use **impersonation** to confirm.
+- **Check access grants**: a user only sees a Sub-Category's links and claims if it
+  is in their Project **and** you granted it to them on the **Users** page. "User can't
+  see anything" almost always means a missing grant or the wrong Project; use
+  **impersonation** to confirm.
 
 ---
 

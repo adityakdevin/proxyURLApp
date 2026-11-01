@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff } from 'lucide-react';
 import { api, PaginatedResponse } from '@/lib/api';
 import { useCrudResource } from '@/hooks/useCrudResource';
@@ -127,7 +127,7 @@ export default function Categories() {
     submit(formData);
   };
 
-  const columns: ColumnDef<Category>[] = [
+  const columns: DataTableColumn<Category>[] = [
     { accessorKey: 'name', header: 'Name', meta: { sortField: 'name' } },
     { accessorKey: 'description', header: 'Description', cell: ({ row }) => row.original.description || '-' },
     { id: 'project', header: 'Project', cell: ({ row }) => row.original.project.name },

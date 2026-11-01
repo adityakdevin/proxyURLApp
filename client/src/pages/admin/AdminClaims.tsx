@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CHECK_FILTERS, CHECK_STATUS_OPTIONS } from '@/lib/checkFilters';
 import { useNavigate } from 'react-router-dom';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { Upload, Download, Loader2 } from 'lucide-react';
 import { api, DataResponse, PaginatedResponse } from '@/lib/api';
 import { DataTable, ServerSort, nextSort } from '@/components/shared/DataTable';
@@ -247,7 +247,7 @@ export default function AdminClaims() {
     fetchData(pagination.page, pagination.limit, true)
   );
 
-  const columns: ColumnDef<ClaimRow>[] = [
+  const columns: DataTableColumn<ClaimRow>[] = [
     {
       accessorKey: 'claimId',
       header: 'Claim ID',

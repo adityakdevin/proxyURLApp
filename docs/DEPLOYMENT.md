@@ -3,7 +3,7 @@
 Runbook for pushing an **update** (e.g. the Forged-Documents Observation import/export feature)
 to a Windows server that is already running ProxyURLApp.
 
-> Assumes Node 18+, MySQL, and the app are already installed and running on the box.
+> Assumes Node 24, MySQL, and the app are already installed and running on the box.
 > Adjust the app path (`C:\apps\proxyURLApp` below) and the start/stop commands to match
 > however the server currently runs the process.
 
@@ -32,6 +32,8 @@ git rev-parse HEAD > last-good-commit.txt
 # Back up the database BEFORE the schema change (uses server/.env DATABASE_URL)
 npm run db:backup --workspace=server
 ```
+
+TODO: this page says MySQL 8.0 on :3307, but production runs WAMP MySQL 5.7.40 on :3306 (backup-db.js header, the box's boot.log); confirm on the box and fix the paths and ports below.
 
 > **If you get `spawnSync mysqldump ENOENT`**, `mysqldump.exe` isn't on PATH. Find it (it lives in
 > the MySQL `bin` folder of the install serving port 3307) and either add that folder to PATH or
@@ -71,18 +73,21 @@ git pull origin main
 
 ## 4. Install, apply schema, build — one command
 
-The repo ships a `deploy` script that does all three:
+The repo ships a `deploy` script that does all three, then installs the Chromium that
+headless proxying needs:
 
 ```powershell
 npm install            # safe even with no new deps; ensures parity
-npm run deploy         # = prisma generate  +  prisma db push  +  build (client + server)
+npm run deploy         # = prisma generate  +  prisma db push  +  build (client + server)  +  playwright install chromium
 ```
 
 `prisma db push` applies the 7 nullable columns non-destructively (no `--accept-data-loss`
-needed). `build` produces `server/dist` and `client/dist`.
+needed). `build` produces `server/dist` and `client/dist`. Each Playwright version pins its
+own Chromium revision, so run `deploy` as the Windows user PM2 runs under: browsers install
+per user, and without the matching one every HEADLESS URL answers 503.
 
 > If you prefer the steps individually:
-> `npm run db:generate` → `npm run db:push` → `npm run build`
+> `npm run db:generate` → `npm run db:push` → `npm run build` → `npx playwright install chromium`
 
 ## 5. Confirm the production environment
 
@@ -128,7 +133,7 @@ dialog shows a banner pointing you here.
 ## 8. Smoke test
 
 1. Log in as an admin.
-2. **Claims → Upload Observations** → choose User Type → Project → Category → Sub-Category.
+2. **Claims → Upload Observations** → choose Project → Category → Sub-Category.
 3. Upload `docs/samples/Forged Documents Observations.xlsx` → **Import** → expect *created/updated* counts.
 4. **Export** → confirm the 10-column sheet downloads with the **Status** column filled.
 
@@ -138,6 +143,7 @@ dialog shows a banner pointing you here.
 # stop the app (step 2), then:
 git checkout (Get-Content last-good-commit.txt)
 npm install
+npm run db:generate   # Prisma 7's npm install does not generate the client; the build needs it
 npm run build
 # Schema rollback is usually unnecessary (the new columns are nullable and ignored by old code).
 # Only if required: restore the DB backup from step 1, then re-run prisma db push.

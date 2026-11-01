@@ -3,7 +3,7 @@
 This guide covers the basics everyone needs: opening the app, logging in, changing
 your password, finding your way around, and logging out.
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)
 
 ---
 
@@ -74,10 +74,11 @@ _Example of a valid password:_ `Welcome@2025`
 | "Invalid username or password" | The username or password is wrong. | Re-type carefully. Check Caps Lock. |
 | Login feels **slower each time** you fail | The app **slows down on purpose** after each wrong attempt, to block guessing. | Wait a moment and try again with the correct details. |
 | "Account locked" message | After **5 wrong attempts** the account locks for **15 minutes**. | Wait 15 minutes, or ask an administrator to reset it. |
-| You were logged out suddenly | You can only be logged in **on one device at a time**, and the app logs you out after **30 minutes of inactivity**. | Simply log in again. |
+| You were logged out suddenly | The app logs you out after **8 hours with no activity**, or when your account is logged in on more than **3 devices or browsers** (see the note below). | Simply log in again. |
 
-> ⚠️ **Note:** Logging in on a second device or browser automatically logs you out
-> everywhere else. This is a security feature, not an error.
+> ⚠️ **Note:** You can be logged in on up to **3 devices or browsers** at the same
+> time. Logging in on a fourth automatically logs out the one you used least
+> recently. This is a security feature, not an error.
 
 ---
 
@@ -118,7 +119,9 @@ Always log out when you're finished, especially on a shared computer.
 
 > 📷 **Screenshot placeholder:** _The account menu open, showing the Log Out option._
 
-> 💡 The app also logs you out automatically after **30 minutes** with no activity.
+> 💡 The app also logs you out automatically after **8 hours** with no activity. Every
+> time you use the app the 8 hours start again, so it won't log you out while you're
+> working.
 
 ---
 

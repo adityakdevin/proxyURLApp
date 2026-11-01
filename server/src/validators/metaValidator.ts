@@ -1,9 +1,7 @@
 import { promises as fs } from 'fs';
-// Subpath import avoids pdf-parse's import-time debug-mode test-file read.
-import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox } from './types.js';
 import { metaOutcome } from './logic.js';
-import { extractPdf, readPdfInfo, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
+import { extractPdf, readPdfInfo, MAX_PDF_PAGES, withActiveTimeout } from '../lib/pdfExtractor.js';
 import { readFileMeta } from '../lib/fileMeta.js';
 
 /** Document properties (created/modified/author/…), NOT body text. PDFs read the Info
@@ -63,7 +61,7 @@ async function extract(
     return { text, words: [], pageTexts: [text] };
   }
   if (mime === 'application/pdf') {
-    // Prefer pdfjs (text + per-word coordinates + per-page text); fall back to pdf-parse.
+    // pdfjs gives text, per-word coordinates and per-page text.
     const withCoords = await extractPdf(doc.readablePath);
     if (withCoords && withCoords.text) {
       const pageTexts = [...withCoords.pageTexts];
@@ -97,15 +95,6 @@ async function extract(
         totalPages: withCoords.totalPages,
       };
     }
-    try {
-      const buf = await fs.readFile(doc.readablePath);
-      const data = await pdfParse(buf);
-      const text = (data.text ?? '').trim();
-      // pdf-parse gives no page boundaries → one page-null unit (spec decision 1 fallback).
-      if (text) return { text, words: [], pageTexts: [text] };
-    } catch {
-      // fall through to OCR
-    }
     // No text layer → scanned PDF. Rasterize the pages and OCR them.
     if (ctx.ocr.extractPdf) {
       const r = await ctx.ocr.extractPdf(doc.readablePath);
@@ -134,27 +123,6 @@ const EXTRACT_TIMEOUT_MS = 30_000;
 // on any slower machine and produced NOTHING. Validation is a background run, so the cost
 // of a wider budget is only that a pathological document occupies the drainer longer.
 const PDF_EXTRACT_TIMEOUT_MS = 300_000;
-
-/** Resolve `p`, but fall back to `fallback` if it doesn't settle within `ms`. */
-function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return new Promise<T>((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        resolve(fallback);
-      }
-    }, ms);
-    const finish = (v: T) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolve(v);
-      }
-    };
-    p.then(finish, () => finish(fallback));
-  });
-}
 
 export const metaValidator: Validator = {
   key: 'META',
@@ -207,11 +175,18 @@ export const metaValidator: Validator = {
       }
       const timeoutMs =
         (doc.mimeType ?? '') === 'application/pdf' ? PDF_EXTRACT_TIMEOUT_MS : EXTRACT_TIMEOUT_MS;
-      const extractedDoc = await withTimeout(extract(ctx, doc), timeoutMs, {
-        text: '',
-        words: [],
-        pageTexts: [] as string[],
-      });
+      // The budget counts only this document's own work: time queued for a pdf.js turn behind
+      // the other claim's PDF work is left out (see withActiveTimeout).
+      let timedOut = false;
+      const empty = (): Awaited<ReturnType<typeof extract>> => ({ text: '', words: [], pageTexts: [] });
+      const extractedDoc = await withActiveTimeout(
+        () => extract(ctx, doc).catch(empty),
+        timeoutMs,
+        () => {
+          timedOut = true;
+          return empty();
+        }
+      );
       const { text, words, totalPages } = extractedDoc;
       // OCR leaves a page that read nothing OUT of its per-page list, and extract() writes
       // pages back by index — so a blank or unreadable page leaves a HOLE. Every reader of
@@ -250,6 +225,16 @@ export const metaValidator: Validator = {
           truncated: text.length > MAX_DETAIL_CHARS,
           pages: cappedPages(pageTexts),
           properties: await documentProperties(doc),
+        });
+      } else if (timedOut) {
+        // A document that ran out of time was never read, which is not the same as a
+        // document with no text in it.
+        // ponytail: WARNING only, like META_NO_TEXT; a visible FULL red flag needs FULL to
+        // report a whole unread document, not just pages past the cap.
+        noText.push({
+          documentId: doc.id,
+          code: 'META_EXTRACT_TIMEOUT',
+          message: `${doc.fileName} was not read: reading it took longer than ${Math.round(timeoutMs / 1000)}s.`,
         });
       } else {
         noText.push({

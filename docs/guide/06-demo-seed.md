@@ -3,7 +3,7 @@
 This page explains how to load a complete set of **ready-made example data** so you can
 explore and test every part of the app without setting anything up by hand.
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)
 
 > ⚠️ **Use a separate test database.** The demo seed is meant for a test environment.
 > Point the app at your test database before running it (see [section 6.4](#64-which-database-does-it-use)).
@@ -16,7 +16,8 @@ explore and test every part of the app without setting anything up by hand.
 Running it builds one full, connected example you can immediately log into and use:
 
 - **3 login accounts**, one per role (see credentials below).
-- **1 scope:** User Type **"Claims Officer"** + Project **"FY2025"**.
+- **1 Project:** **"FY2025"**. All three accounts are assigned to it, and `teamlead`
+  and `user` are granted the **"Warranty Claims"** Sub-Category.
 - **1 Category** "Vehicle Claims" → **1 Sub-Category** "Warranty Claims".
 - **Workflow statuses:** New (default) → In Progress → Verified → Closed (final).
 - **Document types:** Aadhar Card, PAN Card, Invoice.
@@ -49,8 +50,8 @@ Running it builds one full, connected example you can immediately log into and u
 > `docs/samples/Claims/Daily/CLM100xx/` (duplicate-QR PDFs, spelling-error scans, and a
 > clean "OK" image). On macOS `server/.env` sets `CLAIMS_SCAN_ROOT` to `docs/samples`,
 > so **Validate** and **Sync from folder** run the genuine detectors against them —
-> e.g. validating **CLM10004** really flags its problems. Note the QR detector scans
-> **image** files only (not PDFs). (See [07 – Demo Script](07-demo-script.md).)
+> e.g. validating **CLM10004** really flags its problems. The QR detector reads both
+> images and PDFs. (See [07 – Demo Script](07-demo-script.md).)
 
 ---
 
@@ -176,4 +177,4 @@ _⏳ = Pending until you Validate (real result then); ❌ on CLM10001 because it
 
 ---
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)

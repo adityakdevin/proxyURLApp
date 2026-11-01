@@ -19,6 +19,18 @@ export const validate = (req: Request, res: Response, next: NextFunction): void 
 /** The PrismaClient stashed on the app by index.ts. */
 export const prismaOf = (req: Request): PrismaClient => req.app.get('prisma') as PrismaClient;
 
+/** Proxied sub-resource route: `/:opaqueId/<sub-path>`, where the sub-path may be empty. */
+export const PROXY_SUBRESOURCE_ROUTE = '/:opaqueId/{*subPath}';
+
+/**
+ * The decoded sub-path after the opaqueId, trailing slash kept, '' when empty: exactly
+ * what Express 4's `req.params[0] || ''` returned, which proxy.ts builds target URLs from.
+ */
+export function proxySubPath(req: Request): string {
+  const subPath = req.params.subPath;
+  return Array.isArray(subPath) ? subPath.join('/') : subPath ?? '';
+}
+
 /** Parse `?page`/`?limit` (validated upstream) into Prisma skip/take. */
 export function parsePagination(
   q: { page?: unknown; limit?: unknown },

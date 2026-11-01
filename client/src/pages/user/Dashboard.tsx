@@ -99,7 +99,7 @@ export default function UserDashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Stats Card */}
-        <div className="bg-white p-6 rounded-lg shadow border">
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-blue-50 rounded-lg">
               <Link2 className="h-5 w-5 text-blue-600" />
@@ -115,7 +115,7 @@ export default function UserDashboard() {
         </div>
 
         {/* Frequently Accessed */}
-        <div className="bg-white p-6 rounded-lg shadow border md:col-span-2">
+        <div className="bg-white p-6 rounded-lg shadow-sm border md:col-span-2">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-green-50 rounded-lg">
               <TrendingUp className="h-5 w-5 text-green-600" />
@@ -147,7 +147,7 @@ export default function UserDashboard() {
       </div>
 
       {/* Recent Activity */}
-      <div className="mt-6 bg-white p-6 rounded-lg shadow border">
+      <div className="mt-6 bg-white p-6 rounded-lg shadow-sm border">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 bg-purple-50 rounded-lg">
             <Clock className="h-5 w-5 text-purple-600" />

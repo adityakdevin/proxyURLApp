@@ -8,9 +8,9 @@ ProxyURLApp is a full-stack web application providing controlled access to exter
 
 ## Tech Stack
 
-- **Backend:** Node.js 18+ / Express / TypeScript (CommonJS)
-- **Frontend:** React 18 / TypeScript / Vite / TailwindCSS / Radix UI (shadcn style)
-- **Database:** MySQL with Prisma ORM
+- **Backend:** Node.js 24 / Express / TypeScript (CommonJS)
+- **Frontend:** React 19 / TypeScript / Vite / TailwindCSS / Radix UI (shadcn style)
+- **Database:** MySQL with Prisma ORM 7 (MariaDB driver adapter, `server/src/lib/prisma.ts`)
 - **State:** Zustand (client auth), React Query (data fetching)
 - **Auth:** bcrypt, server-side sessions with httpOnly cookies
 
@@ -47,8 +47,9 @@ npm run start            # Run production server
 - Root `package.json` uses npm workspaces
 
 ### Key Backend Files
-- `server/src/index.ts` - Express app setup, middleware stack, route mounting
-- `server/src/routes/proxy.ts` - Main proxy handler (~700 lines) with HTML/CSS/JS URL rewriting
+- `server/src/app.ts` - `createApp(prisma)`: Express app setup, middleware stack, route mounting
+- `server/src/index.ts` - Boot: imports `lib/prisma.ts` first (it loads `server/.env`), then `createApp`, `listen()` and startup sweeps
+- `server/src/routes/proxy.ts` - Main proxy handler (~1,100 lines) with HTML/CSS/JS URL rewriting
 - `server/src/services/authService.ts` - Login, password changes, session creation
 - `server/src/services/proxyService.ts` - URL access validation
 - `server/src/routes/claims.ts` - Claim routes; the `bulk/*` routes are registered before `/:id/*` so "bulk" is never parsed as a claim id
@@ -71,13 +72,14 @@ SubCategory (inherits scope from parent Category)
 UrlConfiguration (explicit refs to Project/Category/SubCategory, uses UUID opaqueId for masking)
 ```
 
-User → UserAssignment (single Project) → determines menu/URL access
+User → UserAssignment (single Project) + UserSubCategory grants → determine menu/URL access and claim scope
 
 ### Auth Flow
 1. Login creates server-side Session with 64-char token
-2. Token stored in httpOnly cookie (30 min timeout)
+2. Token stored in httpOnly cookie; the session expires after `SESSION_MAX_AGE_MS` (8h) idle,
+   and the cookie is re-issued on each request so the window slides with activity
 3. `authMiddleware` validates session on protected routes
-4. `adminMiddleware` checks `isAdmin` flag for `/admin/*` routes
+4. `adminMiddleware` requires `role === 'ADMIN'` for `/admin/*` routes
 
 ### Proxy Flow
 1. User accesses `/view/:opaqueId` (full-page iframe)
@@ -106,8 +108,8 @@ NODE_ENV=development
 CLIENT_URL=http://localhost:5173
 ```
 
-> A `.env` at the REPO ROOT is read by nothing. Prisma resolves its connection string next
-> to `server/prisma/schema.prisma`, and the app, seeds and backup script all run with
+> A `.env` at the REPO ROOT is read by nothing. The Prisma CLI loads `server/.env` from
+> `server/prisma.config.ts`, the app and scripts load it through `server/src/lib/prisma.ts`, and the app, seeds and backup script all run with
 > `server/` as their working directory. A stale root `.env` is not merely inert — it is
 > misleading, and one carrying a `postgresql://` URL was what made this confusing before.
 
@@ -132,5 +134,6 @@ Admin seed credentials configured via `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN
 - Use `npm run db:push` after schema changes. Do NOT run `db:migrate` (`prisma migrate
   dev`): the migration history is ~71 lines behind `schema.prisma`, so it would auto-author
   a migration dropping columns from three master tables. See `server/prisma/migrations/README.md`.
-- Prisma Client regenerates on `db:push`; run `npm run db:generate` if it does not
+- `db:push` does not regenerate Prisma Client (Prisma 7); run `npm run db:generate` after a
+  schema change, and after a fresh install
 - `server/prisma/seed.ts` creates initial admin user
