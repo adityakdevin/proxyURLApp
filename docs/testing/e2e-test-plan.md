@@ -147,6 +147,12 @@ e2e/
 ### API — documents + validation (`documentsValidation.e2e.test.ts`)
 - ✅ zero-doc claim → `POST /validate` (202) → poll → run `COMPLETED`, all 5 columns `DOCS_NOT_AVAILABLE`
 - ⏭️ (E2E_HEAVY) upload PNG → 201 + listed → delete → 200; drain settles
+- `GET /claims/:id/documents/:docId/content` answers 404 `FILE_NOT_FOUND` JSON, with no
+  `Content-Disposition`, for a file that stats but cannot be read
+- an empty file is served as a 200 with `Content-Length: 0`
+- a PDF under a dot-segment path is served as a 200 with its bytes, `application/pdf`,
+  `inline; filename=...`, and no `Accept-Ranges`, `Cache-Control` or `Last-Modified`
+- a client abort mid-download closes the server's file stream
 
 ### API — observations (`observations.e2e.test.ts`)
 - ✅ import create (`parsed/created/updated/failed`); business fields persisted
@@ -174,7 +180,7 @@ e2e/
 ### Backlog (next iterations)
 - Pagination/filter/search on list + `GET /claims/export` workbook assertions
 - TEAM_LEAD scoped list visibility (only own scope) vs ADMIN global list
-- Document content download (MIME/inline vs attachment), `documents/sync`
+- Document content download as an attachment (non-inline MIME types), `documents/sync`
 - Heavy validators (SPELL/QR/META/INTRA/FULL) against real fixture files —
   better as **service-level integration tests** (stub `registry`) than slow E2E
 - UI journeys: create-claim dialog, add-remark + status change, observation

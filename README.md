@@ -114,6 +114,7 @@ proxyURLApp/
 | `npm run dev:client` | Start frontend only (port 5173) |
 | `npm run build` | Build for production |
 | `npm run start` | Run production server |
+| `npm run db:generate` | Generate the Prisma client. Prisma 7 does not do this on `npm install`, so run it after a fresh install and after every schema change |
 | `npm run db:push` | Sync the database to `schema.prisma` (this project's mechanism — NOT `db:migrate`, see `server/prisma/migrations/README.md`) |
 | `npm run db:seed` | Seed initial data |
 | `npm run db:studio` | Open Prisma Studio |

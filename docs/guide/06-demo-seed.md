@@ -50,8 +50,8 @@ Running it builds one full, connected example you can immediately log into and u
 > `docs/samples/Claims/Daily/CLM100xx/` (duplicate-QR PDFs, spelling-error scans, and a
 > clean "OK" image). On macOS `server/.env` sets `CLAIMS_SCAN_ROOT` to `docs/samples`,
 > so **Validate** and **Sync from folder** run the genuine detectors against them —
-> e.g. validating **CLM10004** really flags its problems. Note the QR detector scans
-> **image** files only (not PDFs). (See [07 – Demo Script](07-demo-script.md).)
+> e.g. validating **CLM10004** really flags its problems. The QR detector reads both
+> images and PDFs. (See [07 – Demo Script](07-demo-script.md).)
 
 ---
 
