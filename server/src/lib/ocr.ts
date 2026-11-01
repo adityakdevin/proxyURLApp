@@ -3,9 +3,10 @@ import path from 'path';
 import { Jimp } from 'jimp';
 import { createWorker, Worker } from 'tesseract.js';
 import { OcrPort, WordBox } from '../validators/types.js';
-import { rasterizePdf, MAX_PDF_PAGES } from './pdfExtractor.js';
+import { rasterizePdf, MAX_PDF_PAGES, queuedMs } from './pdfExtractor.js';
 import { estimateSkewDegrees } from './deskew.js';
 import { clamp01 } from './bbox.js';
+import { scheduleOcr } from './ocrSchedule.js';
 import { getSpell, isRealWord, type Spell } from '../validators/dictionary.js';
 
 /**
@@ -68,10 +69,11 @@ function collectWords(data: unknown, width: number, height: number, page = 1, de
 // writes `<lang>.traineddata` into the process cwd (the repo's server/ dir).
 const OCR_CACHE_PATH = process.env.OCR_CACHE_DIR || path.join(os.tmpdir(), 'claims-ocr-cache');
 
-/** Upper bound when the caller names the pages to OCR (mixed digital/scanned PDF).
- *  Still bounded — a 200-page bundle of scans should not stall a run. Shares the
- *  pipeline-wide ceiling: at 40 while text extraction ran to 50 and the QR scan to 60, a
- *  scanned page at position 45 was silently skipped even when explicitly requested. */
+/** Upper bound when the caller names the pages to OCR: the textless pages of a mixed PDF,
+ *  and every page of a fully scanned one that pdf.js could open. Still bounded, so a 200-page
+ *  bundle of scans cannot stall a run. Shares the pipeline-wide ceiling: at 40 while text
+ *  extraction ran to 50 and the QR scan to 60, a scanned page at position 45 was silently
+ *  skipped even when explicitly requested. */
 const MAX_OCR_TARGETED_PAGES = MAX_PDF_PAGES;
 
 /**
@@ -435,8 +437,9 @@ export class TesseractOcrPort implements OcrPort {
         // worker's message listener — an uncaught exception that no try/catch here can reach.
         // On production one unreadable page ("pixdata_malloc fail", then "Error attempting to
         // read image.") took the whole server down, and the startup sweep re-queued the same
-        // claim to take it down again, every ~10 min. The rejection still reaches the caller,
-        // which already reads nothing for that page and moves on.
+        // claim to take it down again, every ~10 min. The rejection still reaches the caller:
+        // an image then reads as empty; in extractPdf a failed high-res retry keeps that page's
+        // first look, and a failed first look reads the whole PDF as empty.
         // Check: OCR_CACHE_DIR=. npx tsx scripts/ocr-bad-file.ts
         errorHandler: (e) => console.error('Tesseract job failed:', e),
       });
@@ -485,21 +488,22 @@ export class TesseractOcrPort implements OcrPort {
 
   async extractPdf(
     absolutePath: string,
-    onlyPages?: number[]
+    onlyPages?: number[],
+    opts?: { deadline?: number }
   ): Promise<{
     text: string;
     words: WordBox[];
     pages?: { page: number; text: string }[];
     totalPages?: number;
+    unreadPages?: number[];
   }> {
     try {
-      // Cap OCR pages: the relevant docs (salary slip / ID card) sit in the first
-      // pages, and OCRing a long PDF serially on one worker is the slow path.
-      // onlyPages narrows to specific pages (mixed digital/scanned PDFs OCR just
-      // the pages that have no text layer).
-      // The 12-page cap bounds a BLIND whole-document OCR. When the caller already knows
-      // exactly which pages lack a text layer, honour that list instead — applying the cap
-      // first meant an ID-card page at position 13+ of a bundled claim PDF was never read.
+      // onlyPages names the pages without a text layer: the scanned pages of a mixed PDF, or
+      // every page of a fully scanned one. Applying a cap to that list meant an ID-card page
+      // at position 13+ of a bundled claim PDF was never read.
+      // The 12-page cap is left for a PDF pdf.js could not open, so no page list exists: a
+      // BLIND whole-document OCR, where the relevant docs (salary slip / ID card) sit in the
+      // first pages.
       const rasterStartedAt = Date.now();
       const small = { minLongSide: MIN_OCR_PAGE_LONG_SIDE };
       const pages = onlyPages
@@ -513,17 +517,9 @@ export class TesseractOcrPort implements OcrPort {
       // language data.
       const lanes = Math.min(ocrWorkers(), pages.length);
       const pool = await this.getPool(lanes);
-      // Results land BY INDEX, not by completion order. Pages finish out of order once they
-      // run in parallel, and the card extractors downstream read line and page structure —
-      // text stitched in finishing order is text in the wrong order.
-      const perIndex: ({ text: string; words: WordBox[]; page: number } | null)[] = new Array(
-        pages.length
-      ).fill(null);
-      let cursor = 0;
-      let highResBudget = MAX_HIGHRES_RETRY_PAGES;
       // META is the most expensive check in a run and reported only one total, so there was
       // no way to tell a slow OCR engine from a slow rasteriser from too many high-res
-      // retries — three problems with three different fixes. These sum CPU time across
+      // retries: three problems with three different fixes. These sum CPU time across
       // lanes, so with lanes > 1 they deliberately exceed the wall time; the lane count is
       // logged beside them so the two cannot be confused.
       let recognizeMs = 0;
@@ -531,56 +527,75 @@ export class TesseractOcrPort implements OcrPort {
       let retries = 0;
       const ocrStartedAt = Date.now();
 
-      await Promise.all(
-        pool.map(async (worker) => {
-          for (;;) {
-            const index = cursor++;
-            if (index >= pages.length) return;
-            const pg = pages[index];
-            const recognizeStartedAt = Date.now();
-            const recognized = await recognize(worker, pg.png);
-            const { rotation, skew } = recognized;
-            let { data, score } = recognized;
-            recognizeMs += Date.now() - recognizeStartedAt;
-            let dims = { w: pg.width, h: pg.height };
-
-            // Still reading poorly? Render the SAME page larger and look once more, at the
-            // configuration that won — a photographed page is usually short of pixels, not
-            // badly filtered, and re-sweeping every rotation at this size would not pay.
-            //
-            // The budget is shared across lanes. Test and decrement sit together with no
-            // await between them, so no two lanes can both see the last unit and spend it.
-            if (!readsAsText(data.text ?? '', score) && highResBudget > 0) {
-              highResBudget--;
-              retries++;
-              const retryStartedAt = Date.now();
-              // Twice the first look, on a small page too.
-              const [hi] = await rasterizePdf(
-                absolutePath,
-                MAX_OCR_TARGETED_PAGES,
-                HIGH_RASTER_SCALE,
-                [pg.page],
-                { minLongSide: 2 * MIN_OCR_PAGE_LONG_SIDE }
-              );
-              const retry = hi && (await recognizeWith(worker, hi.png, recognized));
-              if (retry && retry.score > score * HIGHRES_GAIN) {
-                data = retry.data;
-                score = retry.score;
-                // Boxes are measured against the image actually recognized.
-                dims = { w: hi.width, h: hi.height };
-              }
-              retryMs += Date.now() - retryStartedAt;
-            }
-
-            perIndex[index] = {
-              text: (data.text ?? '').trim(),
-              // Deskewed pages contribute text but no boxes — see extractImage above.
-              words: skew ? [] : collectWords(data, dims.w, dims.h, pg.page, rotation),
+      type PageRead = {
+        text: string;
+        words: WordBox[];
+        page: number;
+        score: number;
+        /** Set only on a page that read poorly: the first look's winning configuration, which
+         *  is all the high-res retry repeats (tesseract's full result is not kept). */
+        retryAt?: { rotation: number; skew?: number; sauvola?: boolean };
+      };
+      const perIndex = await scheduleOcr<(typeof pages)[number], PageRead>({
+        items: pages,
+        lanes,
+        deadline: opts?.deadline ?? Infinity,
+        // META's PDF budget leaves out time queued for a pdf.js turn behind another claim
+        // (withActiveTimeout), so the deadline inside it runs on the same clock.
+        now: () => Date.now() - queuedMs(),
+        retryBudget: MAX_HIGHRES_RETRY_PAGES,
+        first: async (pg, lane) => {
+          const recognizeStartedAt = Date.now();
+          const recognized = await recognize(pool[lane], pg.png);
+          recognizeMs += Date.now() - recognizeStartedAt;
+          const { data, score, rotation, skew, sauvola } = recognized;
+          const text = (data.text ?? '').trim();
+          return {
+            text,
+            // Deskewed pages contribute text but no boxes; see extractImage above.
+            words: skew ? [] : collectWords(data, pg.width, pg.height, pg.page, rotation),
+            page: pg.page,
+            score,
+            retryAt: readsAsText(text, score) ? undefined : { rotation, skew, sauvola },
+          };
+        },
+        wantsRetry: (r) => r.retryAt !== undefined,
+        // Still reading poorly? Render the SAME page larger and look once more, at the
+        // configuration that won: a photographed page is usually short of pixels, not
+        // badly filtered, and re-sweeping every rotation at this size would not pay.
+        retry: async (pg, r, lane) => {
+          const at = r.retryAt;
+          if (!at) return r;
+          retries++;
+          const retryStartedAt = Date.now();
+          try {
+            // Twice the first look, on a small page too.
+            const [hi] = await rasterizePdf(
+              absolutePath,
+              MAX_OCR_TARGETED_PAGES,
+              HIGH_RASTER_SCALE,
+              [pg.page],
+              { minLongSide: 2 * MIN_OCR_PAGE_LONG_SIDE }
+            );
+            const second = hi && (await recognizeWith(pool[lane], hi.png, at));
+            if (!second || second.score <= r.score * HIGHRES_GAIN) return r;
+            return {
+              text: (second.data.text ?? '').trim(),
+              // Boxes are measured against the image actually recognized.
+              words: at.skew ? [] : collectWords(second.data, hi.width, hi.height, pg.page, at.rotation),
               page: pg.page,
+              score: second.score,
             };
+          } catch {
+            // The retry is optional, so its failure must not cost the pages already read.
+            // Tesseract's malloc failures are likeliest here, on the 4x image.
+            return r;
+          } finally {
+            retryMs += Date.now() - retryStartedAt;
           }
-        })
-      );
+        },
+      });
+      const unreadPages = pages.flatMap((pg, i) => (perIndex[i] ? [] : [pg.page]));
 
       const parts: string[] = [];
       const words: WordBox[] = [];
@@ -597,13 +612,15 @@ export class TesseractOcrPort implements OcrPort {
       console.log(
         `[ocr] ${path.basename(absolutePath).replace(/[\p{C}]/gu, '?')} ${pages.length}p ` +
           `${lanes} lane(s): raster ${rasterMs}ms, ocr wall ${Date.now() - ocrStartedAt}ms ` +
-          `(recognize ${recognizeMs}ms cpu, ${retries} high-res retry ${retryMs}ms cpu)`
+          `(recognize ${recognizeMs}ms cpu, ${retries} high-res retry ${retryMs}ms cpu), ` +
+          `unread ${unreadPages.length}`
       );
       return {
         text: parts.join('\n').trim(),
         words,
         pages: perPage,
         totalPages: pages[0].totalPages,
+        unreadPages,
       };
     } catch {
       return { text: '', words: [] };

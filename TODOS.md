@@ -292,21 +292,28 @@ Found by: /ship fix-check and adversarial reviews, PR #119, 2026-11-01.
 
 ### A slow or hung PDF is still counted as a missing document
 **Priority:** P2
-PR #119 now leaves time queued for a pdf.js turn out of the check and META timeouts
+PR #119 leaves time queued for a pdf.js turn out of the check and META timeouts
 (`withActiveTimeout` in `server/src/lib/pdfExtractor.ts`) and reports a document that ran out
-of time as `META_EXTRACT_TIMEOUT` instead of empty text. Still open:
-- `META_EXTRACT_TIMEOUT` is a META warning only, which reviewers do not see; FULL
-  (`server/src/validators/fullValidator.ts`) still raises `FULL_MISSING_TYPE` for that unread
-  document. FULL should report a whole unread document the way it reports pages past the cap.
-- The abandoned extraction is not cancelled, so it keeps queueing pdf.js and OCR work into the
-  run's later checks, and its later queue turns pause the parent check's timeout.
+of time as `META_EXTRACT_TIMEOUT` instead of empty text. `fix/old-car-rc-policy` added: FULL
+(`server/src/validators/fullValidator.ts`) raises `FULL_PAGES_UNREAD` (ERROR) for the pages
+OCR could not reach and for a document whose extraction timed out (`ctx.unreadPages` =
+`'all'`); OCR stops at a deadline 20 s inside META's PDF budget, on the same clock, so no page
+starts after it and the work it abandons is at most one page per lane. Still open:
+- FULL's `Missing docs - X` line (`FULL_MISSING_TYPE`) still reads as missing when the
+  document holding X was not read. When `ctx.unreadPages` or `ctx.truncatedPages` is
+  non-empty, make the marker types soft (as for unreadable pages) and name those pages.
+- Abandoned work is not cancelled. An extraction that timed out as a whole keeps queueing
+  pdf.js and OCR work into the run's later checks, and its later queue turns pause the parent
+  check's timeout; an OCR page still running at the deadline keeps its tesseract worker busy,
+  delaying the next document's OCR.
 - `QueueWait` leaves out every queued wait in the timed call, including waits behind the same
   check's own work (both OCR lanes asking for a high-res `rasterizePdf` retry), so a hung render
-  pauses the budget for up to `PDFJS_TURN_MAX_MS` (600 s). Excluding only waits behind another
-  caller's turn would need the queue to know who holds it.
+  pauses the budget, and the OCR deadline that reads the same clock, for up to
+  `PDFJS_TURN_MAX_MS` (600 s). Excluding only waits behind another caller's turn would need
+  the queue to know who holds it.
 - The turn bound still releases silently; log a warning when it fires.
 Found by: /ship performance, state-machines, fix-check and adversarial reviews, PR #119,
-2026-10-31/2026-11-01.
+2026-10-31/2026-11-01; final review of `fix/old-car-rc-policy`, 2026-11-01.
 
 ### Windows deploy scripts can stop or damage production
 **Priority:** P2
