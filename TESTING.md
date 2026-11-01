@@ -31,8 +31,8 @@ Admin sets up masters → Claims created (manual or by folder scan)
 
 Results land on the `Claim` (`spellCheckStatus`, `qrStatus`, `metaExtractionStatus`,
 `intraClaimStatus`, `fullScanStatus`) and in `ValidationRun` / `ValidationResult` rows.
-Validation runs **async** on a serial queue and is auto-triggered on every document
-upload, sync, and delete.
+Validation runs **async** on a queue that works on up to `VALIDATION_CONCURRENCY` claims
+at once (default 2) and is auto-triggered on every document upload, sync, and delete.
 
 ### Roles & permissions (`enum Role`: USER, TEAM_LEAD, ADMIN)
 
@@ -59,7 +59,7 @@ Admin is unrestricted.
 - **Admin UI:** `/admin/claims`, `/admin/claim-id-rules`, `/admin/status-masters`,
   `/admin/doc-type-masters`, `/admin/claim-rules`, `/admin/scans`
 - **Team Lead / User UI:** `/claims` (dashboard) and `/claims/:id` (shared detail page)
-- **Bulk actions API:** `POST /api/claims/bulk/{validate,remarks,delete}` — send either
+- **Bulk actions API:** `POST /api/claims/bulk/{validate,remarks,delete,restore}` — send either
   `ids` (an explicit selection) or `filters` (everything matching the list filters). One
   call may touch at most 500 claims; above that it is refused with 422 `BULK_TOO_LARGE`
   and nothing is changed. Worth testing both bodies and the cap.

@@ -130,9 +130,9 @@ This is the moment that sells the product. The checks start **Pending** — you 
 > 🔎 **Land it:** *"These are genuine detector results on the actual documents — the
 > system really catches tampering, it isn't scripted."*
 >
-> ⚠️ **Reality check:** results come from the actual files. The QR detector scans
-> **images only**, and the specimens are mostly problem documents — so expect real
-> failures rather than a tidy all-green. That's the honest, credible version of the demo.
+> ⚠️ **Reality check:** results come from the actual files, and the specimens are mostly
+> problem documents — so expect real failures rather than a tidy all-green. That's the
+> honest, credible version of the demo.
 
 ---
 
