@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { DocumentTypeService } from '../documentTypeService.js';
 import {
   getTestPrisma,
@@ -80,5 +80,59 @@ describe('DocumentTypeService', () => {
         actorId
       )
     ).rejects.toMatchObject({ code: 'DUPLICATE_GOVT_CODE' });
+  });
+
+  // The race cases below use a hand-built P2002; this one lets MySQL and the real adapter
+  // raise it, so a driver upgrade that renames or drops the index in the error shows here.
+  it('maps the real adapter P2002 for a govt_code race to DUPLICATE_GOVT_CODE', async () => {
+    await service.create({ name: 'PAN', category: 'GOVT', govtCode: 'PAN' }, actorId);
+    const preCheckMissed = new DocumentTypeService({
+      documentTypeMaster: {
+        findUnique: async () => null,
+        create: (args: Prisma.DocumentTypeMasterCreateArgs) => prisma.documentTypeMaster.create(args),
+      },
+    } as unknown as PrismaClient);
+    await expect(
+      preCheckMissed.create({ name: 'PAN 2', category: 'GOVT', govtCode: 'PAN' }, actorId)
+    ).rejects.toMatchObject({ code: 'DUPLICATE_GOVT_CODE' });
+  });
+});
+
+describe('DocumentTypeService create race', () => {
+  // Shape captured from Prisma 7 + @prisma/adapter-mariadb on MySQL: the adapter's P2002
+  // carries the index in driverAdapterError and the message, and no meta.target.
+  const adapterP2002 = (index: string) =>
+    new Prisma.PrismaClientKnownRequestError(`Unique constraint failed on the constraint: \`${index}\``, {
+      code: 'P2002',
+      clientVersion: Prisma.prismaVersion.client,
+      meta: {
+        modelName: 'DocumentTypeMaster',
+        driverAdapterError: { cause: { kind: 'UniqueConstraintViolation', constraint: { index } } },
+      },
+    });
+  const raceLoser = (err: Error) =>
+    new DocumentTypeService({
+      documentTypeMaster: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockRejectedValue(err),
+      },
+    } as unknown as PrismaClient);
+
+  it('maps a govt_code collision that slips past the pre-check to DUPLICATE_GOVT_CODE', async () => {
+    await expect(
+      raceLoser(adapterP2002('document_type_masters_govt_code_key')).create(
+        { name: 'PAN 2', category: 'GOVT', govtCode: 'PAN' },
+        'actor'
+      )
+    ).rejects.toMatchObject({ code: 'DUPLICATE_GOVT_CODE' });
+  });
+
+  it('maps a name collision to DUPLICATE_NAME', async () => {
+    await expect(
+      raceLoser(adapterP2002('document_type_masters_name_key')).create(
+        { name: 'PAN', category: 'GOVT', govtCode: 'PAN' },
+        'actor'
+      )
+    ).rejects.toMatchObject({ code: 'DUPLICATE_NAME' });
   });
 });

@@ -5,7 +5,7 @@ them to people. This guide only covers the **extra** abilities. For the day-to-d
 claim handling (documents, checks, status, notes), read the
 [End-User Guide](02-end-user-guide.md) first.
 
-[← Back to the manual index](README.md)
+[← Back to the manual index](../README.md)
 
 ---
 

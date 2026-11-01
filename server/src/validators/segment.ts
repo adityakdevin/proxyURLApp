@@ -8,7 +8,7 @@
  *   doc ──> pagesFor ──> [{page, text}, ...] ──> classifyPage each ──> DocInstance[]
  *
  * page is the real 1-based page number wherever we have page boundaries, or null for a
- * page-less unit (pdf-parse fallback / plain image). Page is ALWAYS retained here
+ * page-less unit (plain image). Page is ALWAYS retained here
  * (spec decision 10) — collapsing to filename-only is a UI concern, never data loss.
  */
 import { ValidatorContext, ValidatorDoc } from './types.js';

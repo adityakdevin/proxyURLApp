@@ -78,13 +78,19 @@ Write-Host "------------------------------------------------"
 
 if (Get-Command node -ErrorAction SilentlyContinue) {
     $nodeVersion = node --version
+    # npm only warns on an engines mismatch, so an older Node would install and then fail.
+    if ([int]$nodeVersion.TrimStart('v').Split('.')[0] -lt 24) {
+        Write-Host "Node.js $nodeVersion is installed; this app needs Node.js 24." -ForegroundColor Red
+        Write-Host "Install the x64 .msi from https://nodejs.org/dist/latest-v24.x/ and restart this script."
+        exit 1
+    }
     Write-Info "Node.js already installed: $nodeVersion"
 } else {
     Write-Host ""
     Write-Host "Node.js is not installed." -ForegroundColor Red
     Write-Host ""
-    Write-Host "Please download and install Node.js 20 LTS from:"
-    Write-Host "  https://nodejs.org/dist/v20.18.0/node-v20.18.0-x64.msi" -ForegroundColor Cyan
+    Write-Host "Please download and install Node.js 24 LTS (the x64 .msi) from:"
+    Write-Host "  https://nodejs.org/dist/latest-v24.x/" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "After installing, restart this script."
     exit 1
@@ -194,6 +200,16 @@ Push-Location $InstallPath
 
 Write-Info "Running npm install..."
 npm install
+
+# Prisma 7's client has no postinstall, so npm install does not generate it, and the build
+# and the seed below both import it.
+Write-Info "Generating Prisma client..."
+npm run db:generate
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    Write-Err "Prisma client generation failed (exit $LASTEXITCODE)"
+    exit 1
+}
 
 Write-Info "Building application..."
 npm run build

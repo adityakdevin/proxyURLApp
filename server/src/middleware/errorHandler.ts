@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 
 export interface AppError extends Error {
   statusCode?: number;
+  // Express 5's router reports client errors (e.g. an undecodable route param) here only.
+  status?: number;
   code?: string;
 }
 
@@ -32,9 +34,9 @@ export const errorHandler = (
     }
   }
 
-  const statusCode = err.statusCode || 500;
+  const statusCode = err.statusCode || err.status || 500;
   const message = err.message || 'Internal Server Error';
-  const code = err.code || 'INTERNAL_ERROR';
+  const code = err.code || (statusCode < 500 ? 'BAD_REQUEST' : 'INTERNAL_ERROR');
 
   res.status(statusCode).json({
     error: message,

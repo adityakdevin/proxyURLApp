@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import bcrypt from 'bcrypt';
 
 /**
@@ -24,7 +24,7 @@ async function main(): Promise<void> {
       'seedE2e: set E2E_DATABASE_URL (or TEST_DATABASE_URL) to a disposable test schema. Refusing to guess.'
     );
   }
-  const prisma = new PrismaClient({ datasources: { db: { url: DB_URL } } });
+  const prisma = createPrisma(DB_URL);
   try {
     const passwordHash = await bcrypt.hash(ADMIN_PASS, ROUNDS);
     const admin = await prisma.user.upsert({

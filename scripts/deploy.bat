@@ -20,7 +20,7 @@ cd /d "%APP_DIR%"
 echo [1/7] Checking Node.js installation...
 node --version >nul 2>&1
 if %errorLevel% neq 0 (
-    echo [ERROR] Node.js is not installed. Please install Node.js 18+ from https://nodejs.org
+    echo [ERROR] Node.js is not installed. Please install Node.js 24 from https://nodejs.org
     pause
     exit /b 1
 )

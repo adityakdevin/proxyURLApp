@@ -22,7 +22,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '../src/lib/prisma.js';
 import { ClaimService } from '../src/services/claimService.js';
 import { DocumentService } from '../src/services/documentService.js';
 import { FsFileSystemPort } from '../src/services/fsFileSystemPort.js';
@@ -30,7 +30,7 @@ import { parseObservationWorkbook } from '../src/services/observationImportServi
 import { enqueue, kickDrain } from '../src/services/validationQueue.js';
 import { registry } from '../src/validators/registry.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 
 /** SubCategory the batch lands in (default: the demo "Warranty Claims"). */
 const SUBCATEGORY_NAME = process.env.SAMPLE_SUBCATEGORY ?? 'Warranty Claims';

@@ -34,6 +34,7 @@ const TX = { timeout: 30_000, maxWait: 15_000 };
 const MAX_DUP_REQUEUE = 20;
 import { resolveScanRoot } from '../lib/directoryReader.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
+import { withActiveTimeout } from '../lib/pdfExtractor.js';
 
 /** One shared duplicate value as both sides' DUP findings record it: field plus the same
  *  255-character norm the index matches on — the untruncated form could differ for two long
@@ -72,17 +73,11 @@ function checkTimeoutMs(): number {
  * AbortSignal threaded through every validator and the OCR port — do that if these start
  * stacking up.
  */
-function withTimeout<T>(p: Promise<T>, ms: number, key: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${key} timed out after ${Math.round(ms / 1000)}s`)),
-        ms
-      );
-    }),
-  ]).finally(() => clearTimeout(timer));
+function withTimeout<T>(run: () => Promise<T>, ms: number, key: string): Promise<T> {
+  // Time queued behind the other claim's PDF work is not this check's own.
+  return withActiveTimeout(run, ms, () => {
+    throw new Error(`${key} timed out after ${Math.round(ms / 1000)}s`);
+  });
 }
 
 /**
@@ -324,7 +319,7 @@ export class ValidationService {
         const startedAt = Date.now();
         let ran: Ran;
         try {
-          const outcome = await withTimeout(v.run(ctx), checkTimeoutMs(), v.key);
+          const outcome = await withTimeout(() => v.run(ctx), checkTimeoutMs(), v.key);
           // The validator's own verdict is stored. Warning-only runs used to be downgraded to
           // DOUBTFUL here; that tier is hidden from reviewers (2026-10-12), so anything that
           // must not pass silently is raised as an ERROR by its validator instead.

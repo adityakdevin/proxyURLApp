@@ -45,14 +45,15 @@ port is bound.
 
 **Dedicated MySQL test schema via `TEST_DATABASE_URL`, schema applied with
 `prisma db push`, self-contained fixture seeding, claim tables truncated between
-tests. CI uses an ephemeral MySQL 8 service container.**
+tests. CI uses ephemeral MySQL 5.7 service containers (production's version) for
+both `api-e2e` and `ui-e2e`.**
 
 Rationale:
 - Reuses the existing `server/src/__tests__/helpers/testDb.ts` pattern
   (`getTestPrisma` already honors `TEST_DATABASE_URL`; `truncateClaimsTables`
   already exists) — lowest friction, consistent with current unit/integration
   tests.
-- MySQL 8 defaults to **InnoDB + DYNAMIC** row format, which sidesteps the
+- MySQL 5.7.9+ (like 8) defaults to **InnoDB + DYNAMIC** row format, which sidesteps the
   2144-byte key-length failure that hit the legacy MyISAM/COMPACT Windows box on
   the `documents` table — so CI "just works" without `my.ini` tuning.
 - No Docker tooling required beyond GitHub Actions `services:`.
@@ -68,8 +69,8 @@ Rationale:
 don't depend on `db:seed` specifics:
 
 ```
-UserType + Project ─ Category ─ SubCategory ─ (StatusMaster, Claims)
-(a second, disjoint pair) ─ … ─ SubCategory   ← used for OUT_OF_SCOPE
+Project ─ Category ─ SubCategory ─ (StatusMaster, Claims)
+(a second, disjoint project) ─ … ─ SubCategory   ← used for OUT_OF_SCOPE
 Users: admin (scope ALL), teamLead + user (in-scope), otherTeamLead (disjoint)
 ```
 
@@ -114,12 +115,15 @@ server/
       documentsValidation.e2e.test.ts
       observations.e2e.test.ts
       claimRules.e2e.test.ts
+      claimBulk.e2e.test.ts
+      claimListValidationState.e2e.test.ts
+      upgradeCompat.e2e.test.ts
 playwright.config.ts         # UI E2E (webServer = npm run dev)
 e2e/
   global-setup.ts            # form login → storageState
   claims.smoke.spec.ts
   tsconfig.json / .gitignore
-.github/workflows/e2e.yml    # api-e2e + ui-e2e jobs (MySQL 8 service)
+.github/workflows/e2e.yml    # api-e2e + ui-e2e jobs (both MySQL 5.7)
 ```
 
 ---
@@ -143,6 +147,12 @@ e2e/
 ### API — documents + validation (`documentsValidation.e2e.test.ts`)
 - ✅ zero-doc claim → `POST /validate` (202) → poll → run `COMPLETED`, all 5 columns `DOCS_NOT_AVAILABLE`
 - ⏭️ (E2E_HEAVY) upload PNG → 201 + listed → delete → 200; drain settles
+- `GET /claims/:id/documents/:docId/content` answers 404 `FILE_NOT_FOUND` JSON, with no
+  `Content-Disposition`, for a file that stats but cannot be read
+- an empty file is served as a 200 with `Content-Length: 0`
+- a PDF under a dot-segment path is served as a 200 with its bytes, `application/pdf`,
+  `inline; filename=...`, and no `Accept-Ranges`, `Cache-Control` or `Last-Modified`
+- a client abort mid-download closes the server's file stream
 
 ### API — observations (`observations.e2e.test.ts`)
 - ✅ import create (`parsed/created/updated/failed`); business fields persisted
@@ -157,11 +167,20 @@ e2e/
 ### UI smoke (`claims.smoke.spec.ts`)
 - ✅ admin opens `/admin/claims` (not bounced to `/login`)
 - ✅ `/claims` dashboard renders for the authenticated session
+- DataTable, server pagination: `/admin/projects` shows a data row and `Page 1 of N`. The
+  test creates its own project via `POST /api/admin/projects` and deletes it afterwards,
+  because a fresh CI database holds only the E2E admin and the Users list leaves admins out
+- DataTable, client pagination: `/admin/sessions` shows a data row and the pager
+  (global-setup's login is an active session)
+- `/jbig2.wasm` and `/openjpeg.wasm` are served as real wasm, not the SPA
+  fallback's `index.html`
+- Signed out, the `/login` Sign in button gets the `--primary` theme colour and the pointer
+  cursor (Tailwind 4 compiled)
 
 ### Backlog (next iterations)
 - Pagination/filter/search on list + `GET /claims/export` workbook assertions
 - TEAM_LEAD scoped list visibility (only own scope) vs ADMIN global list
-- Document content download (MIME/inline vs attachment), `documents/sync`
+- Document content download as an attachment (non-inline MIME types), `documents/sync`
 - Heavy validators (SPELL/QR/META/INTRA/FULL) against real fixture files —
   better as **service-level integration tests** (stub `registry`) than slow E2E
 - UI journeys: create-claim dialog, add-remark + status change, observation
@@ -213,9 +232,10 @@ npm run test:e2e               # api then ui
 ```
 
 ### CI
-`.github/workflows/e2e.yml` runs `api-e2e` and `ui-e2e` on push/PR with a MySQL 8
-service container (`prisma db push` → run). `ui-e2e` additionally seeds the admin
-and installs the Chromium browser.
+`.github/workflows/e2e.yml` runs `api-e2e` and `ui-e2e` on push/PR, each against a MySQL
+5.7 service container (production's version) with
+`prisma db push`, then the suite. `api-e2e` also seeds and runs the server unit suite;
+`ui-e2e` additionally seeds the admin and installs the Chromium browser.
 
 ---
 

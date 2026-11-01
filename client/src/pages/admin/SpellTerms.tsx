@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
+import type { DataTableColumn } from '@/components/shared/DataTable';
 import { MoreHorizontal, Plus, Pencil, Trash2, Power, PowerOff, BookUp } from 'lucide-react';
 import { useCrudResource } from '@/hooks/useCrudResource';
 import { DataTable } from '@/components/shared/DataTable';
@@ -165,7 +165,7 @@ export default function SpellTerms() {
     submit({ term: cleaned, expansion: exp || null });
   };
 
-  const columns: ColumnDef<SpellTerm>[] = [
+  const columns: DataTableColumn<SpellTerm>[] = [
     { accessorKey: 'term', header: 'Term' },
     {
       accessorKey: 'expansion',

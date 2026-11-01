@@ -5,6 +5,7 @@ import { SessionService } from '../services/sessionService.js';
 import { ProxyService } from '../services/proxyService.js';
 import { AuditLogService } from '../services/auditLogService.js';
 import { getHeadlessManager } from '../services/headlessManager.js';
+import { PROXY_SUBRESOURCE_ROUTE, proxySubPath } from '../lib/routeHelpers.js';
 import http from 'http';
 import https from 'https';
 
@@ -857,7 +858,7 @@ router.get('/health/headless', async (_req: Request, res: Response) => {
   }
 });
 
-router.all('/:opaqueId/*', async (req: Request, res: Response, _next: NextFunction) => {
+router.all(PROXY_SUBRESOURCE_ROUTE, async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const userId = await validateSession(req, res);
     if (!userId) return;
@@ -865,7 +866,7 @@ router.all('/:opaqueId/*', async (req: Request, res: Response, _next: NextFuncti
     const prisma = req.app.get('prisma') as PrismaClient;
     const proxyService = new ProxyService(prisma);
     const { opaqueId } = req.params;
-    const subPath = req.params[0] || '';
+    const subPath = proxySubPath(req);
 
     // Check cache first
     let targetInfo = targetUrlCache.get(opaqueId);

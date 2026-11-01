@@ -1,5 +1,6 @@
+import { promises as fs } from 'fs';
+import path from 'path';
 import nspell from 'nspell';
-import enDictionary from 'dictionary-en';
 import { pluralStems } from './logic.js';
 
 /** The slice of nspell this codebase uses. */
@@ -9,11 +10,16 @@ export interface Spell {
 
 let spellPromise: Promise<Spell> | null = null;
 
-function loadSpell(): Promise<Spell> {
-  return new Promise<Spell>((resolve, reject) => {
-    // dictionary-en@3 is callback-style: load((err, {aff, dic}) => ...).
-    enDictionary((err, dict) => (err ? reject(err) : resolve(nspell(dict))));
-  });
+async function loadSpell(): Promise<Spell> {
+  // dictionary-en 4 is ESM with top-level await: require() cannot load it, and a native
+  // import() needs --experimental-vm-modules under Jest. So read the two Hunspell files its
+  // index.js reads; if a future major renames them, this fails loudly, not silently.
+  const dir = path.dirname(require.resolve('dictionary-en'));
+  const [aff, dic] = await Promise.all([
+    fs.readFile(path.join(dir, 'index.aff')),
+    fs.readFile(path.join(dir, 'index.dic')),
+  ]);
+  return nspell({ aff, dic });
 }
 
 /**

@@ -62,8 +62,10 @@ Found by: /ship adversarial pass, 2026-08-16.
 ### ~900 lines of new claims UI have no automated coverage
 **Priority:** P1
 `ClaimBulkBar`, `ClaimActionDialog`, `ClaimRowActions`, `ClaimJumpBox` and the selection
-logic in `DataTable` have no unit runner (the client workspace has none) and
-`e2e/claims.smoke.spec.ts` is 21 lines asserting two screens render. The risky semantics
+logic in `DataTable` have no unit runner (the client workspace has none), and
+`e2e/claims.smoke.spec.ts` only checks that two claims screens render, the DataTable pager
+in both pagination modes, the pdf.js decoder files and Tailwind 4 styling; none of it
+drives the bulk bar or the row menu. The risky semantics
 are the ids-vs-filters switch in the bulk bar and the role gates on the row menu.
 Fix: Playwright specs covering tick-rows → bulk bar count → "select all N matching" →
 Clear, plus non-admin storage states (only an ADMIN state exists today) to drive the
@@ -215,7 +217,7 @@ COMPARE 7, QR 8, REDFLAG 4 (junk names, impossible dates, Aadhaar mismatches fro
 QR DOB compare is format-sensitive (QR "1985-07-15" vs printed "15/07/1985") and is now
 reached on more card pages. The QR holder-name page rescue was removed in review; redo it so
 it rescues only junk-name misreads (612342, 631650 flag again). Also open: 627998 PAN read
-with a space, 045360 name misread, cardText's pdf-parse fallback.
+with a space, 045360 name misread.
 Fix: classify each new red on the 570-claim diff, then fix by cause.
 Found by: 570-claim comparison, 2026-10-16.
 
@@ -238,8 +240,131 @@ Found by: /ship review passes 1-3, 2026-10-16/17.
 - `qrPresentUnread` is decided per page; the bundled "No QR" line can disagree with it.
 Found by: /ship review passes 1-3, 2026-10-16/17.
 
+## Found while shipping PR #119
+
+### Creating an Admin from the Users screen fails validation
+**Priority:** P1
+`POST /api/admin/users` (`server/src/routes/admin/users.ts`) requires `projectId` to be a UUID
+and `subCategoryIds` to be an array for every role, but `client/src/pages/admin/Users.tsx`
+sends neither for an ADMIN, so the request should fail with 400 "Valid Project is required".
+Found by code reading, not reproduced; not caused by PR #119.
+Fix: make both validators conditional on `role !== 'ADMIN'` (and ignore them for admins), with
+an API e2e test that creates an admin.
+Found by: /ship spec review of PR #119, 2026-10-31.
+
+### Proxy sub-resources skip the access check once the target is cached
+**Priority:** P1
+In `server/src/routes/proxy.ts` the `/proxy/:opaqueId/*` handler calls
+`proxyService.validateAccess` only when `targetUrlCache` (a process-lifetime Map keyed by
+`opaqueId` alone) misses. After any authorized user has opened a URL, any authenticated user
+who knows its UUID reaches the target's sub-paths, including a user whose grant was revoked or
+whose URL config was deactivated, until the process restarts. Pre-existing, not from PR #119.
+Fix: call `validateAccess(userId, opaqueId)` on every sub-resource request (cache only the
+target URL), and add an e2e test: user A warms the cache, user B without a grant gets 403.
+Found by: /ship security specialist, PR #119, 2026-10-31.
+
+### Document errors can stick in the browser, and two timer edge cases
+**Priority:** P1 (fix before merging PR #119)
+- `GET /api/claims/:id/documents/:docId/content` (`server/src/routes/claimDocuments.ts`) now
+  serves with `res.sendFile`. send sets the file's `ETag` from the stat before it opens the
+  stream and, because Express listens for its errors, does not clear headers; the JSON 404
+  from the callback keeps that ETag and has no `Cache-Control`. A short sharing lock (EBUSY)
+  or ACL error on the scan share after the stat, or an `If-Unmodified-Since` request (412),
+  gives the browser a cacheable 404 that revalidates to 304 once the file is readable: the
+  reviewer keeps seeing "File not found" until the file changes or the cache is cleared. The
+  same ETag lets a 304 keep a stale `Content-Type`/`Content-Disposition` after a DB
+  `mimeType`/`fileName` edit. Fix: in the error branch remove `ETag` and set
+  `Cache-Control: no-store`; send `Cache-Control: private, no-cache` (or `no-store`) on
+  success; map `e.status` instead of answering every error `FILE_NOT_FOUND`; assert no ETag in
+  the "404 after stat" e2e test.
+- Same route: `res.sendFile` throws a `TypeError` for a non-absolute path (a SCANNED document
+  with `CLAIMS_SCAN_ROOT` unset and a relative, or Windows-style on a non-Windows host,
+  `storagePath`), which reaches the error handler as a 500 with the file's headers still set;
+  the old code answered 404. Resolve the path or check `path.isAbsolute` first.
+- `withActiveTimeout` and `QueueWait` (`server/src/lib/pdfExtractor.ts`) measure with
+  `Date.now()`, so a wall-clock step (w32time, VM resume) moves the check and META timeouts;
+  use `performance.now()`.
+- `VALIDATION_CHECK_TIMEOUT_MS` above 2^31-1 makes Node clamp each timer to 1 ms, and
+  `withActiveTimeout`'s `check()` then reschedules forever, writing a `TimeoutOverflowWarning`
+  per tick to the PM2 log. Clamp in `checkTimeoutMs()` (`server/src/services/validationService.ts`)
+  or in `check()`.
+Found by: /ship fix-check and adversarial reviews, PR #119, 2026-11-01.
+
+### A slow or hung PDF is still counted as a missing document
+**Priority:** P2
+PR #119 now leaves time queued for a pdf.js turn out of the check and META timeouts
+(`withActiveTimeout` in `server/src/lib/pdfExtractor.ts`) and reports a document that ran out
+of time as `META_EXTRACT_TIMEOUT` instead of empty text. Still open:
+- `META_EXTRACT_TIMEOUT` is a META warning only, which reviewers do not see; FULL
+  (`server/src/validators/fullValidator.ts`) still raises `FULL_MISSING_TYPE` for that unread
+  document. FULL should report a whole unread document the way it reports pages past the cap.
+- The abandoned extraction is not cancelled, so it keeps queueing pdf.js and OCR work into the
+  run's later checks, and its later queue turns pause the parent check's timeout.
+- `QueueWait` leaves out every queued wait in the timed call, including waits behind the same
+  check's own work (both OCR lanes asking for a high-res `rasterizePdf` retry), so a hung render
+  pauses the budget for up to `PDFJS_TURN_MAX_MS` (600 s). Excluding only waits behind another
+  caller's turn would need the queue to know who holds it.
+- The turn bound still releases silently; log a warning when it fires.
+Found by: /ship performance, state-machines, fix-check and adversarial reviews, PR #119,
+2026-10-31/2026-11-01.
+
+### Windows deploy scripts can stop or damage production
+**Priority:** P2
+- `scripts/deploy.bat` runs `prisma migrate deploy` and falls back to
+  `prisma db push --accept-data-loss` on the production database; this project uses
+  `db push` only. Delete the script or point it at `npm run deploy`.
+- The Node 24 floor is only a warning on an existing box (`engines` without
+  `engine-strict`), and `scripts/pm2-boot.bat` starts PM2 even when the deploy step failed.
+  Add `.npmrc` `engine-strict=true` and check the deploy exit code.
+- `npm run redeploy` now installs Chromium before `pm2 stop`, so a failed download no longer
+  leaves the app stopped, but that install runs Playwright's browser cleanup under the live
+  server: after a Playwright bump it can remove the Chromium revision the running app still
+  uses, and if the download then fails, HEADLESS URLs fail until the next deploy. Consider
+  `PLAYWRIGHT_SKIP_BROWSER_GC=1` for the pre-stop install.
+- The rollback steps in `docs/DEPLOYMENT.md` run `npm install` and the build without
+  `npm run db:generate`, which Prisma 7 needs.
+Found by: /ship red team and adversarial reviews, PR #119, 2026-10-31.
+
+### Env-loading and comment leftovers from PR #119
+**Priority:** P3
+- `server/scripts/backup-db.js` calls `dotenv.config` without `override: false`, so a set
+  `DOTENV_OVERRIDE` makes it back up the database in `server/.env` instead of the exported one.
+- `server/prisma.config.ts` passes no `path`, so `DOTENV_PATH` can redirect which `.env` the
+  Prisma CLI loads.
+- `.githooks/pre-push` runs `prisma db push` but never `db:generate`, so after a schema pull it
+  tests against a stale client.
+- `scripts/start-app.bat` generates the client on every start; moving that step into the
+  `npm install` block would match the old postinstall and keep a schema change without
+  `db:push` failing at build time rather than at runtime.
+- Stale comments: `extractPdf`'s docstring still mentions a text-only fallback (now OCR);
+  `cardImageResolution.test.ts` says no neighbouring test runs pdf.js (pdfExtractor.test.ts
+  does, in a child process); `server/src/lib/prisma.ts` names `SESSION_SECRET`, which no
+  code reads; `server/scripts/spell-check.ts` says it flags what SPELL flags, but SPELL also
+  accepts glossary terms and `KNOWN_LOCAL_WORDS` and matches `PLACES`, so the script can still
+  report "Pune" as a near-miss of "june".
+Found by: /ship maintainability specialist, fix-check and adversarial reviews, PR #119,
+2026-10-31.
+
+## CI
+
+### `main` has no branch protection, so a red dependency bump can still merge
+**Priority:** P1
+The `build`, `api-e2e` and `ui-e2e` checks run on every PR, but nothing requires them: a
+grouped Dependabot PR (or any PR) can merge with a failing check. Deferred from plan:
+`docs/superpowers/plans/2026-10-24-dependency-upgrade.md` (Task 11, Step 5).
+Fix: once `build` has run on `main`, require the three contexts with `enforce_admins` on
+(the plan has the exact `gh api -X PUT .../branches/main/protection` call). Needs the repo
+owner's go-ahead at that moment.
+Found by: /ship plan-completion audit, 2026-10-30.
+
 ## Completed
 
+- **Docs described a 30-minute, single-session login** - README, TESTING, CLAUDE.md, SPEC and
+  the user guides now describe the 8h sliding idle timeout (`SESSION_MAX_AGE_MS`) and up to 3
+  concurrent sessions (`SESSION_MAX_PER_USER`). (2026-10-31, PR #119)
+- **Docs described a "User Type + Project" access scope** - rewritten for one Project per user
+  plus the Sub-Categories granted within it, including the docs/README.md scope diagram.
+  (2026-10-31, PR #119)
 - **Bulk actions on a filter set could target claims the reviewer never selected** — `allMatching`
   survived the bulk bar rendering `null`, so unticking every row and ticking a different one
   came back still aimed at every matching claim. Reset on an empty selection. (2026-08-16)

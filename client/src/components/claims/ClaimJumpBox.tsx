@@ -95,7 +95,7 @@ export function ClaimJumpBox({
     };
   }, [term]);
 
-  const flashTimer = useRef<ReturnType<typeof setTimeout>>();
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(flashTimer.current), []);
   const flash = (message: string) => {
     setError(message);
@@ -180,7 +180,7 @@ export function ClaimJumpBox({
           // Focus after the input exists, so the click lands straight in the field.
           requestAnimationFrame(() => inputRef.current?.focus());
         }}
-        className="flex items-center rounded border p-1.5 text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+        className="flex items-center rounded border p-1.5 text-gray-600 hover:bg-gray-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
       >
         <Search className="h-3.5 w-3.5" />
       </button>
@@ -224,7 +224,7 @@ export function ClaimJumpBox({
         autoComplete="off"
         className={
           inputClassName ??
-          'h-9 w-52 rounded-md border border-gray-200 pl-7 pr-8 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600'
+          'h-9 w-52 rounded-md border border-gray-200 bg-white pl-7 pr-8 text-sm focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600'
         }
       />
       <button
@@ -290,7 +290,7 @@ export function ClaimJumpBox({
         <p
           role="status"
           aria-live="polite"
-          className="absolute right-0 top-full z-30 mt-1 whitespace-nowrap rounded bg-red-50 px-2 py-1 text-xs text-red-600 shadow"
+          className="absolute right-0 top-full z-30 mt-1 whitespace-nowrap rounded bg-red-50 px-2 py-1 text-xs text-red-600 shadow-sm"
         >
           {error}
         </p>

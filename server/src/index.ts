@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import https from 'node:https';
-import { PrismaClient } from '@prisma/client';
+// Must stay the first import that reads the environment: it loads server/.env, which
+// app.js and the services read at module evaluation.
+import { createPrisma } from './lib/prisma.js';
 
 // App factory (routes + middleware, no listen/sweeps)
 import { createApp } from './app.js';
@@ -13,7 +15,7 @@ import { ValidationService } from './services/validationService.js';
 import { enqueue, kickDrain } from './services/validationQueue.js';
 import { registry as validatorRegistry } from './validators/registry.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma();
 const app = createApp(prisma);
 const PORT = process.env.PORT || 3001;
 const HTTPS_PORT = process.env.HTTPS_PORT || 443;
@@ -86,7 +88,10 @@ function runStartupSweeps() {
     .finally(() => kickDrain(prisma, validatorRegistry));
 }
 
-const server = app.listen(PORT, () => {
+// Express 5 also calls this on a bind error. Bail out so a failed bind never logs
+// "Server running" or re-queues claims; server.on('error') below reports and exits.
+const server = app.listen(PORT, (err?: Error) => {
+  if (err) return;
   console.log(`Server running on port ${PORT}`);
   runStartupSweeps(); // once, regardless of whether HTTPS is also enabled
 });

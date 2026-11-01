@@ -156,9 +156,9 @@ export default function AdminLayout() {
             {/* Collapsed there is no room for the heading, so the rail keeps the grouping
                 with a rule instead of dropping it. */}
             {collapsed ? (
-              <div className="mx-2 my-3 border-t" />
+              <div className="mx-2 border-t" />
             ) : (
-              <div className="mt-6 mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+              <div className="px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
                 Claims Config
               </div>
             )}
