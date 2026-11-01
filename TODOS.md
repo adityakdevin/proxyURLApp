@@ -263,18 +263,50 @@ Fix: call `validateAccess(userId, opaqueId)` on every sub-resource request (cach
 target URL), and add an e2e test: user A warms the cache, user B without a grant gets 403.
 Found by: /ship security specialist, PR #119, 2026-10-31.
 
-### A slow or hung PDF turns into silent empty text
+### Document errors can stick in the browser, and two timer edge cases
+**Priority:** P1 (fix before merging PR #119)
+- `GET /api/claims/:id/documents/:docId/content` (`server/src/routes/claimDocuments.ts`) now
+  serves with `res.sendFile`. send sets the file's `ETag` from the stat before it opens the
+  stream and, because Express listens for its errors, does not clear headers; the JSON 404
+  from the callback keeps that ETag and has no `Cache-Control`. A short sharing lock (EBUSY)
+  or ACL error on the scan share after the stat, or an `If-Unmodified-Since` request (412),
+  gives the browser a cacheable 404 that revalidates to 304 once the file is readable: the
+  reviewer keeps seeing "File not found" until the file changes or the cache is cleared. The
+  same ETag lets a 304 keep a stale `Content-Type`/`Content-Disposition` after a DB
+  `mimeType`/`fileName` edit. Fix: in the error branch remove `ETag` and set
+  `Cache-Control: no-store`; send `Cache-Control: private, no-cache` (or `no-store`) on
+  success; map `e.status` instead of answering every error `FILE_NOT_FOUND`; assert no ETag in
+  the "404 after stat" e2e test.
+- Same route: `res.sendFile` throws a `TypeError` for a non-absolute path (a SCANNED document
+  with `CLAIMS_SCAN_ROOT` unset and a relative, or Windows-style on a non-Windows host,
+  `storagePath`), which reaches the error handler as a 500 with the file's headers still set;
+  the old code answered 404. Resolve the path or check `path.isAbsolute` first.
+- `withActiveTimeout` and `QueueWait` (`server/src/lib/pdfExtractor.ts`) measure with
+  `Date.now()`, so a wall-clock step (w32time, VM resume) moves the check and META timeouts;
+  use `performance.now()`.
+- `VALIDATION_CHECK_TIMEOUT_MS` above 2^31-1 makes Node clamp each timer to 1 ms, and
+  `withActiveTimeout`'s `check()` then reschedules forever, writing a `TimeoutOverflowWarning`
+  per tick to the PM2 log. Clamp in `checkTimeoutMs()` (`server/src/services/validationService.ts`)
+  or in `check()`.
+Found by: /ship fix-check and adversarial reviews, PR #119, 2026-11-01.
+
+### A slow or hung PDF is still counted as a missing document
 **Priority:** P2
-META wraps each document's extraction in `withTimeout` (`PDF_EXTRACT_TIMEOUT_MS`, 300 s, in
-`server/src/validators/metaValidator.ts`) and on timeout returns empty text with no flag, so
-SPELL, INTRA and FULL read nothing and FULL can report required documents as missing. PR #119
-made pdf.js open one document at a time per process (`oneDocumentAtATime` in
-`server/src/lib/pdfExtractor.ts`), so time spent waiting behind another claim's pdf.js turn
-now counts against that budget; the turn bound (`PDFJS_TURN_MAX_MS`, 600 s) also releases
-silently.
-Fix: mark a timed-out document as unread (as `truncatedPages` does) instead of empty, log a
-warning when the turn bound fires, and keep that bound well below the check timeout.
-Found by: /ship performance, state-machines and adversarial reviews, PR #119, 2026-10-31.
+PR #119 now leaves time queued for a pdf.js turn out of the check and META timeouts
+(`withActiveTimeout` in `server/src/lib/pdfExtractor.ts`) and reports a document that ran out
+of time as `META_EXTRACT_TIMEOUT` instead of empty text. Still open:
+- `META_EXTRACT_TIMEOUT` is a META warning only, which reviewers do not see; FULL
+  (`server/src/validators/fullValidator.ts`) still raises `FULL_MISSING_TYPE` for that unread
+  document. FULL should report a whole unread document the way it reports pages past the cap.
+- The abandoned extraction is not cancelled, so it keeps queueing pdf.js and OCR work into the
+  run's later checks, and its later queue turns pause the parent check's timeout.
+- `QueueWait` leaves out every queued wait in the timed call, including waits behind the same
+  check's own work (both OCR lanes asking for a high-res `rasterizePdf` retry), so a hung render
+  pauses the budget for up to `PDFJS_TURN_MAX_MS` (600 s). Excluding only waits behind another
+  caller's turn would need the queue to know who holds it.
+- The turn bound still releases silently; log a warning when it fires.
+Found by: /ship performance, state-machines, fix-check and adversarial reviews, PR #119,
+2026-10-31/2026-11-01.
 
 ### Windows deploy scripts can stop or damage production
 **Priority:** P2
@@ -284,9 +316,11 @@ Found by: /ship performance, state-machines and adversarial reviews, PR #119, 20
 - The Node 24 floor is only a warning on an existing box (`engines` without
   `engine-strict`), and `scripts/pm2-boot.bat` starts PM2 even when the deploy step failed.
   Add `.npmrc` `engine-strict=true` and check the deploy exit code.
-- `npm run redeploy` stops the app first, and `deploy` ends with
-  `playwright install chromium`; a failed download leaves the app stopped. Make that step
-  non-fatal or run it after `pm2 startOrRestart`.
+- `npm run redeploy` now installs Chromium before `pm2 stop`, so a failed download no longer
+  leaves the app stopped, but that install runs Playwright's browser cleanup under the live
+  server: after a Playwright bump it can remove the Chromium revision the running app still
+  uses, and if the download then fails, HEADLESS URLs fail until the next deploy. Consider
+  `PLAYWRIGHT_SKIP_BROWSER_GC=1` for the pre-stop install.
 - The rollback steps in `docs/DEPLOYMENT.md` run `npm install` and the build without
   `npm run db:generate`, which Prisma 7 needs.
 Found by: /ship red team and adversarial reviews, PR #119, 2026-10-31.
@@ -305,7 +339,9 @@ Found by: /ship red team and adversarial reviews, PR #119, 2026-10-31.
 - Stale comments: `extractPdf`'s docstring still mentions a text-only fallback (now OCR);
   `cardImageResolution.test.ts` says no neighbouring test runs pdf.js (pdfExtractor.test.ts
   does, in a child process); `server/src/lib/prisma.ts` names `SESSION_SECRET`, which no
-  code reads.
+  code reads; `server/scripts/spell-check.ts` says it flags what SPELL flags, but SPELL also
+  accepts glossary terms and `KNOWN_LOCAL_WORDS` and matches `PLACES`, so the script can still
+  report "Pune" as a near-miss of "june".
 Found by: /ship maintainability specialist, fix-check and adversarial reviews, PR #119,
 2026-10-31.
 
