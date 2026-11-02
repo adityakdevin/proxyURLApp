@@ -106,13 +106,19 @@ interface Extracted {
 function extractAll(ctx: ValidatorContext): Extracted[] {
   const out: Extracted[] = [];
   const seen = new Set<string>();
-  for (const [documentId, text] of ctx.shared) {
+  // Also a document whose main read gave META too little text to store: its second reads can
+  // still hold the ID number a small, blurry picture showed only to the crop read.
+  const documentIds = new Set([...ctx.shared.keys(), ...(ctx.secondReads?.keys() ?? [])]);
+  for (const documentId of documentIds) {
+    const text = ctx.shared.get(documentId);
     // Per-page where we have it, so a finding can point at a page the way red flags do.
     const pages = ctx.pageTexts.get(documentId);
     const units: { text: string; page: number | null; idsOnly?: boolean }[] = [
       ...(pages && pages.length > 0
         ? pages.map((t, i) => ({ text: t, page: i + 1 }))
-        : [{ text, page: null }]),
+        : text !== undefined
+          ? [{ text, page: null }]
+          : []),
       // Second reads are noisier than the main read: only ID numbers, which are checksummed
       // or pattern-bound, are trusted from them. Not POLICY_NO, UAN or PF_NO: free-form
       // labelled numbers a misread turns into false pairs. Listed last so the main read's row wins.

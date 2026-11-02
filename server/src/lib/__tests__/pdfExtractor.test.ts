@@ -3,6 +3,7 @@ import fs from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
+import { deflateSync } from 'zlib';
 import { imagePdf } from '../../__tests__/helpers/imagePdf.js';
 import {
   clipToPage,
@@ -117,6 +118,56 @@ function jpxScanPdf(blankFirstPage = false): Buffer {
     ]),
     ...(blankFirstPage ? [Buffer.from('<</Type/Page/Parent 2 0 R/MediaBox[0 0 1200 1600]>>')] : []),
   ];
+  const parts = [Buffer.from('%PDF-1.5\n')];
+  let size = parts[0].length;
+  const offsets = objs.map((o, i) => {
+    const part = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), o, Buffer.from('\nendobj\n')]);
+    parts.push(part);
+    size += part.length;
+    return size - part.length;
+  });
+  parts.push(
+    Buffer.from(
+      `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` +
+        offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('') +
+        `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${size}\n%%EOF\n`
+    )
+  );
+  return Buffer.concat(parts);
+}
+
+/** An A4 page whose only picture is a 700x450 px image in a /Stamp annotation's appearance:
+ *  Rect [300 500 500 650], form BBox [0 0 100 75] with `matrix`, the image filling the BBox. */
+function stampPdf(matrix = '1 0 0 1 0 0', extra: { rotate?: number; pageCm?: string } = {}): Buffer {
+  const pixels = deflateSync(Buffer.alloc(700 * 450));
+  const ap = 'q 100 0 0 75 0 0 cm /Im1 Do Q';
+  const objs = [
+    Buffer.from('<</Type/Catalog/Pages 2 0 R>>'),
+    Buffer.from('<</Type/Pages/Kids[3 0 R]/Count 1>>'),
+    Buffer.from(
+      '<</Type/Page/Parent 2 0 R/MediaBox[0 0 595.28 841.89]/Annots[4 0 R]' +
+        (extra.rotate ? `/Rotate ${extra.rotate}` : '') +
+        (extra.pageCm ? '/Resources<</XObject<</Im1 6 0 R>>>>/Contents 7 0 R' : '') +
+        '>>'
+    ),
+    Buffer.from('<</Type/Annot/Subtype/Stamp/Rect[300 500 500 650]/F 4/AP<</N 5 0 R>>>>'),
+    Buffer.from(
+      `<</Type/XObject/Subtype/Form/BBox[0 0 100 75]/Matrix[${matrix}]/Resources<</XObject<</Im1 6 0 R>>>>` +
+        `/Length ${ap.length}>>\nstream\n${ap}\nendstream`
+    ),
+    Buffer.concat([
+      Buffer.from(
+        '<</Type/XObject/Subtype/Image/Width 700/Height 450/ColorSpace/DeviceGray/BitsPerComponent 8' +
+          `/Filter/FlateDecode/Length ${pixels.length}>>\nstream\n`
+      ),
+      pixels,
+      Buffer.from('\nendstream'),
+    ]),
+  ];
+  if (extra.pageCm) {
+    const page = `q ${extra.pageCm} cm /Im1 Do Q`;
+    objs.push(Buffer.from(`<</Length ${page.length}>>\nstream\n${page}\nendstream`));
+  }
   const parts = [Buffer.from('%PDF-1.5\n')];
   let size = parts[0].length;
   const offsets = objs.map((o, i) => {
@@ -295,6 +346,60 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
         expect(got[i].box.h).toBeCloseTo(w.h, 6);
         expect(got[i].drawnWidthPt).toBeCloseTo(w.pt, 6);
       });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A pasted image stamp or signature: pdf.js draws an annotation's appearance at its Rect, not
+  // at the page origin, so the crop read and the flag's highlight must aim there too.
+  // Value: protects=a picture inside an annotation's appearance gets the box where the page shows it; fails_when=the walk ignores beginAnnotation's rect transform or appearance matrix, or applies them in the wrong order; why_new=the box landed in the bottom-left corner (P4 review M2); seam=none; no_claim=annotations drawn on their own canvas in a browser, hidden annotations
+  it('places a picture drawn by an annotation appearance at the annotation', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'stamp-pdf-'));
+    try {
+      const files = [stampPdf(), stampPdf('0 1 -1 0 0 0')].map((b, i) => {
+        const f = path.join(dir, `s${i}.pdf`);
+        fs.writeFileSync(f, b);
+        return f;
+      });
+      const got = runPdfChild(BOX_CHILD, files) as { width: number; box: Record<string, number>; drawnWidthPt: number }[];
+      // Rect [300 500 500 650] on a 595.28x841.89 pt page, top-left origin: the review's
+      // { x: 0.504, y: 0.228, w: 0.336, h: 0.178 } to three places. A quarter-turned /Matrix
+      // still fits the appearance to the Rect.
+      for (const g of got) {
+        expect(g.width).toBe(700);
+        expect(g.box.x).toBeCloseTo(300 / 595.28, 6);
+        expect(g.box.y).toBeCloseTo((841.89 - 650) / 841.89, 6);
+        expect(g.box.w).toBeCloseTo(200 / 595.28, 6);
+        expect(g.box.h).toBeCloseTo(150 / 841.89, 6);
+        expect(g.drawnWidthPt).toBeCloseTo(200, 6);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=an annotation picture on a turned page, and next to a page picture, is boxed where the page shows it, a pixel-width tie keeping the first; fails_when=the annotation walk ignores /Rotate, or its box replaces or merges with a page picture's; why_new=P4 review m3 (probed correct, unpinned); seam=none; no_claim=other rotations
+  it('boxes an annotation picture on a /Rotate 90 page and beside a page picture', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'stamp-more-'));
+    try {
+      const specs = [
+        stampPdf('1 0 0 1 0 0', { rotate: 90 }),
+        // Both pictures are 700 px wide, so the page image, drawn first, keeps the tie: its box
+        // alone, not the annotation's and not their union.
+        stampPdf('1 0 0 1 0 0', { pageCm: '150 0 0 60 50 50' }),
+      ];
+      const files = specs.map((b, i) => {
+        const f = path.join(dir, `m${i}.pdf`);
+        fs.writeFileSync(f, b);
+        return f;
+      });
+      const got = runPdfChild(BOX_CHILD, files) as { box: Record<string, number>; drawnWidthPt: number }[];
+      const near = (g: Record<string, number>, w: number[]) =>
+        ['x', 'y', 'w', 'h'].forEach((k, i) => expect(g[k]).toBeCloseTo(w[i], 3));
+      near(got[0].box, [0.594, 0.504, 0.178, 0.336]);
+      near(got[1].box, [50 / 595.28, (841.89 - 110) / 841.89, 150 / 595.28, 60 / 841.89]);
+      expect(got[1].drawnWidthPt).toBeCloseTo(150, 6);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

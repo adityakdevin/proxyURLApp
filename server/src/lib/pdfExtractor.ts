@@ -646,6 +646,12 @@ async function largestImageWidthPerPageUnqueued(
             stack.push(ctm);
             if (args?.[0]) ctm = concatCtm(args[0], ctm);
           } else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() ?? ctm;
+          else if (fn === OPS.beginAnnotation) {
+            // pdfjs 6 args: [id, rect, transform, matrix, ownCanvas]. Its canvas resets to the page's
+            // base transform, then applies transform and matrix, so the matrix acts first.
+            stack.push(ctm);
+            ctm = concatCtm(args[3], args[2]);
+          } else if (fn === OPS.endAnnotation) ctm = stack.pop() ?? ctm;
           const [width, height] =
             fn === OPS.paintImageXObject
               ? [args?.[1], args?.[2]]

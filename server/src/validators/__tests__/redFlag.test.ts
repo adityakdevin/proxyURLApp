@@ -500,4 +500,12 @@ describe('redFlagValidator picture reads', () => {
     );
     expect(out.findings!.some((f) => f.code === 'REDFLAG_SMALL_IMAGE_UNREAD')).toBe(false);
   });
+
+  // Value: protects=a claim with no classified page keeps the summary that says nothing was checked; fails_when=the picture-rule path returns 'No red flags found.' for it; why_new=P4 review m2; seam=none; no_claim=documents with pages
+  it('says no pages were checked when a picture-only claim raised nothing', async () => {
+    const out = await redFlagValidator.run(
+      ctx({ pageImages: new Map([['d1', new Map([[1, { ...small, width: 900, height: 900 }]])]]) })
+    );
+    expect(out).toMatchObject({ status: 'PASSED', summary: 'No document pages to check.' });
+  });
 });

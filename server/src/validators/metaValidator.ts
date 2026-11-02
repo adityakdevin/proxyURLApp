@@ -1,7 +1,13 @@
 import { promises as fs } from 'fs';
 import { basename } from 'path';
 import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox, SecondRead } from './types.js';
-import { pickImageCheckPages, pickUpscaleRegions, pickCertRescalePages, certRescaleRegion } from './secondReads.js';
+import {
+  pickImageCheckPages,
+  pickUpscaleRegions,
+  pickCertRescalePages,
+  certRescaleRegion,
+  smallPicturePages,
+} from './secondReads.js';
 import { metaOutcome } from './logic.js';
 import {
   extractPdf,
@@ -65,6 +71,7 @@ type ExtractResult = {
   textLayerPages?: number[];
   pageImages?: Map<number, PageImage>;
   secondReads?: SecondRead[];
+  secondReadsSkipped?: number[];
 };
 
 /** A second-read step starts only with this much of the OCR deadline left. Its rasterizing and
@@ -77,29 +84,33 @@ const SECOND_READ_MIN_BUDGET_MS = 30_000;
  *  text-layer ID or certificate page, then a cropped, upscaled read of a small picture on a
  *  scanned page, and a scale-4 re-read of a scanned civil certificate with no registration
  *  number. They stay out of the page text so no other validator's input changes. A read the
- *  deadline cut is dropped silently: it is not an unread page. The picture scan costs time
- *  before OCR looks at the deadline, so it runs only before the deadline, and each read step
- *  only with SECOND_READ_MIN_BUDGET_MS left: running past it would trip META's overall timeout
- *  and lose the main text. */
+ *  deadline cut is not an unread page; a small-picture page that a cap or the deadline kept
+ *  from its read is listed in secondReadsSkipped, so REDFLAG does not judge it. The picture
+ *  scan costs time before OCR looks at the deadline, so it runs only before the deadline, and
+ *  each read step only with SECOND_READ_MIN_BUDGET_MS left: running past it would trip META's
+ *  overall timeout and lose the main text. */
 async function secondReadsFor(
   ctx: ValidatorContext,
   path: string,
   layer: { pageTexts: string[]; textlessPages: number[] } | null,
   deadline: number,
   mainPages: { page: number; text: string }[] = []
-): Promise<Pick<ExtractResult, 'pageImages' | 'secondReads'>> {
+): Promise<Pick<ExtractResult, 'pageImages' | 'secondReads' | 'secondReadsSkipped'>> {
   if (!layer) return {};
   // Same clock as TesseractOcrPort.extractPdf: queue time behind other PDFs is not charged.
   const left = () => deadline - activeNow();
   if (left() <= 0) return {};
   const reads: SecondRead[] = [];
   let images = new Map<number, PageImage>();
+  /** Pages a second read ran on, whatever it read. */
+  const tried = new Set<number>();
   try {
     const pages = Array.from({ length: layer.pageTexts.length }, (_, i) => i + 1);
     images = (await largestImageWidthPerPage(path, pages)) ?? images;
     const checks = pickImageCheckPages(layer.pageTexts, layer.textlessPages, images);
     if (checks.length > 0 && ctx.ocr.extractPdf && left() >= SECOND_READ_MIN_BUDGET_MS) {
       const r = await ctx.ocr.extractPdf(path, checks, { deadline });
+      for (const p of checks) if (!r.unreadPages?.includes(p)) tried.add(p);
       for (const p of r.pages ?? []) if (p.text) reads.push({ page: p.page, text: p.text, kind: 'IMAGE' });
     }
     // Crops of small pictures come first, then certificate re-reads: the deadline cuts the latest first.
@@ -114,6 +125,7 @@ async function secondReadsFor(
       const texts = await ctx.ocr.extractPdfRegions(path, tagged.map((t) => t.region), { deadline });
       tagged.forEach((t, i) => {
         const text = texts[i];
+        if (text !== null) tried.add(t.region.page);
         if (text) reads.push({ page: t.region.page, text, kind: t.kind });
       });
     }
@@ -121,9 +133,11 @@ async function secondReadsFor(
     // A failed extra read must never cost the document its main text.
     console.error('[meta] second reads failed', basename(path), err);
   }
+  const skipped = smallPicturePages(layer.pageTexts, layer.textlessPages, images).filter((p) => !tried.has(p));
   return {
     ...(images.size > 0 ? { pageImages: images } : {}),
     ...(reads.length > 0 ? { secondReads: reads } : {}),
+    ...(skipped.length > 0 ? { secondReadsSkipped: skipped } : {}),
   };
 }
 
@@ -202,12 +216,16 @@ async function extract(
       // reports per-page text, and only rebuild from word boxes when it doesn't.
       const pageTexts: string[] = [];
       if (r.pages) for (const p of r.pages) pageTexts[p.page - 1] = p.text;
+      // The port's failure shape (see the mixed path): no page was read, and DUP and REDFLAG
+      // would judge the second reads' pictures as the customer's. Those reads would also run on
+      // the workers that just failed.
+      const crashed = !r.unreadPages && !r.text?.trim();
       return {
         ...r,
         pageTexts: r.pages ? pageTexts : pageTextsFromWords(r.words),
         totalPages: r.totalPages,
         unreadPages: r.unreadPages,
-        ...(await secondReadsFor(ctx, doc.readablePath, withCoords, deadline, r.pages)),
+        ...(crashed ? {} : await secondReadsFor(ctx, doc.readablePath, withCoords, deadline, r.pages)),
       };
     }
     return { text: '', words: [], pageTexts: [] };
@@ -340,6 +358,9 @@ export const metaValidator: Validator = {
       }
       if (extractedDoc.pageImages) (ctx.pageImages ??= new Map()).set(doc.id, extractedDoc.pageImages);
       if (extractedDoc.secondReads) (ctx.secondReads ??= new Map()).set(doc.id, extractedDoc.secondReads);
+      if (extractedDoc.secondReadsSkipped) {
+        (ctx.secondReadsSkipped ??= new Map()).set(doc.id, extractedDoc.secondReadsSkipped);
+      }
       if (text && text.replace(/\s/g, '').length >= 3) {
         ctx.shared.set(doc.id, text);
         if (words.length > 0) ctx.wordBoxes.set(doc.id, words);

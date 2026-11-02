@@ -144,13 +144,20 @@ const SECOND_CHILD = `
 const [, file] = process.argv;
 const { metaValidator } = await import(process.env.TARGET_URL);
 const { redFlagValidator } = await import(new URL('./redFlagValidator.ts', process.env.TARGET_URL).href);
+const { dupValidator } = await import(new URL('./dupValidator.ts', process.env.TARGET_URL).href);
 const pdfCalls = [];
 const regionCalls = [];
+const dupRows = [];
 const c = {
   claim: { id: 'c', claimId: 'C1', subCategoryId: 's' },
   documents: [{ id: 'd1', fileName: 'f.pdf', storagePath: file, readablePath: file,
     mimeType: 'application/pdf', source: 'SCANNED', documentTypeId: null }],
-  prisma: {},
+  // DUP's index of this claim's values; no other claim holds any.
+  prisma: { claimFieldValue: {
+    deleteMany: async () => ({}),
+    createMany: async ({ data }) => dupRows.push(...data.map(({ field, norm, page }) => ({ field, norm, page }))),
+    findMany: async () => [],
+  } },
   ocr: {
     extractImageText: async () => '',
     extractPdf: async (_path, only, opts) => {
@@ -186,16 +193,20 @@ const c = {
     extractPdfRegions: async (_path, regions, opts) => {
       regionCalls.push([regions, opts]);
       const mode = process.env.REGION_TEXT;
-      return regions.map((r) => (mode === 'none' ? '' : mode === 'tagged' ? 'region p' + r.page + ' x' + r.scale : 'CROP TEXT'));
+      // 'first-only': the port's deadline came before any region but the first could start.
+      if (mode === 'first-only') return regions.map((_, i) => (i === 0 ? '' : null));
+      return regions.map((r) => (mode === 'none' ? '' : mode === 'tagged' ? 'region p' + r.page + ' x' + r.scale : mode ?? 'CROP TEXT'));
     },
   },
   shared: new Map(), wordBoxes: new Map(), pageTexts: new Map(),
 };
 const out = await metaValidator.run(c);
+if (process.env.DUP) await dupValidator.run(c);
 const red = process.env.REDFLAG ? await redFlagValidator.run(c) : undefined;
 console.log(JSON.stringify({
-  pdfCalls, regionCalls,
+  pdfCalls, regionCalls, dupRows,
   redFlagCodes: red && (red.findings ?? []).map((f) => f.code),
+  smallFlagPages: red && (red.findings ?? []).filter((f) => f.code === 'REDFLAG_SMALL_IMAGE_UNREAD').map((f) => f.page),
   secondReads: c.secondReads?.get('d1'),
   pageImages: c.pageImages?.get('d1') ? Object.fromEntries(c.pageImages.get('d1')) : undefined,
   pageTexts: c.pageTexts.get('d1'),
@@ -343,6 +354,8 @@ describe('metaValidator second OCR reads', () => {
     unread?: number[];
     codes: string[];
     redFlagCodes?: string[];
+    smallFlagPages?: number[];
+    dupRows: { field: string; norm: string; page: number | null }[];
   };
   const runSecond = (name: string, pdf: Buffer, env: Record<string, string> = {}) => {
     const file = path.join(dir, name);
@@ -478,6 +491,86 @@ describe('metaValidator second OCR reads', () => {
       { page: 1, text: 'region p1 x6', kind: 'UPSCALE' },
       { page: 2, text: 'region p2 x4', kind: 'RESCALE' },
     ]);
+  });
+
+  // The review's input (P4 M5): a 1-page scan with a small, blurry Aadhaar picture. The main read
+  // gets nothing from it, so META stores no page text; only the crop read can see the card.
+  // Value: protects=a document whose main read gave under 3 characters keeps its second reads for DUP and REDFLAG; fails_when=DUP walks only documents with page text, or REDFLAG skips a document with no classified pages; why_new=every second-read test had a readable main text; seam=none; no_claim=text-layer pages, DUP matches against other claims
+  it('judges the second reads of a document whose main read was empty', () => {
+    const AF = 'Government of India\nDOB: 01/01/1990\nMALE';
+    const run = (name: string, regionText: string) =>
+      runSecond(name, imagePdf({ cm: '60 0 0 80 20 100' }), {
+        MAIN_TEXT: '',
+        REGION_TEXT: regionText,
+        DUP: '1',
+        REDFLAG: '1',
+      });
+    const read = run('blank-read.pdf', AF + '\n2345 6789 0123');
+    expect(read.shared).toBeUndefined();
+    expect(read.codes).toContain('META_NO_TEXT');
+    expect(read.secondReads).toEqual([{ page: 1, text: AF + '\n2345 6789 0123', kind: 'UPSCALE' }]);
+    expect(read.dupRows).toEqual([{ field: 'AADHAAR', norm: '234567890123', page: 1 }]);
+    expect(read.redFlagCodes).not.toContain('REDFLAG_SMALL_IMAGE_UNREAD');
+
+    const unread = run('blank-unread.pdf', AF);
+    expect(unread.dupRows).toEqual([]);
+    expect(unread.smallFlagPages).toEqual([1]);
+  });
+
+  // Fix round 1, I1: a whole document with no readable text is most often a photo with no ID.
+  // Value: protects=a picture-only document is flagged only when some read of it shows ID evidence; fails_when=the no-instance path flags on an empty read or on vehicle words; why_new=P4X judged every such document; seam=none; no_claim=documents with classified pages (their rule is unchanged)
+  it('does not flag a picture-only document that shows no sign of an ID', () => {
+    const AF = 'Government of India\nDOB: 01/01/1990\nMALE';
+    const run = (name: string, regionText: string) =>
+      runSecond(name, imagePdf({ cm: '60 0 0 80 20 100' }), {
+        MAIN_TEXT: '',
+        REGION_TEXT: regionText,
+        DUP: '1',
+        REDFLAG: '1',
+      });
+    expect(run('photo-empty.pdf', 'none').smallFlagPages).toEqual([]);
+    expect(run('photo-car.pdf', 'TATA MOTORS\nNEXON XZ').smallFlagPages).toEqual([]);
+    expect(run('photo-af.pdf', AF).smallFlagPages).toEqual([1]);
+  });
+
+  // REDFLAG skipped such a scan for having no classified pages, which was all that kept a crashed
+  // main read (the port's { text: '', words: [] }) from being judged as the customer's picture.
+  // Value: protects=a scanned PDF whose main read crashed gets no second reads, so neither DUP nor REDFLAG judges a page we failed to read; fails_when=second reads run after the crash shape on the scanned-only path; why_new=REDFLAG now judges documents with no classified pages; seam=none; no_claim=the mixed path (its crash test above)
+  it('makes no second read of a scan whose main read crashed', () => {
+    const r = runSecond('crash-scan.pdf', imagePdf({ cm: '60 0 0 80 20 100' }), {
+      CRASH: '1',
+      REGION_TEXT: 'Government of India\nDOB: 01/01/1990\nMALE\n2345 6789 0123',
+      DUP: '1',
+      REDFLAG: '1',
+    });
+    expect(r.codes).toContain('META_NO_TEXT');
+    expect(r.regionCalls).toHaveLength(0);
+    expect(r.secondReads).toBeUndefined();
+    expect(r.dupRows).toEqual([]);
+    expect(r.redFlagCodes).not.toContain('REDFLAG_SMALL_IMAGE_UNREAD');
+  });
+
+  // The flag says a sharper read failed too, so a page no sharper read was tried on is not judged.
+  // Value: protects=a small-picture page whose crop read a cap or the deadline skipped is left out of REDFLAG_SMALL_IMAGE_UNREAD; fails_when=META stops recording the skipped pages or REDFLAG stops reading them; why_new=every small-picture test had its crop read (P4 review M6); seam=none; no_claim=a crashed picture read
+  it('does not judge a small picture whose second read was skipped', () => {
+    const AF = 'Government of India\nDOB: 01/01/1990\nMALE';
+    const nine = imagePdfPages(Array.from({ length: 9 }, () => ({ cm: '60 0 0 80 20 100' })));
+    const run = (name: string, env: Record<string, string>) =>
+      runSecond(name, nine, { MAIN_TEXT: AF, REDFLAG: '1', ...env });
+    // MAX_UPSCALE_PAGES is 8: page 9 gets no crop read. Pages 1-8 were read and gave no number.
+    const capped = run('nine.pdf', { REGION_TEXT: 'none' });
+    expect(capped.regionCalls[0][0].map((g) => g.page)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(capped.smallFlagPages).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // Under 30 s of the deadline left: no crop read at all.
+    expect(run('nine-late.pdf', { REGION_TEXT: 'none', LEFT_MS: '10000' }).smallFlagPages).toEqual([]);
+    // The port's deadline stopped every region but the first.
+    expect(run('nine-cut.pdf', { REGION_TEXT: 'first-only' }).smallFlagPages).toEqual([1]);
+
+    // A text-layer PAN page with no number and a small card picture: the picture read checks it.
+    // Four lines, so the layer spans the page and META does not OCR it as a captioned picture.
+    const pan = imagePdf({ cm: '160 0 0 100 20 60', text: [...PAN.slice(0, 3), 'RAVI KUMAR'] });
+    expect(runSecond('pan-read.pdf', pan, { REDFLAG: '1' }).smallFlagPages).toEqual([1]);
+    expect(runSecond('pan-late.pdf', pan, { REDFLAG: '1', IMAGE_UNREAD: '1' }).smallFlagPages).toEqual([]);
   });
 
   it('makes no second read for a page whose only picture is a logo', () => {

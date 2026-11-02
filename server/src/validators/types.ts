@@ -111,6 +111,9 @@ export interface ValidatorContext {
   pageImages?: Map<string, Map<number, PageImage>>;
   /** documentId -> extra OCR reads, kept out of shared/pageTexts (META fills; DUP, REDFLAG read). */
   secondReads?: Map<string, SecondRead[]>;
+  /** documentId -> 1-based small-picture pages whose second read a cap or the deadline skipped
+   *  (META fills; REDFLAG leaves them out of the small-picture flag, which claims a sharper read). */
+  secondReadsSkipped?: Map<string, number[]>;
 }
 
 /**

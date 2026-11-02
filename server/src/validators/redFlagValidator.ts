@@ -51,7 +51,7 @@ import {
 import { classifyDocType } from './crossDocLogic.js';
 import { PASSPORT_MRZ } from './logic.js';
 import { IDENTIFIER_LABEL } from './dupIdentifiers.js';
-import { layerImageMismatches, smallPictureUnread } from './secondReads.js';
+import { layerImageMismatches, showsIdEvidence, smallPictureUnread } from './secondReads.js';
 
 /** Per-page format rule per classified type. */
 const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlagFinding[])[]> = {
@@ -264,7 +264,9 @@ export const redFlagValidator: Validator = {
   async run(ctx) {
     const toFinding = makeToFinding(ctx);
     const instances = segment(ctx);
-    if (instances.length === 0) {
+    // A document whose main read gave META too little text to store has no pages here, but its
+    // pictures and second reads still answer the two picture rules.
+    if (instances.length === 0 && !ctx.pageImages?.size && !ctx.secondReads?.size) {
       return { status: 'PASSED', summary: 'No document pages to check.' };
     }
 
@@ -279,9 +281,58 @@ export const redFlagValidator: Validator = {
     const findings: FindingInput[] = [];
     const pans: { documentId: string; page: number; pan: string }[] = [];
     const aadhaarReads: AadhaarRead[] = [];
+
+    /** The picture rules, which read META's picture scan and second reads, not classified pages. */
+    const pictureRules = (doc: ValidatorDoc, needsIdEvidence = false) => {
+      // A page's picture read against its text layer: one of the two was edited.
+      for (const read of ctx.secondReads?.get(doc.id) ?? []) {
+        if (read.kind !== 'IMAGE') continue;
+        const layerText = ctx.pageTexts.get(doc.id)?.[read.page - 1] ?? '';
+        for (const m of layerImageMismatches(layerText, read.text)) {
+          findings.push({
+            documentId: doc.id,
+            code: 'REDFLAG_LAYER_IMAGE_MISMATCH',
+            severity: 'ERROR',
+            message: `${IDENTIFIER_LABEL[m.field]} on page ${read.page} of ${doc.fileName} reads "${m.image}" in the picture but "${m.layer}" in the text layer. One of the two was edited; check the page visually.`,
+            page: read.page,
+            bbox: ctx.pageImages?.get(doc.id)?.get(read.page)?.box ?? null,
+            data: { field: m.field, image: m.image, layer: m.layer },
+          });
+        }
+      }
+
+      // A small ID picture the OCR could not read a number from, even after the second reads.
+      // Not on a page OCR never read: that is our failure, and FULL already reports it. Nor on
+      // one a cap or the deadline kept from its second read: the message claims a sharper read.
+      const unread = ctx.unreadPages?.get(doc.id);
+      const skipped = ctx.secondReadsSkipped?.get(doc.id);
+      for (const [page, img] of ctx.pageImages?.get(doc.id) ?? []) {
+        if (unread === 'all' || unread?.includes(page) || skipped?.includes(page)) continue;
+        const texts = [
+          ctx.pageTexts.get(doc.id)?.[page - 1] ?? '',
+          ...(ctx.secondReads?.get(doc.id) ?? []).filter((r) => r.page === page).map((r) => r.text),
+        ];
+        if (needsIdEvidence && !showsIdEvidence(texts)) continue;
+        if (!smallPictureUnread(img, texts)) continue;
+        findings.push({
+          documentId: doc.id,
+          code: 'REDFLAG_SMALL_IMAGE_UNREAD',
+          severity: 'ERROR',
+          message: `Page ${page} of ${doc.fileName} is a small picture (${img.width}x${img.height} pixels) and no ID number could be read from it. Check it visually or ask for a clearer copy.`,
+          page,
+          bbox: img.box ?? null,
+          data: { width: img.width, height: img.height },
+        });
+      }
+    };
+
     for (const doc of ctx.documents) {
       const pages = byDoc.get(doc.id) ?? [];
-      if (pages.length === 0) continue;
+      if (pages.length === 0) {
+        // No text to judge the page by, so only an ID-looking read can make it an unread ID.
+        pictureRules(doc, true);
+        continue;
+      }
       const codes = new Set(pages.map((p) => p.govtCode));
       const pdf = (doc.mimeType ?? '') === 'application/pdf';
       const stats = pdf ? await pdfPageTextStats(doc.readablePath) : [];
@@ -322,43 +373,7 @@ export const redFlagValidator: Validator = {
         for (const rule of rules) for (const f of rule(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
       }
 
-      // A page's picture read against its text layer: one of the two was edited.
-      for (const read of ctx.secondReads?.get(doc.id) ?? []) {
-        if (read.kind !== 'IMAGE') continue;
-        const layerText = ctx.pageTexts.get(doc.id)?.[read.page - 1] ?? '';
-        for (const m of layerImageMismatches(layerText, read.text)) {
-          findings.push({
-            documentId: doc.id,
-            code: 'REDFLAG_LAYER_IMAGE_MISMATCH',
-            severity: 'ERROR',
-            message: `${IDENTIFIER_LABEL[m.field]} on page ${read.page} of ${doc.fileName} reads "${m.image}" in the picture but "${m.layer}" in the text layer. One of the two was edited; check the page visually.`,
-            page: read.page,
-            bbox: ctx.pageImages?.get(doc.id)?.get(read.page)?.box ?? null,
-            data: { field: m.field, image: m.image, layer: m.layer },
-          });
-        }
-      }
-
-      // A small ID picture the OCR could not read a number from, even after the second reads.
-      // Not on a page OCR never read: that is our failure, and FULL already reports it.
-      const unread = ctx.unreadPages?.get(doc.id);
-      for (const [page, img] of ctx.pageImages?.get(doc.id) ?? []) {
-        if (unread === 'all' || unread?.includes(page)) continue;
-        const texts = [
-          ctx.pageTexts.get(doc.id)?.[page - 1] ?? '',
-          ...(ctx.secondReads?.get(doc.id) ?? []).filter((r) => r.page === page).map((r) => r.text),
-        ];
-        if (!smallPictureUnread(img, texts)) continue;
-        findings.push({
-          documentId: doc.id,
-          code: 'REDFLAG_SMALL_IMAGE_UNREAD',
-          severity: 'ERROR',
-          message: `Page ${page} of ${doc.fileName} is a small picture (${img.width}x${img.height} pixels) and no ID number could be read from it. Check it visually or ask for a clearer copy.`,
-          page,
-          bbox: img.box ?? null,
-          data: { width: img.width, height: img.height },
-        });
-      }
+      pictureRules(doc);
 
       // Cross-page rules over ALL of this document's pages (a back side may be unclassified).
       const asPages = pages.map((p) => ({ page: p.page ?? 1, text: p.text }));
@@ -478,6 +493,9 @@ export const redFlagValidator: Validator = {
         findings,
         details: { counts },
       };
+    }
+    if (instances.length === 0 && findings.length === 0) {
+      return { status: 'PASSED', summary: 'No document pages to check.' };
     }
     return {
       status: 'PASSED',

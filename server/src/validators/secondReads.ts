@@ -26,16 +26,17 @@ const cover = (img?: PageImage): number => (img?.box ? img.box.w * img.box.h : 0
 const isSmallPicture = (img: PageImage): boolean =>
   Math.max(img.width, img.height) < SMALL_PICTURE_MAX_PX && cover(img) >= SMALL_PICTURE_MIN_COVER;
 
-/** Text-layer ID or certificate pages whose picture is worth its own OCR read. */
+/** Text-layer ID or certificate pages whose picture is worth its own OCR read, at most `max`. */
 export function pickImageCheckPages(
   layerPageTexts: string[],
   textlessPages: number[],
-  images: Map<number, PageImage>
+  images: Map<number, PageImage>,
+  max = MAX_IMAGE_CHECK_PAGES
 ): number[] {
   const out: number[] = [];
   layerPageTexts.forEach((text, i) => {
     const page = i + 1;
-    if (out.length >= MAX_IMAGE_CHECK_PAGES || textlessPages.includes(page) || !text.trim()) return;
+    if (out.length >= max || textlessPages.includes(page) || !text.trim()) return;
     if (!classifyPage(text) && !CERT_WORDS.test(text)) return;
     if (cover(images.get(page)) >= IMAGE_CHECK_MIN_COVER) out.push(page);
   });
@@ -57,6 +58,19 @@ export function pickUpscaleRegions(textlessPages: number[], images: Map<number, 
     out.push({ page, box: img.box, scale: upscaleScale(img.drawnWidthPt) });
   }
   return out;
+}
+
+/** Small-picture pages a second read is meant for, caps aside: every scanned one (a crop read)
+ *  and each text-layer one a picture read checks. A certificate re-read skips small pictures. */
+export function smallPicturePages(
+  layerPageTexts: string[],
+  textlessPages: number[],
+  images: Map<number, PageImage>
+): number[] {
+  return [...pickImageCheckPages(layerPageTexts, textlessPages, images, Infinity), ...textlessPages].filter((p) => {
+    const img = images.get(p);
+    return !!img && isSmallPicture(img);
+  });
 }
 
 /** OCR'd pages that name a civil certificate but gave no CERT_REG_NO, in page order, capped. */
@@ -129,4 +143,16 @@ export function smallPictureUnread(img: PageImage, texts: string[]): boolean {
   if (extractIdentifiers(joined).some((i) => i.field !== 'POLICY_NO')) return false;
   const type = classifyDocType(joined);
   return !!classifyPage(joined) || type === null || type === 'KYC';
+}
+
+/** Issuer words a government ID prints. */
+const ID_ISSUER = /government of india|income tax|aadhaa?r|uidai|election commission|driving licen[cs]e|republic of india/i;
+
+/**
+ * True when some read of a page shows it is an ID. A document with no readable text gets
+ * smallPictureUnread's "nothing read" rule only on this evidence: most such documents are photos.
+ */
+export function showsIdEvidence(texts: string[]): boolean {
+  const joined = texts.join('\n');
+  return !!classifyPage(joined) || classifyDocType(joined) === 'KYC' || ID_ISSUER.test(joined);
 }

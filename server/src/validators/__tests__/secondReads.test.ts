@@ -5,6 +5,7 @@ import {
   upscaleScale,
   layerImageMismatches,
   smallPictureUnread,
+  smallPicturePages,
 } from '../secondReads.js';
 
 const H = 'INCOME TAX DEPARTMENT\nGOVT. OF INDIA\nPermanent Account Number Card\n';
@@ -47,6 +48,22 @@ describe('pickUpscaleRegions', () => {
   });
   it('crops nothing on text-layer pages', () => {
     expect(pickUpscaleRegions([], new Map([[1, small]]))).toEqual([]);
+  });
+});
+
+describe('smallPicturePages', () => {
+  // A small picture covering enough of a text-layer ID page for a picture read.
+  const smallCard = { ...small, box: { x: 0.1, y: 0.2, w: 0.5, h: 0.4 } };
+  // Value: protects=every small-picture page a second read is meant for is listed, past the picture-read cap too; fails_when=text-layer pages or pages past MAX_IMAGE_CHECK_PAGES drop out, or large pictures or non-ID text-layer pages get in; why_new=META's skip test reaches only scanned pages; seam=none; no_claim=which of them were read (META)
+  it('lists scanned small pictures and the text-layer ones a picture read checks', () => {
+    const inv = 'TAX INVOICE\nInvoice No: INV-1001\nAmount Rs 10,000';
+    const texts = [...Array(7).fill(H + 'PQRPT5678K'), inv, '', ''];
+    const images = new Map([
+      ...texts.slice(0, 8).map((_, i) => [i + 1, smallCard] as const),
+      [9, small] as const,
+      [10, { ...small, width: 1059, height: 1526 }] as const,
+    ]);
+    expect(smallPicturePages(texts, [9, 10], images)).toEqual([1, 2, 3, 4, 5, 6, 7, 9]);
   });
 });
 
