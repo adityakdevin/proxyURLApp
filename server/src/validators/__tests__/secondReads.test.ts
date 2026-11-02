@@ -139,8 +139,21 @@ describe('smallPictureUnread', () => {
     expect(smallPictureUnread(small, [GST + POLICY])).toBe(true);
     expect(smallPictureUnread(small, [AF + POLICY])).toBe(false);
   });
-  it('fires when nothing was read at all', () => {
-    expect(smallPictureUnread(small, [])).toBe(true);
+  // QA, 570 claims: 69 of 118 flagged pages showed no sign of an ID (letters and forms with a
+  // small photo on them). Every REDFLAG ERROR fails a claim, so the page must look like an ID.
+  // Value: protects=a small picture is judged only on a page some read shows to be an ID; fails_when=an unrecognised or empty page is flagged again; why_new=the rule fired on any unrecognised page (QA stop rule); seam=none; no_claim=a page whose ID text OCR could not read at all (manual check)
+  it('stays silent when no read shows the page is an ID', () => {
+    expect(smallPictureUnread(small, [])).toBe(false);
+    const letter = 'Delivery Note\nReceived the vehicle in good condition on 12/05/2026.\nSignature of customer';
+    expect(smallPictureUnread(small, [letter])).toBe(false);
+  });
+  it('fires on an unrecognised page that names an ID issuer', () => {
+    expect(smallPictureUnread(small, ['Republic of India\nName: RAVI KUMAR'])).toBe(true);
+  });
+  // Corpus row 7 p5: a policy page reads as GST from its insurer's GSTIN label.
+  it('stays silent for a policy page whose insurer GSTIN did not read', () => {
+    const policy = 'Private Car Package Policy\nPolicy No: 3001/12345678/00/000\nInsured: RAVI KUMAR\nPremium Rs 12,345\nGSTIN:';
+    expect(smallPictureUnread(small, [policy])).toBe(false);
   });
   // A clearer copy of these still has no PAN, Aadhaar or other identifier to read.
   it('stays silent for a staff ID card, a payslip and a DMS page', () => {

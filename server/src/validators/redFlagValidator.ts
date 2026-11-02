@@ -51,7 +51,7 @@ import {
 import { classifyDocType } from './crossDocLogic.js';
 import { PASSPORT_MRZ } from './logic.js';
 import { IDENTIFIER_LABEL } from './dupIdentifiers.js';
-import { layerImageMismatches, showsIdEvidence, smallPictureUnread } from './secondReads.js';
+import { layerImageMismatches, smallPictureUnread } from './secondReads.js';
 
 /** Per-page format rule per classified type. */
 const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlagFinding[])[]> = {
@@ -318,7 +318,7 @@ export const redFlagValidator: Validator = {
     const aadhaarReads: AadhaarRead[] = [];
 
     /** The picture rules, which read META's picture scan and second reads, not classified pages. */
-    const pictureRules = (doc: ValidatorDoc, needsIdEvidence = false) => {
+    const pictureRules = (doc: ValidatorDoc) => {
       // A page's picture read against its text layer: one of the two was edited.
       for (const read of ctx.secondReads?.get(doc.id) ?? []) {
         if (read.kind !== 'IMAGE') continue;
@@ -347,7 +347,6 @@ export const redFlagValidator: Validator = {
           ctx.pageTexts.get(doc.id)?.[page - 1] ?? '',
           ...(ctx.secondReads?.get(doc.id) ?? []).filter((r) => r.page === page).map((r) => r.text),
         ];
-        if (needsIdEvidence && !showsIdEvidence(texts)) continue;
         if (!smallPictureUnread(img, texts)) continue;
         findings.push({
           documentId: doc.id,
@@ -364,8 +363,7 @@ export const redFlagValidator: Validator = {
     for (const doc of ctx.documents) {
       const pages = byDoc.get(doc.id) ?? [];
       if (pages.length === 0) {
-        // No text to judge the page by, so only an ID-looking read can make it an unread ID.
-        pictureRules(doc, true);
+        pictureRules(doc);
         continue;
       }
       const codes = new Set(pages.map((p) => p.govtCode));

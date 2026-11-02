@@ -257,7 +257,10 @@ Found by: /ship review passes 1-3, 2026-10-16/17.
   the transparency guard covers the canvas path only.
 - A text-layer page with a small picture that the picture read never picks (cover 0.10-0.15, or
   unrecognised layer text) is judged by REDFLAG_SMALL_IMAGE_UNREAD on its layer text alone.
-Found by: client sheet 2026-10-31 fixes, review and corpus runs, 2026-11-02.
+- REDFLAG_SMALL_IMAGE_UNREAD fires only when some read shows the page is an ID. A small ID
+  picture that OCR reads as neither (corpus rows 42 p8 and 33 p12) is not flagged: manual review.
+  A policy page's insurer GSTIN label is not taken as a GST certificate.
+Found by: client sheet 2026-10-31 fixes, review, corpus and QA runs, 2026-11-02.
 
 ## Found while shipping PR #119
 

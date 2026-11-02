@@ -130,29 +130,23 @@ export function layerImageMismatches(layerText: string, imageText: string): Laye
   return out;
 }
 
+/** Issuer words a government ID prints. */
+const ID_ISSUER = /government of india|income tax|aadhaa?r|uidai|election commission|driving licen[cs]e|republic of india/i;
+
 /**
  * True when a small ID picture yielded no ID number in any read of its page.
  * `texts` is the page text plus every second read of that page.
- * An allow-list: only a government-ID class, a KYC page or an unrecognised page can be an ID.
- * Every other type (RC, insurance, invoice, staff ID, payslip, DMS, any added later) carries no
- * identifier by design, so a clearer copy would not silence the flag either.
+ * Some read must show the page is an ID: a government-ID class, a KYC page, or an issuer phrase on
+ * an unrecognised page. A small photo on a letter or form is no ID (QA: 69 of 118 flags), and every
+ * other type (RC, insurance, invoice, staff ID, payslip, DMS) carries no identifier by design.
  */
 export function smallPictureUnread(img: PageImage, texts: string[]): boolean {
   if (!isSmallPicture(img)) return false;
   const joined = texts.join('\n');
   if (extractIdentifiers(joined).some((i) => i.field !== 'POLICY_NO')) return false;
   const type = classifyDocType(joined);
-  return !!classifyPage(joined) || type === null || type === 'KYC';
-}
-
-/** Issuer words a government ID prints. */
-const ID_ISSUER = /government of india|income tax|aadhaa?r|uidai|election commission|driving licen[cs]e|republic of india/i;
-
-/**
- * True when some read of a page shows it is an ID. A document with no readable text gets
- * smallPictureUnread's "nothing read" rule only on this evidence: most such documents are photos.
- */
-export function showsIdEvidence(texts: string[]): boolean {
-  const joined = texts.join('\n');
-  return !!classifyPage(joined) || classifyDocType(joined) === 'KYC' || ID_ISSUER.test(joined);
+  const govt = classifyPage(joined);
+  // A policy reads as GST from its insurer's GSTIN label (corpus row 7 p5).
+  if (govt && !(govt === 'GST' && type === 'INSURANCE')) return true;
+  return type === 'KYC' || (type === null && ID_ISSUER.test(joined));
 }

@@ -518,7 +518,7 @@ describe('metaValidator second OCR reads', () => {
   });
 
   // Fix round 1, I1: a whole document with no readable text is most often a photo with no ID.
-  // Value: protects=a picture-only document is flagged only when some read of it shows ID evidence; fails_when=the no-instance path flags on an empty read or on vehicle words; why_new=P4X judged every such document; seam=none; no_claim=documents with classified pages (their rule is unchanged)
+  // Value: protects=a picture-only document is flagged only when some read of it shows ID evidence; fails_when=the no-instance path flags on an empty read or on vehicle words; why_new=P4X judged every such document; seam=none; no_claim=none
   it('does not flag a picture-only document that shows no sign of an ID', () => {
     const AF = 'Government of India\nDOB: 01/01/1990\nMALE';
     const run = (name: string, regionText: string) =>
