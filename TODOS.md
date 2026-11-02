@@ -263,32 +263,16 @@ Fix: call `validateAccess(userId, opaqueId)` on every sub-resource request (cach
 target URL), and add an e2e test: user A warms the cache, user B without a grant gets 403.
 Found by: /ship security specialist, PR #119, 2026-10-31.
 
-### Document errors can stick in the browser, and two timer edge cases
-**Priority:** P1 (fix before merging PR #119)
-- `GET /api/claims/:id/documents/:docId/content` (`server/src/routes/claimDocuments.ts`) now
-  serves with `res.sendFile`. send sets the file's `ETag` from the stat before it opens the
-  stream and, because Express listens for its errors, does not clear headers; the JSON 404
-  from the callback keeps that ETag and has no `Cache-Control`. A short sharing lock (EBUSY)
-  or ACL error on the scan share after the stat, or an `If-Unmodified-Since` request (412),
-  gives the browser a cacheable 404 that revalidates to 304 once the file is readable: the
-  reviewer keeps seeing "File not found" until the file changes or the cache is cleared. The
-  same ETag lets a 304 keep a stale `Content-Type`/`Content-Disposition` after a DB
-  `mimeType`/`fileName` edit. Fix: in the error branch remove `ETag` and set
-  `Cache-Control: no-store`; send `Cache-Control: private, no-cache` (or `no-store`) on
-  success; map `e.status` instead of answering every error `FILE_NOT_FOUND`; assert no ETag in
-  the "404 after stat" e2e test.
-- Same route: `res.sendFile` throws a `TypeError` for a non-absolute path (a SCANNED document
-  with `CLAIMS_SCAN_ROOT` unset and a relative, or Windows-style on a non-Windows host,
-  `storagePath`), which reaches the error handler as a 500 with the file's headers still set;
-  the old code answered 404. Resolve the path or check `path.isAbsolute` first.
-- `withActiveTimeout` and `QueueWait` (`server/src/lib/pdfExtractor.ts`) measure with
-  `Date.now()`, so a wall-clock step (w32time, VM resume) moves the check and META timeouts;
-  use `performance.now()`.
-- `VALIDATION_CHECK_TIMEOUT_MS` above 2^31-1 makes Node clamp each timer to 1 ms, and
-  `withActiveTimeout`'s `check()` then reschedules forever, writing a `TimeoutOverflowWarning`
-  per tick to the PM2 log. Clamp in `checkTimeoutMs()` (`server/src/services/validationService.ts`)
-  or in `check()`.
-Found by: /ship fix-check and adversarial reviews, PR #119, 2026-11-01.
+### The validator reads a scanned path the document viewer refuses
+**Priority:** P2
+`resolveServingPath` (`server/src/services/documentService.ts`) answers 404 for a SCANNED
+`storagePath` with a `..` segment, or one that is not absolute while `CLAIMS_SCAN_ROOT` is
+unset. The validator (`server/src/services/validationService.ts`, `resolveScanRoot(d.storagePath)`)
+applies neither check, so a relative path resolves against the server's working directory:
+validation can run on a file the reviewer then gets a 404 for. Share one resolver between the
+two, or apply the same checks before validating. The paths come from the admin-configured
+folder path.
+Found by: /review adversarial pass, `fix/document-404-etag`, 2026-11-01.
 
 ### A slow or hung PDF is still counted as a missing document
 **Priority:** P2
@@ -359,6 +343,13 @@ Found by: /ship plan-completion audit, 2026-10-30.
 
 ## Completed
 
+- **Document errors could stick in the browser, and two timer edge cases** - the claim
+  document route's error branch drops the file's `ETag`, sizes its own JSON (send had set the
+  file's `Content-Length`), sends `Cache-Control: no-store` and keeps send's status (412 stays
+  412; a read error such as a sharing lock is a 500 `FILE_READ_FAILED`); success sends
+  `private, no-cache`; a serving path that is not absolute answers 404 instead of a 500.
+  `withActiveTimeout` measures with `performance.now()` and arms no timer past 2^31-1 ms, and
+  `checkTimeoutMs()` clamps to the same limit. (2026-11-01, `fix/document-404-etag`)
 - **Docs described a 30-minute, single-session login** - README, TESTING, CLAUDE.md, SPEC and
   the user guides now describe the 8h sliding idle timeout (`SESSION_MAX_AGE_MS`) and up to 3
   concurrent sessions (`SESSION_MAX_PER_USER`). (2026-10-31, PR #119)
