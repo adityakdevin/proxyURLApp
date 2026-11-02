@@ -16,7 +16,8 @@
  * Invoice page and an RC page inside the same file must still be compared.
  */
 import type { FindingInput } from './types.js';
-import { editDistanceCapped } from './logic.js';
+import { editDistanceCapped, GST_CERT_RE } from './logic.js';
+import { certGstin, verifiedGstin } from './redFlagLogic.js';
 
 export type DocTypeCode = 'INVOICE' | 'RC' | 'INSURANCE' | 'KYC' | 'PAYSLIP' | 'STAFF_ID' | 'DMS';
 /** Relation names are compared PER RELATION — a mother's name and a father's name are
@@ -120,6 +121,14 @@ export function nameMatches(a: string, b: string): boolean {
   // Joined/split AND one letter off at once: "RAJESH V G" vs "RAJEESHV G" (client QA
   // 2026-10). Whole-name forms of 8+ letters only, so short names keep the strict rules.
   if (Math.min(sa.join('').length, sb.join('').length) >= 8 && within1(sa.join(''), sb.join(''))) return true;
+  // OCR splits one given name in two and the order differs too ("SAIKIRAN" / "SAI KIRAN",
+  // row 39). Join a pair of tokens when the other name has the joined form.
+  const merge = (x: string[], y: string[]) => {
+    for (let i = 0; i + 1 < y.length; i++) if (x.includes(y[i] + y[i + 1])) y = [...y.slice(0, i), y[i] + y[i + 1], ...y.slice(i + 2)];
+    return y;
+  };
+  sb = merge(sa, sb);
+  sa = merge(sb, sa);
   if (sa.length > sb.length) [sa, sb] = [sb, sa];
   // The shorter name written as one word for consecutive tokens of the longer, surname
   // left off: "Harisunder" vs "Hari Sunder Mishra" (client QA 2026-10, #25).
@@ -128,8 +137,12 @@ export function nameMatches(a: string, b: string): boolean {
     for (let j = i + 2; j <= sb.length; j++) if (sb.slice(i, j).join('') === joined) return true;
   }
   const used = new Array(sb.length).fill(false);
+  const stem = (t: string) => (t.length >= 7 ? t.replace(/(?:bhai|ben|kumar)$/, '') : t);
   const aligns = (x: string, y: string, surnames: boolean) =>
     x === y ||
+    // Gujarati forms of one given name: "HARESHBHAI" / "HARESHKUMAR" (row 33's old RC
+    // and policy). 7+ letters, so "KUMAR" itself is untouched.
+    ((stem(x) !== x || stem(y) !== y) && stem(x) === stem(y)) ||
     (x.length === 1 && y[0] === x) ||
     (y.length === 1 && x[0] === y) ||
     // OCR drift inside a longer token ("Kumar" vs "Kumr"): tolerate one edit. Bounded to
@@ -297,7 +310,7 @@ const FIELD_LABEL_WORD = new Set([
 ]);
 
 /** Does this captured value just repeat a form label instead of naming a person? */
-function isLabelValue(v: string): boolean {
+export function isLabelValue(v: string): boolean {
   const first = v.trim().toLowerCase().split(/[\s.]+/)[0];
   return first.length === 0 || FIELD_LABEL_WORD.has(first) || NEXT_LABEL_WORD.has(first);
 }
@@ -378,10 +391,20 @@ const NOT_A_PERSON_WORD = new Set([
   // "DIRECT BUSINESS" (a policy's sales channel), "THE AREA MANAGER CANTEEN STORES" (an
   // invoice billed to the CSD canteen) — read as the customer on the 570-claim re-run.
   'business', 'manager', 'canteen', 'stores',
+  // An insurance broker's trading name, read as the customer on row 26.
+  'broker', 'brokers',
 ]);
 
-function cleanPersonName(raw: string): string | null {
+export function cleanPersonName(raw: string): string | null {
   let v = cutAtNextLabel(raw, true);
+  // A caps name running into the next column's label: "ANIL KUMAR SHARMA Area Office",
+  // "RAVI TEJA Peri of Insurance" (row 26). Only when the name starts with two all-caps
+  // words, so a mixed-case name is never cut.
+  const w = v.split(' ');
+  if (w.length > 2 && /^[A-Z]{2,}$/.test(w[0]) && /^[A-Z]{2,}$/.test(w[1])) {
+    const k = w.findIndex((x) => !/^[A-Z][A-Z.]*$/.test(x));
+    if (k > 1) v = w.slice(0, k).join(' ');
+  }
   const words = v.split(' ');
   const last = words[words.length - 1];
   if (words.length > 1 && last.length <= 2 && last !== last.toUpperCase()) v = words.slice(0, -1).join(' ');
@@ -428,6 +451,8 @@ export function extractRelationNames(text: string): string[] {
 const NON_PERSON_NAME_LABEL = new Set([
   'bank', 'company', 'firm', 'dealer', 'dealership', 'branch', 'nominee',
   'product', 'scheme', 'plan', 'trade', 'showroom', 'brand', 'make', 'model', 'group',
+  // "Partner Name" on a policy is the insurer's sales intermediary.
+  'partner',
   'broker', 'agent', 'intermediary', 'surveyor', 'workshop', 'garage', 'financier',
   'financer', 'insurer', 'insurance', 'employer', 'hypothecation', 'organisation',
   'organization', 'institution', 'hospital', 'school', 'college', 'university',
@@ -464,8 +489,9 @@ const NON_PERSON_NAME_LABEL = new Set([
 // Separator `\.?\s*[:\-+]`: OCR prints a policy's "Insured's Name :" as "Name +" or
 // "Name. +", and with only [:\-] no insured name was read off those schedules (client QA
 // 2026-10, #20, #35). "M/S" may lead the value: "M/S A B C PLASTIC" stopped at the "/".
+// "Sri / Smt:" is a payslip's holder label (row 31).
 const NAME_RE =
-  /(?:(?:([A-Za-z][A-Za-z0-9]*)(?:'?s)?[ \t]+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?|\bbill(?:ed)?\s+to)\.?\s*[:\-+]\s*((?:M\/S\.?\s*)*[A-Za-z][A-Za-z. ]{2,40})/gi;
+  /(?:(?:([A-Za-z][A-Za-z0-9]*)(?:'?s)?[ \t]+)?name\s*(?:of\s+(?:the\s+)?(?:insured|customer|employee|applicant|proposer))?|\bbill(?:ed)?\s+to|\b(?:sri|shri)\s*\/\s*(?:smt|kum))\.?\s*[:\-+]\s*((?:M\/S\.?\s*)*[A-Za-z][A-Za-z. ]{2,40})/gi;
 
 /** "Bill To" as OCR misreads it with no separator ("Bil 10 PREM Customer Id"): the capitals
  *  that follow, up to the first word with a lower-case letter (#20). */
@@ -505,6 +531,9 @@ export function extractNames(text: string): string[] {
   for (const m of text.matchAll(NAME_RE)) {
     if (m[1] && NON_PERSON_NAME_LABEL.has(labelWord(m[1]))) continue;
     if (!m[1] && /^name/i.test(m[0]) && sectionHeadingBefore(text, m.index ?? 0)) continue;
+    // The insurer's "CLAIM CONTACT ... NAME: Mr. X" in the issuing-office block is staff,
+    // never the insured (row 39 read it as the customer).
+    if (!m[1] && /issuing\s+office|claims?\s+contact/i.test(text.slice(Math.max(0, (m.index ?? 0) - 150), m.index ?? 0))) continue;
     if (!m[1] && RELATION_INITIAL_BEFORE.test(text.slice(Math.max(0, (m.index ?? 0) - 4), m.index ?? 0))) continue;
     let v = (m[2] ?? '').trim().replace(/\s+/g, ' ');
     // The value runs until a character the name class rejects, and ':' is one — so when OCR
@@ -901,8 +930,9 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
       code: 'CROSS_OTHER_VEHICLE',
       severity: 'INFO',
       message:
-        `This ${v.docType === 'RC' ? 'RC' : v.docType === 'INSURANCE' ? 'policy' : 'page'} is for another vehicle ` +
-        `(${vinsOn(v.documentId, v.page)[0]}), not this claim's; it was not compared with the customer's documents.`,
+        `Set aside, not a mismatch: this ${v.docType === 'RC' ? 'RC' : v.docType === 'INSURANCE' ? 'policy' : 'page'} ` +
+        `is for another vehicle (${vinsOn(v.documentId, v.page)[0]}), for example the old car ` +
+        `in an exchange, so its names were not compared with the customer's documents.`,
       page: v.page,
       data: { vins: vinsOn(v.documentId, v.page) },
     });
@@ -1032,11 +1062,11 @@ export function sameVehicle(a: string, b: string): boolean {
 }
 
 // XXXX marks a masked chassis (some RC copies print only the last digits), never a real VIN.
-const isFullChassis = (c: string) => c.length >= 16 && c.length <= 18 && looksLikeVin(c) && !/X{4}/.test(c);
+export const isFullChassis = (c: string) => c.length >= 16 && c.length <= 18 && looksLikeVin(c) && !/X{4}/.test(c);
 
 /** Full chassis compare with sameVehicle; a partial (split, masked or mis-captured) one only
  *  matches when it equals, prefixes or suffixes the other, so it can suppress but never raise. */
-function chassisMatch(a: string, b: string): boolean {
+export function chassisMatch(a: string, b: string): boolean {
   if (isFullChassis(a) && isFullChassis(b)) return sameVehicle(a, b);
   const n = (s: string) => idNorm(s).replace(/T/g, '7');
   const [x, y] = [n(a), n(b)].sort((p, q) => p.length - q.length);
@@ -1052,7 +1082,7 @@ export function oldCarPaperFindings(pages: CrossPage[], claimVin: string): Findi
   const isClaimCar = (c: string) => chassisMatch(c, claim);
   // A temporary registration is a new vehicle, never the old car.
   const rcs = pages
-    .filter((p) => classifyDocType(p.text) === 'RC' && !/temporary\s+(?:certificate\s+of\s+)?registration/i.test(p.text))
+    .filter((p) => classifyDocType(p.text) === 'RC' && !TEMP_RC_RE.test(p.text))
     .map((p) => ({ p, ids: chassisCandidates(p.text) }))
     .filter((r) => r.ids.length > 0 && !r.ids.some(isClaimCar));
   const rcFull = rcs.find((r) => r.ids.some(isFullChassis));
@@ -1073,6 +1103,93 @@ export function oldCarPaperFindings(pages: CrossPage[], claimVin: string): Findi
       message: `Insurance on page ${p.page} is for chassis "${actual}", which is neither this claim's vehicle nor the old car on the RC (page ${rcPage}, chassis "${expected}").`,
       page: p.page,
       data: { field: 'CHASSIS', actual, expected, actualType: 'INSURANCE', expectedType: 'RC', rcPage },
+    });
+  }
+  return out;
+}
+
+/** A temporary registration certificate: a new vehicle, never the old car. */
+export const TEMP_RC_RE = /temporary\s+(?:certificate\s+of\s+)?registration/i;
+const REG_LABEL_RE = /\breg\w{0,3}tration\s*(?:no|number)\b|\bregn\.?\s*no\b/i;
+// "New Delhi" is a place in the registration-authority column, not the "New" registration value.
+const NEW_VALUE_RE = /^[\s.,:\-]*new\b(?!\s*delhi)/i;
+
+/** "Registration No. New" (same line, or the value row under a table header). The label
+ *  tolerates OCR drops like "Regtration"; row 26 of the client sheet. */
+export function isNewRegistration(text: string): boolean {
+  const lines = text.split('\n');
+  return lines.some((l, i) => {
+    const m = REG_LABEL_RE.exec(l);
+    // The next line is a value row only when this one carries no plate: otherwise "New India
+    // Assurance" under a real registration number would read as "New".
+    return !!m && (NEW_VALUE_RE.test(l.slice(m.index + m[0].length)) || (!extractVehicleNos(l).length && NEW_VALUE_RE.test(lines[i + 1] ?? '')));
+  });
+}
+
+/** New-registration policies that are neither the claim's car nor the car of any RC in the
+ *  bundle. chassis may be [] or hold only partial candidates (OCR could not read a full one);
+ *  such a page is still listed. Empty when the claim id is not a full VIN: without it no
+ *  policy can be shown to be for another car. */
+export function otherNewCarPolicies(pages: CrossPage[], claimVin: string): { page: CrossPage; chassis: string[] }[] {
+  const claim = claimVin.toUpperCase();
+  if (!isFullChassis(claim)) return [];
+  const rcIds = pages.filter((p) => classifyDocType(p.text) === 'RC').flatMap((p) => chassisCandidates(p.text));
+  return pages
+    .filter((p) => classifyDocType(p.text) === 'INSURANCE' && isNewRegistration(p.text))
+    .map((page) => ({ page, chassis: chassisCandidates(page.text) }))
+    .filter(({ chassis }) => !chassis.some((c) => chassisMatch(c, claim) || rcIds.some((r) => chassisMatch(c, r))));
+}
+
+/** ERROR CROSS_POLICY_OTHER_VEHICLE for each such policy with a full (VIN-shaped) chassis,
+ *  reporting the first one; partial candidates never raise. Skips pages in `skip`
+ *  ("documentId:page"). */
+export function newCarPolicyFindings(pages: CrossPage[], claimVin: string, skip: Set<string>): FindingInput[] {
+  return otherNewCarPolicies(pages, claimVin).flatMap(({ page, chassis }) => {
+    const c = chassis.find(isFullChassis);
+    if (!c || skip.has(`${page.documentId}:${page.page}`)) return [];
+    return [
+      {
+        documentId: page.documentId,
+        code: 'CROSS_POLICY_OTHER_VEHICLE',
+        severity: 'ERROR' as const,
+        message: `Policy on page ${page.page} is for a newly registered vehicle with chassis ${c}, not this claim's vehicle (${claimVin}), and no RC in the claim carries that chassis.`,
+        page: page.page,
+        data: { field: 'CHASSIS', actual: c, expected: claimVin },
+      },
+    ];
+  });
+}
+
+/** A GST certificate whose number is the claim's GSTIN minus its check character. Only that
+ *  14-character case is flagged: a different registration of the same PAN is legitimate, and a
+ *  15-character number is the GST format rule's business. Compared with idNorm, not gstFold:
+ *  gstFold leaves the check character as read, so an OCR misread there would split two equal
+ *  numbers. */
+export function gstCertFindings(pages: CrossPage[]): FindingInput[] {
+  const isCert = (p: CrossPage) => p.govtCode === 'GST' && GST_CERT_RE.test(p.text);
+  const claimGstins: { gstin: string; type: string; page: number | null }[] = [];
+  for (const p of pages) {
+    if (isCert(p)) continue;
+    for (const g of p.text.toUpperCase().match(/\b[0-9]{2}[A-Z0-9]{13}\b/g) ?? []) {
+      if (verifiedGstin(g)) claimGstins.push({ gstin: g, type: pageType(p), page: p.page });
+    }
+  }
+  const out: FindingInput[] = [];
+  for (const p of pages.filter(isCert)) {
+    const c = certGstin(p.text);
+    if (!c) continue;
+    const n = idNorm(c);
+    if (claimGstins.some((g) => idNorm(g.gstin) === n)) continue;
+    if (c.length !== 14) continue;
+    const g = claimGstins.find((x) => idNorm(x.gstin.slice(0, 14)) === n);
+    if (!g) continue;
+    out.push({
+      documentId: p.documentId,
+      page: p.page,
+      code: 'CROSS_GSTIN_MISMATCH',
+      severity: 'ERROR',
+      message: `GSTIN "${c}" on the GST certificate has 14 characters; "${g.gstin}" (${g.type}, page ${g.page}) has 15: the certificate is missing the check character.`,
+      data: { field: 'GSTIN', expected: g.gstin, actual: c, expectedType: g.type, actualType: 'KYC' },
     });
   }
   return out;

@@ -100,17 +100,28 @@ const FRONT_COMPETING_LABEL =
  *  PAN ("Aadhaar No", "Permanent Account Number of the dealer") without BEING one, and
  *  counting the mention made Missing Docs report the card as provided when it was not
  *  (client QA 2026-10, points 7-12). */
-const NOT_AN_ID_CARD =
+export const NOT_AN_ID_CARD =
   /\b(?:earnings|deductions|net\s*(?:pay|salary)|gross\s*(?:pay|salary|earnings)|pay\s*slip|payslip|salary\s*slip|premium|sum\s*insured|policy\s*(?:no|number|period|schedule)|tax\s*invoice|invoice\s*(?:no|date|number)|ex[\s-]*showroom)\b/i;
 
 /** A PAN number in the shape the card prints (4th letter = a holder category). Lets a blurry
  *  card whose "INCOME TAX DEPARTMENT" header did not survive OCR still count as present. */
 const PAN_NUMBER_ON_CARD = /\b[A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z]\b/;
 
+/** Wording only a GST certificate (Form GST REG-06) carries; a dealer invoice that prints a
+ *  GSTIN does not. Shared by field-pane routing and the certificate GSTIN fallback. */
+export const GST_CERT_RE = /gst\s*reg-?\s*0?6|registration\s+certificate|legal\s+name|type\s+of\s+registrat/i;
+
+// Passport MRZ line-1 prefix, with the OCR slips seen on it (lowercase L for I, K for <).
+// Case-sensitive on purpose: P and ND stay upper-case. A visa's MRZ starts "V<", so no match.
+// OCR reads "<" as K, but "P K INDIRA" or "PK INDUSTRIES" is just a name: the K form counts
+// only with filler on the same run of letters (a "<" or three K/L in a row).
+export const PASSPORT_MRZ = /\bP\s?<\s?[I1l]ND|\bP\s?K\s?[I1l]ND[A-Z]*?(?:<|[KL]{3})/;
+
 export const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
   AADHAR: (t) =>
     /(^|[^a-z])uidai([^a-z]|$)/i.test(t) ||
-    /unique\s+identification\s+authority/i.test(t) ||
+    // No "unique": OCR garbles the title ("UNIGUF IDENTIFICATION AUTHORITY").
+    /identification\s+authority/i.test(t) ||
     (!NOT_AN_ID_CARD.test(t) && /(^|[^a-z])aad?haa?r([^a-z]|$)/i.test(t)) ||
     aadhaarFrontSide(t),
   // OCR of blurry cards drops spaces ("INCOMETAX DEPARTMENT") — keep \s* loose.
@@ -123,18 +134,24 @@ export const GOVT_TYPE_MARKERS: Record<string, (t: string) => boolean> = {
   // "driving license", so require both signals.
   DL: (t) =>
     /driving\s+licen[cs]e/i.test(t) &&
-    /(^|[^a-z])(dl\s*no|cov|lmv|mcwg|hgmv|hpmv)([^a-z]|$)/i.test(t),
+    (/(^|[^a-z])(dl\s*no|cov|lmv|mcwg|hgmv|hpmv)([^a-z]|$)/i.test(t) ||
+      /\/\s*daughter|daughter\s*\/|s\s*\/\s*d\s*\/\s*w|blood\s*gr/i.test(t)),
   VOTER_ID: (t) =>
     /election\s+commission/i.test(t) || /(^|[^a-z])(epic|voter)([^a-z]|$)/i.test(t),
+  // The MRZ line, or the back page. The back needs "passport", a guardian line and
+  // place-of-issue or file-no together: a KYC form names each of them singly.
   PASSPORT: (t) =>
-    /(^|[^a-z])passport([^a-z]|$)/i.test(t) &&
-    /republic\s+of\s+india|nationality|place\s+of\s+birth/i.test(t),
+    PASSPORT_MRZ.test(t) ||
+    (/(^|[^a-z])passport([^a-z]|$)/i.test(t) &&
+      (/republic\s+of\s+india|nationality|place\s+of\s+birth/i.test(t) ||
+        (/legal\s+guardian/i.test(t) && /place\s+of\s+issue|file\s*no/i.test(t)))),
   // GST certificate (Form GST REG-06). GSTIN or the tax name on the cert body;
   // a bare "GST" appears in dealer invoices, so require a certificate signal.
   GST: (t) =>
     /(^|[^a-z])gstin([^a-z]|$)/i.test(t) ||
     /goods\s+and\s+services\s+tax/i.test(t) ||
-    /gst\s*reg-?\s*0?6/i.test(t),
+    /gst\s*reg-?\s*0?6/i.test(t) ||
+    /constitution\s+of\s+business/i.test(t),
   // Udyam / MSME registration certificate.
   UDYAM: (t) =>
     /udyam/i.test(t) || /(^|[^a-z])msme([^a-z]|$)/i.test(t) ||

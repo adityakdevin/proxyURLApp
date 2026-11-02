@@ -296,6 +296,7 @@ export class ValidationService {
           claimId: claim.claimId,
           subCategoryId: claim.subCategoryId,
           customerName: claim.customerName,
+          invoiceDate: claim.invoiceDate,
         },
         documents,
         prisma: this.prisma,

@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { WordBox } from '../validators/types.js';
-import { clamp01 } from './bbox.js';
+import { BBox, clamp01, rotateBox, unrotateBox } from './bbox.js';
 
 /**
  * Cap pages scanned per PDF so a giant document can't dominate a run.
@@ -64,6 +64,13 @@ export const MAX_TIMER_MS = 2 ** 31 - 1;
  *  inside it can keep a deadline on the same clock as that timeout. */
 export function queuedMs(): number {
   return queueWait.getStore()?.ms() ?? 0;
+}
+
+/** Now on the innermost withActiveTimeout's clock: monotonic, less its queue time. A deadline
+ *  set from performance.now() as that timeout starts, and read only on this clock, cannot be
+ *  moved by a wall-clock step while the timeout around it holds still. */
+export function activeNow(): number {
+  return performance.now() - queuedMs();
 }
 
 /**
@@ -146,11 +153,32 @@ export function mulTransform(m1: Matrix, m2: Matrix): Matrix {
   ];
 }
 
+/** A run whose off-axis direction is under this share of its on-axis one (about 1 degree) counts
+ *  as a quarter turn: float noise in a turned matrix, not skew. */
+const QUARTER_TURN_SLOP = 0.02;
+
+/** The counter-clockwise quarter turn (as `rotateBox`) after which a run whose viewport
+ *  transform is `tx` advances along +x; 0 for a +x run, a skewed one and a mirrored one. */
+function runTurn(tx: Matrix): number {
+  const [a, b, c, d] = tx;
+  // The viewport's y-flip gives every upright or turned run a negative determinant. A mirrored
+  // run (positive) is no quarter turn: read as one it voted 180 against an upright PAN card.
+  if (a * d - b * c > 0) return 0;
+  if (Math.abs(b) <= QUARTER_TURN_SLOP * Math.abs(a)) return a < 0 ? 180 : 0;
+  if (Math.abs(a) <= QUARTER_TURN_SLOP * Math.abs(b)) return b > 0 ? 90 : 270;
+  return 0;
+}
+
 /**
  * Convert one pdfjs text run into normalized ([0..1], top-left) per-word boxes. The page
  * viewport transform already bakes in rotation and the y-flip, so we just multiply and
  * divide by the viewport dimensions. The run width is distributed across whitespace-split
  * words proportionally to character count. Exported for unit testing the coordinate math.
+ *
+ * A run the viewport shows sideways or upside down (upright text on a /Rotate page, a scanner's
+ * turned OCR layer) is laid out on the page turned so that it reads left to right, and its boxes
+ * turned back; laid along +x they sat beside the words, so `readingTurn` read 0 and highlights
+ * missed. A skewed run keeps the +x layout.
  */
 export function runToWords(
   str: string,
@@ -165,8 +193,12 @@ export function runToWords(
   if (str.trim() === '' || !vw || !vh) return [];
   const tx = mulTransform(viewportTransform, itemTransform);
   const fontHeight = Math.hypot(tx[2], tx[3]) || itemHeight;
-  const left = tx[4];
-  const top = tx[5] - fontHeight; // tx[5] is the baseline; subtract ascent for the top edge
+  const turn = runTurn(tx);
+  // Turn 0 keeps the page's own numbers, so its boxes are bit for bit as before.
+  const [pw, ph] = turn === 90 || turn === 270 ? [vh, vw] : [vw, vh];
+  const start = rotateBox({ x: tx[4] / vw, y: tx[5] / vh, w: 0, h: 0 }, turn);
+  const left = turn ? start.x * pw : tx[4];
+  const top = (turn ? start.y * ph : tx[5]) - fontHeight; // from the baseline, less the ascent
   const scaleX = Math.hypot(viewportTransform[0], viewportTransform[1]);
   const runWidth = itemWidth * scaleX;
   const len = str.length || 1;
@@ -176,16 +208,8 @@ export function runToWords(
     const tokW = (token.length / len) * runWidth;
     const t = token.trim();
     if (t) {
-      out.push({
-        text: t,
-        page,
-        bbox: {
-          x: clamp01(cursor / vw),
-          y: clamp01(top / vh),
-          w: clamp01(tokW / vw),
-          h: clamp01(fontHeight / vh),
-        },
-      });
+      const b = unrotateBox({ x: cursor / pw, y: top / ph, w: tokW / pw, h: fontHeight / ph }, turn);
+      out.push({ text: t, page, bbox: { x: clamp01(b.x), y: clamp01(b.y), w: clamp01(b.w), h: clamp01(b.h) } });
     }
     cursor += tokW;
   }
@@ -381,11 +405,17 @@ export interface RasterPage {
   totalPages: number;
 }
 
-/** The scale to render a `width`x`height`pt page at: `scale`, or more if that would leave its
- *  long side under `minLongSide` px. */
-export function rasterScale(width: number, height: number, scale: number, minLongSide: number): number {
+/** The scale to render a `width`x`height`pt area at: `scale`, or more if that would leave its
+ *  long side under `minLongSide` px, but never so much that it passes `maxLongSide` px. */
+export function rasterScale(
+  width: number,
+  height: number,
+  scale: number,
+  minLongSide: number,
+  maxLongSide = Infinity
+): number {
   const long = Math.max(width, height);
-  return long ? Math.max(scale, minLongSide / long) : scale;
+  return long ? Math.min(maxLongSide / long, Math.max(scale, minLongSide / long)) : scale;
 }
 
 /** A directory inside the server's pdfjs-dist, for the asset URLs pdf.js needs in Node.
@@ -418,6 +448,12 @@ const pdfjsWasmUrl = () => pdfjsAssetDir('wasm/');
  *
  * `minLongSide` raises the scale for a page that would otherwise come out shorter than that
  * on its long side — a card saved as its own small page. See MIN_OCR_PAGE_LONG_SIDE in ocr.ts.
+ * `maxLongSidePx` lowers it for one that would come out longer.
+ *
+ * `clip` (normalized, top-left origin, the frame of PageImage.box) renders only that box of the
+ * page, and the two long-side bounds then apply to the box. A region read used to render the
+ * whole page and crop it with Jimp, whose PNG decode and encode are synchronous: up to 6.9 s of
+ * frozen server per region on a large page.
  *
  * Waits for any PDF this process already has open; see oneDocumentAtATime.
  */
@@ -427,7 +463,12 @@ async function rasterizePdfUnqueued(
   maxPages = MAX_PDF_PAGES,
   scale = 2,
   onlyPages?: number[],
-  { smooth = true, minLongSide = 0 }: { smooth?: boolean; minLongSide?: number } = {}
+  {
+    smooth = true,
+    minLongSide = 0,
+    maxLongSidePx = Infinity,
+    clip,
+  }: { smooth?: boolean; minLongSide?: number; maxLongSidePx?: number; clip?: BBox } = {}
 ): Promise<RasterPage[]> {
   try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -458,8 +499,16 @@ async function rasterizePdfUnqueued(
         if (onlyPages && !onlyPages.includes(p)) continue;
         const page = await doc.getPage(p);
         const { width, height } = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: rasterScale(width, height, scale, minLongSide) });
-        const canvas = createCanvas(viewport.width, viewport.height);
+        const s = rasterScale(width * (clip?.w ?? 1), height * (clip?.h ?? 1), scale, minLongSide, maxLongSidePx);
+        // The offsets move the clip's top-left corner to the canvas origin.
+        const viewport = page.getViewport({
+          scale: s,
+          offsetX: -(clip?.x ?? 0) * width * s,
+          offsetY: -(clip?.y ?? 0) * height * s,
+        });
+        const canvasW = clip ? Math.max(1, Math.round(clip.w * width * s)) : viewport.width;
+        const canvasH = clip ? Math.max(1, Math.round(clip.h * height * s)) : viewport.height;
+        const canvas = createCanvas(canvasW, canvasH);
         // @napi-rs/canvas's 2D context is API-compatible with what pdfjs renders into;
         // cast through unknown since the DOM lib isn't in this project's tsconfig.
         const canvasContext = canvas.getContext('2d') as unknown;
@@ -480,8 +529,8 @@ async function rasterizePdfUnqueued(
           // box, which is why the claims list crawled during validation. encode() does the
           // same work on the libuv threadpool.
           png: await canvas.encode('png'),
-          width: Math.round(viewport.width),
-          height: Math.round(viewport.height),
+          width: Math.round(canvasW),
+          height: Math.round(canvasH),
           totalPages: doc.numPages,
         });
       }
@@ -517,6 +566,47 @@ async function rasterizePdfUnqueued(
   }
 }
 
+export interface PageImage {
+  /** Native pixels of the page's widest image. */
+  width: number;
+  height: number;
+  /** Where that image is drawn: normalized [0..1], top-left origin, as the page renders (rotation
+   *  applied), clipped to the page. Absent when the page shows only a sliver of it. */
+  box?: BBox;
+  /** box.w in PDF points at scale 1 (the rendered width). */
+  drawnWidthPt?: number;
+}
+
+/** Under this share of the page on either side, a clipped picture box is a sliver, not a picture. */
+const MIN_BOX_SIDE = 0.02;
+
+/**
+ * The part of a normalized picture box the page shows. A picture can be drawn partly off the
+ * page (an editor-cropped scan: CropBox narrower than the MediaBox), and the unclipped box sent
+ * the crop read to a 60x1200 px sliver upscaled to 1600x32000. Undefined when what is left is
+ * a sliver.
+ */
+export function clipToPage(box: BBox): BBox | undefined {
+  const x = Math.max(0, box.x);
+  const y = Math.max(0, box.y);
+  // From w and h, not the far edges, so a box inside the page comes back bit for bit.
+  const w = Math.min(box.w + Math.min(0, box.x), 1 - x);
+  const h = Math.min(box.h + Math.min(0, box.y), 1 - y);
+  return w < MIN_BOX_SIDE || h < MIN_BOX_SIDE ? undefined : { x, y, w, h };
+}
+
+/** Applies `m` first, then `n` (PDF `cm` order: the new matrix is applied before the current CTM). */
+function concatCtm(m: number[], n: number[]): Matrix {
+  return [
+    m[0] * n[0] + m[1] * n[2],
+    m[0] * n[1] + m[1] * n[3],
+    m[2] * n[0] + m[3] * n[2],
+    m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4],
+    m[4] * n[1] + m[5] * n[3] + n[5],
+  ];
+}
+
 /**
  * The NATIVE pixel width of the largest image embedded on each of the given pages.
  *
@@ -547,8 +637,8 @@ export const largestImageWidthPerPage = oneDocumentAtATime(largestImageWidthPerP
 async function largestImageWidthPerPageUnqueued(
   absolutePath: string,
   pages: number[]
-): Promise<Map<number, { width: number; height: number }> | null> {
-  const out = new Map<number, { width: number; height: number }>();
+): Promise<Map<number, PageImage> | null> {
+  const out = new Map<number, PageImage>();
   try {
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
@@ -559,10 +649,26 @@ async function largestImageWidthPerPageUnqueued(
         if (n < 1 || n > doc.numPages) continue;
         const page = await doc.getPage(n);
         const ops = await page.getOperatorList();
-        let best: { width: number; height: number } | undefined;
+        const viewport = page.getViewport({ scale: 1 });
+        let ctm: Matrix = [1, 0, 0, 1, 0, 0];
+        const stack: Matrix[] = [];
+        let best: PageImage | undefined;
         for (let i = 0; i < ops.fnArray.length; i++) {
           const fn = ops.fnArray[i];
           const args = ops.argsArray[i];
+          if (fn === OPS.save) stack.push(ctm);
+          else if (fn === OPS.restore) ctm = stack.pop() ?? ctm;
+          else if (fn === OPS.transform) ctm = concatCtm(args, ctm);
+          else if (fn === OPS.paintFormXObjectBegin) {
+            stack.push(ctm);
+            if (args?.[0]) ctm = concatCtm(args[0], ctm);
+          } else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() ?? ctm;
+          else if (fn === OPS.beginAnnotation) {
+            // pdfjs 6 args: [id, rect, transform, matrix, ownCanvas]. Its canvas resets to the page's
+            // base transform, then applies transform and matrix, so the matrix acts first.
+            stack.push(ctm);
+            ctm = concatCtm(args[3], args[2]);
+          } else if (fn === OPS.endAnnotation) ctm = stack.pop() ?? ctm;
           const [width, height] =
             fn === OPS.paintImageXObject
               ? [args?.[1], args?.[2]]
@@ -570,7 +676,21 @@ async function largestImageWidthPerPageUnqueued(
                 ? [args?.[0]?.width, args?.[0]?.height]
                 : [undefined, undefined];
           if (typeof width === 'number' && typeof height === 'number' && width > 0 && (!best || width > best.width)) {
-            best = { width, height };
+            // The image fills the unit square under the CTM; convertToViewportPoint applies
+            // /Rotate and the y flip. pdfjs 6 has no convertToViewportRectangle.
+            const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) =>
+              viewport.convertToViewportPoint(ctm[0] * u + ctm[2] * v + ctm[4], ctm[1] * u + ctm[3] * v + ctm[5])
+            );
+            const xs = pts.map((q) => q[0]);
+            const ys = pts.map((q) => q[1]);
+            const box = clipToPage({
+              x: Math.min(...xs) / viewport.width,
+              y: Math.min(...ys) / viewport.height,
+              w: (Math.max(...xs) - Math.min(...xs)) / viewport.width,
+              h: (Math.max(...ys) - Math.min(...ys)) / viewport.height,
+            });
+            // Still the widest picture without a box: SPELL and QR read only its size.
+            best = box ? { width, height, box, drawnWidthPt: box.w * viewport.width } : { width, height };
           }
         }
         if (best) out.set(n, best);
@@ -598,8 +718,8 @@ export const pdfPageTextStats = oneDocumentAtATime(pdfPageTextStatsUnqueued);
 async function pdfPageTextStatsUnqueued(
   absolutePath: string,
   maxPages = MAX_PDF_PAGES
-): Promise<{ image: boolean; visibleText: boolean }[]> {
-  const out: { image: boolean; visibleText: boolean }[] = [];
+): Promise<{ image: boolean; visibleText: boolean; hiddenText: boolean }[]> {
+  const out: { image: boolean; visibleText: boolean; hiddenText: boolean }[] = [];
   try {
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
@@ -632,14 +752,18 @@ async function pdfPageTextStatsUnqueued(
         // visible again after the Q, so track it on the same save/restore stack.
         let mode = 0;
         const saved: number[] = [];
-        const stat = { image: false, visibleText: false };
+        const stat = { image: false, visibleText: false, hiddenText: false };
         for (let i = 0; i < ops.fnArray.length; i++) {
           const fn = ops.fnArray[i];
           if (fn === OPS.save) saved.push(mode);
           else if (fn === OPS.restore) mode = saved.pop() ?? 0;
           else if (fn === OPS.setTextRenderingMode) mode = ops.argsArray[i][0];
           else if (IMAGE_OPS.has(fn)) stat.image = true;
-          else if (TEXT_OPS.has(fn) && mode !== 3) stat.visibleText = true;
+          else if (TEXT_OPS.has(fn)) {
+            // Mode 3 is invisible and 7 only clips: someone's OCR layer, not text a reader sees.
+            if (mode === 3 || mode === 7) stat.hiddenText = true;
+            if (mode !== 3) stat.visibleText = true;
+          }
         }
         out.push(stat);
       }

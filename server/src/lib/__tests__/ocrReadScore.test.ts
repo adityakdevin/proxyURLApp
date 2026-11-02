@@ -1,4 +1,11 @@
-import { MIN_OCR_PAGE_LONG_SIDE, readScore, readsAsText, sauvolaWins, turnBeatsUpright } from '../ocr.js';
+import {
+  MAX_REGION_LONG_SIDE_PX,
+  MIN_OCR_PAGE_LONG_SIDE,
+  readScore,
+  readsAsText,
+  sauvolaWins,
+  turnBeatsUpright,
+} from '../ocr.js';
 import { rasterScale } from '../pdfExtractor.js';
 import { getSpell, type Spell } from '../../validators/dictionary.js';
 
@@ -125,5 +132,15 @@ describe('OCR second looks', () => {
     // Callers that ask for no floor (the QR scan) and degenerate pages keep their scale.
     expect(rasterScale(465, 280.5, 2, 0)).toBe(2);
     expect(rasterScale(0, 0, 2, MIN_OCR_PAGE_LONG_SIDE)).toBe(2);
+  });
+
+  // A "fit to image" 300 dpi certificate page (2480x3508 pt) at the re-read's scale 4 was a
+  // 9920x14032 render: 3.7 GB and a 6.9 s main-thread block for one region.
+  it('caps the long side of a region render without touching an A4 page at scale 4', () => {
+    expect(rasterScale(595.28, 841.89, 4, 0, MAX_REGION_LONG_SIDE_PX)).toBe(4);
+    const s = rasterScale(2480, 3508, 4, 0, MAX_REGION_LONG_SIDE_PX);
+    expect(3508 * s).toBeCloseTo(MAX_REGION_LONG_SIDE_PX);
+    // The cap wins over the floor.
+    expect(rasterScale(100, 50, 2, 1400, 200)).toBe(2);
   });
 });
