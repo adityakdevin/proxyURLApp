@@ -240,6 +240,25 @@ Found by: /ship review passes 1-3, 2026-10-16/17.
 - `qrPresentUnread` is decided per page; the bundled "No QR" line can disagree with it.
 Found by: /ship review passes 1-3, 2026-10-16/17.
 
+### PAN signature and picture checks: known limits (client sheet 2026-10-31)
+**Priority:** P2
+- A signed PAN card photographed sideways can read blank and fail with REDFLAG_PAN_UNSIGNED: in
+  a half-height band about 8% of the corpus's signed cards read under BLANK_INK_MAX. Kept as an
+  ERROR by decision; 1 of 42 checked PAN pages was sideways. Masking OCR word boxes in the band was
+  tried and refuted (20 of 39 signed cards read blank).
+- A pale or faint signature may read blank. No such sample exists to calibrate against.
+- Row 36: the PAN card's anchor words never read (halftone scan, dealer stamp over the label), so
+  the card is not checked. Manual review. The junk-text-layer picture read (OCR plan Task 8) was
+  skipped: it does not reach the anchor words either.
+- A card whose nearest words read in another direction than the page (a long sideways caption, a
+  second document upside down) is left unchecked rather than measured in a guessed direction.
+- tesseract.js applies only a big-endian EXIF Orientation: a little-endian EXIF-rotated photo
+  1600 px or wider can get misplaced word boxes. TIFF keeps the Jimp decode on the main thread, and
+  the transparency guard covers the canvas path only.
+- A text-layer page with a small picture that the picture read never picks (cover 0.10-0.15, or
+  unrecognised layer text) is judged by REDFLAG_SMALL_IMAGE_UNREAD on its layer text alone.
+Found by: client sheet 2026-10-31 fixes, review and corpus runs, 2026-11-02.
+
 ## Found while shipping PR #119
 
 ### Creating an Admin from the Users screen fails validation

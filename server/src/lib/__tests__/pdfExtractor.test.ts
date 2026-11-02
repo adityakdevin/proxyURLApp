@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { deflateSync } from 'zlib';
-import { imagePdf } from '../../__tests__/helpers/imagePdf.js';
+import { imagePdf, textPagesPdf } from '../../__tests__/helpers/imagePdf.js';
 import {
   clipToPage,
   mulTransform,
@@ -47,6 +47,18 @@ describe('pdfExtractor coordinate math', () => {
       expect(w.bbox.w).toBeGreaterThanOrEqual(0);
       expect(w.page).toBe(2);
     }
+  });
+
+  // Value: protects=a skewed run's boxes stay as before P6X (only quarter-turned runs are laid along their direction); fails_when=the turn snap takes a 30 degree run as a quarter turn, or the +x layout changes; why_new=P6X item 1 keeps skewed runs bit for bit; seam=none; no_claim=that the +x layout is right for a skewed run
+  it('keeps the +x layout for a skewed run', () => {
+    const [c, s] = [Math.cos(Math.PI / 6), Math.sin(Math.PI / 6)];
+    const item = [10 * c, 10 * s, -10 * s, 10 * c, 50, 100]; // 30 degrees, baseline start (50, 100)
+    const words = runToWords('ab cd', item, 100, 10, [1, 0, 0, -1, 0, 200], 300, 200, 1);
+    // From the baseline start (50, 100) along +x, top = baseline - font height 10.
+    expect(words.map((w) => w.bbox)).toEqual([
+      { x: 50 / 300, y: 90 / 200, w: 40 / 300, h: 10 / 200 },
+      { x: 110 / 300, y: 90 / 200, w: 40 / 300, h: 10 / 200 },
+    ]);
   });
 
   it('returns nothing for blank or zero-size input', () => {
@@ -439,31 +451,6 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
   });
 });
 
-/** A PDF with one Helvetica text page per content stream. */
-function textPagesPdf(contents: string[]): Buffer {
-  const n = contents.length;
-  const objs = [
-    '<</Type/Catalog/Pages 2 0 R>>',
-    `<</Type/Pages/Kids[${contents.map((_, i) => `${4 + 2 * i} 0 R`).join(' ')}]/Count ${n}>>`,
-    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
-  ];
-  contents.forEach((c, i) => {
-    objs.push(`<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<</Font<</F1 3 0 R>>>>/Contents ${5 + 2 * i} 0 R>>`);
-    objs.push(`<</Length ${c.length}>>\nstream\n${c}\nendstream`);
-  });
-  let out = '%PDF-1.4\n';
-  const offsets = objs.map((o, i) => {
-    const at = out.length;
-    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
-    return at;
-  });
-  const xref = out.length;
-  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
-  out += offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
-  out += `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(out, 'latin1');
-}
-
 describe('pdfPageTextStats text visibility', () => {
   // Value: protects=a page holding an invisible (mode 3) text op next to a visible one reports both, so the Aadhaar check-digit rule can tell a scanner's OCR layer from a visible one; fails_when=hiddenText is not set for render mode 3 or 7, or visibleText stops ignoring mode 3; why_new=no test ran pdfPageTextStats on text; seam=none; no_claim=images, white text
   it('reports a hidden text op separately from a visible one', () => {
@@ -483,6 +470,105 @@ describe('pdfPageTextStats text visibility', () => {
         { image: false, visibleText: true, hiddenText: false },
         { image: false, visibleText: true, hiddenText: true }, // mode 7: visibleText is unchanged
       ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Per page: the reading turn of its text-layer words, and where the rendered dark pixels fall
+// against those words' boxes (counted at pixel centres; alpha checked, as the canvas starts clear).
+const TURNED_TEXT_CHILD = `
+const [, file] = process.argv;
+const { extractPdf, rasterizePdf } = await import(process.env.TARGET_URL);
+const { readingTurn } = await import(new URL('../validators/signatureBox.ts', process.env.TARGET_URL).href);
+const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+const { words } = await extractPdf(file);
+const out = [];
+for (const pg of await rasterizePdf(file, 10, 2)) {
+  const img = await loadImage(pg.png);
+  const ctx = createCanvas(img.width, img.height).getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const { data } = ctx.getImageData(0, 0, img.width, img.height);
+  const onPage = words.filter((w) => w.page === pg.page);
+  const ink = onPage.map(() => 0);
+  let outside = 0;
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      const i = (y * img.width + x) * 4;
+      if (data[i + 3] < 128 || data[i] >= 128) continue;
+      const k = onPage.findIndex(({ bbox: b }) =>
+        x + 0.5 >= b.x * img.width && x + 0.5 <= (b.x + b.w) * img.width &&
+        y + 0.5 >= b.y * img.height && y + 0.5 <= (b.y + b.h) * img.height);
+      if (k < 0) outside++;
+      else ink[k]++;
+    }
+  }
+  out.push({ turn: readingTurn(onPage), words: onPage.map((w) => w.text), ink, outside });
+}
+console.log(JSON.stringify(out));
+process.exit(0);
+`;
+
+const WORDS_CHILD = `
+const [, file] = process.argv;
+const { extractPdf } = await import(process.env.TARGET_URL);
+console.log(JSON.stringify((await extractPdf(file)).words));
+process.exit(0);
+`;
+
+describe('extractPdf word boxes of turned text', () => {
+  // Value: protects=word boxes (signature area, finding highlights) of text the page shows sideways or upside down land on the words; fails_when=runToWords lays a quarter-turned run out along +x again; why_new=P6 review M5 (the box landed beside the label and readingTurn read 0); seam=none; no_claim=skewed runs (kept as before), mirrored text, vertical-writing fonts
+  it('boxes text on a /Rotate 90, 180 or 270 page, and a turned text matrix, over the words as rendered', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'pdf-turned-'));
+    try {
+      const file = path.join(dir, 'turned.pdf');
+      // Courier: every glyph advances the same, so a word's share of the run is its share of letters.
+      const upright = 'BT /F1 20 Tf 40 120 Td (MMMM WWWW) Tj ET';
+      fs.writeFileSync(
+        file,
+        textPagesPdf(
+          // The last page draws the run downwards (a scanner's turned OCR layer) on an unturned page.
+          [upright, upright, upright, upright, 'BT /F1 20 Tf 0 -1 1 0 120 170 Tm (MMMM WWWW) Tj ET'],
+          { font: 'Courier', mediaBox: '0 0 300 200', pageExtra: ['', '/Rotate 90', '/Rotate 180', '/Rotate 270'] }
+        )
+      );
+      type Page = { turn: number; words: string[]; ink: number[]; outside: number };
+      const got = runPdfChild(TURNED_TEXT_CHILD, [file]) as Page[];
+      expect(got.map((g) => g.turn)).toEqual([0, 90, 180, 270, 90]);
+      for (const g of got) {
+        expect(g.words).toEqual(['MMMM', 'WWWW']);
+        // Both words' glyphs are inside their own boxes. The upright page leaves 16 of about 1570
+        // dark pixels outside (glyph edges past the advance), so the bound is 2%, not 0.
+        for (const n of g.ink) expect(n).toBeGreaterThan(500);
+        expect(g.outside).toBeLessThan(0.02 * (g.outside + g.ink[0] + g.ink[1]));
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=a mirrored run (a -1 0 0 1 text matrix) keeps the +x boxes it had before P6X, so it does not vote 180 against an upright PAN card; fails_when=runTurn takes a mirrored transform for a quarter turn; why_new=P6X review I1 (mirrored lines below an upright card turned its page to 180 and blank paper was measured); seam=none; no_claim=that the boxes cover a mirrored run's glyphs (the glyphs lie left of its start and the boxes right, as before P6X)
+  it('lays a mirrored run out along +x, as before P6X', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'pdf-mirrored-'));
+    try {
+      const file = path.join(dir, 'mirrored.pdf');
+      // The review's ten lines (baselines y = 520 - 30k) on an A4 page.
+      const baseline = (k: number): number => 520 - 30 * k;
+      const lines = Array.from({ length: 10 }, (_, k) =>
+        `BT /F1 12 Tf -1 0 0 1 540 ${baseline(k)} Tm (the quick brown fox jumps over the lazy dog) Tj ET`
+      );
+      fs.writeFileSync(file, textPagesPdf([lines.join('\n')], { mediaBox: '0 0 595 842' }));
+      const words = runPdfChild(WORDS_CHILD, [file]) as { bbox: Record<string, number> }[];
+      expect(words).toHaveLength(90);
+      for (let k = 0; k < 10; k++) {
+        const run = words.slice(9 * k, 9 * k + 9).map((w) => w.bbox);
+        // Turn 0: from the run's start along +x, one font height above the baseline. Laid out at
+        // 180 they ran leftwards from x 540 and hung below the baseline.
+        expect(run[0].x).toBeCloseTo(540 / 595, 9);
+        for (let i = 1; i < run.length; i++) expect(run[i].x).toBeGreaterThanOrEqual(run[i - 1].x);
+        for (const b of run) expect(b.y).toBeCloseTo((842 - baseline(k) - 12) / 842, 9);
+      }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

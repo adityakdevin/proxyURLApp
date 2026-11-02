@@ -8,7 +8,7 @@ import { checkInternetImage, checkSpecimenCard } from '../redFlagLogic.js';
 import { redFlagValidator } from '../redFlagValidator.js';
 import { ValidatorContext, ValidatorDoc, WordBox } from '../types.js';
 import { unrotateBox } from '../../lib/bbox.js';
-import { imagePdf } from '../../__tests__/helpers/imagePdf.js';
+import { imagePdf, textPagesPdf } from '../../__tests__/helpers/imagePdf.js';
 import { BLANK_INK_MAX, inkFraction, readingTurn, signatureArea, signatureExpected } from '../signatureBox.js';
 
 const SRC = path.join(__dirname, '..', '..');
@@ -47,23 +47,36 @@ process.exit(0);
 `;
 
 // REDFLAG over one PAN page per case; prints each run's finding codes. A case with \`png\` first
-// writes that picture: a grey ground with an optional grey rectangle [x, y, w, h, luma] in pixels.
+// writes that picture: a grey ground with an optional grey rectangle [x, y, w, h, luma] in pixels,
+// in the format of the file's extension, and an optional rectangle \`clear\` [x, y, w, h] made
+// transparent (alpha 0, its colour kept). With \`exif6\` it is a JPEG stored a quarter turn
+// counter-clockwise, tagged EXIF Orientation 6 (little-endian), so a viewer shows it as drawn.
 const VALIDATOR_CHILD = `
 const [, cases] = process.argv;
 const { redFlagValidator } = await import(new URL('validators/redFlagValidator.ts', process.env.SRC_URL).href);
 const { Jimp } = await import('jimp');
+const { writeFileSync } = await import('fs');
 const out = [];
 for (const c of JSON.parse(cases)) {
   if (c.png) {
-    const { width, height, ground, rect } = c.png;
+    const { width, height, ground, rect, exif6, clear } = c.png;
     const img = new Jimp({ width, height, color: 0xffffffff });
+    const inside = (r, x, y) => r && x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3];
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const inRect = rect && x >= rect[0] && x < rect[0] + rect[2] && y >= rect[1] && y < rect[1] + rect[3];
-        img.bitmap.data.fill(inRect ? rect[4] : ground, (y * width + x) * 4, (y * width + x) * 4 + 3);
+        img.bitmap.data.fill(inside(rect, x, y) ? rect[4] : ground, (y * width + x) * 4, (y * width + x) * 4 + 3);
+        if (inside(clear, x, y)) img.bitmap.data[(y * width + x) * 4 + 3] = 0;
       }
     }
-    await img.write(c.file);
+    if (exif6) {
+      img.rotate(90);
+      const jpg = Buffer.from(await img.getBuffer('image/jpeg', { quality: 100 }));
+      // APP1 after SOI: "II" TIFF header, one IFD entry, tag 0x0112 (Orientation) SHORT = 6.
+      const tiff = [0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 1, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0];
+      const exif = Buffer.concat([Buffer.from('Exif\\0\\0'), Buffer.from(tiff)]);
+      const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, 0, exif.length + 2]), exif]);
+      writeFileSync(c.file, Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]));
+    } else await img.write(c.file);
   }
   const r = await redFlagValidator.run({
     claim: { id: 'c', claimId: 'CLM1', subCategoryId: 's' },
@@ -77,6 +90,66 @@ for (const c of JSON.parse(cases)) {
     ...(c.pageImage ? { pageImages: new Map([['d1', new Map([[1, c.pageImage]])]]) } : {}),
   });
   out.push((r.findings ?? []).map((f) => f.code));
+}
+console.log(JSON.stringify(out));
+process.exit(0);
+`;
+
+// signatureInk's ink (or null) per case of VALIDATOR_CHILD, whose pictures it reads after that run.
+const INK_CHILD = `
+const [, cases] = process.argv;
+const { signatureInk } = await import(new URL('validators/redFlagValidator.ts', process.env.SRC_URL).href);
+const out = [];
+for (const c of JSON.parse(cases)) {
+  const m = await signatureInk({ id: 'd1', fileName: 'card', storagePath: c.file, readablePath: c.file,
+    mimeType: c.mimeType, source: 'UPLOADED', documentTypeId: null }, 1, c.words);
+  out.push(m ? m.ink : null);
+}
+console.log(JSON.stringify(out));
+process.exit(0);
+`;
+
+// signatureInk on a white 595x842 PNG with Jimp.read made to throw; prints its result.
+const NO_JIMP_CHILD = `
+const [, file, words] = process.argv;
+const { createRequire } = await import('module');
+const { Jimp } = await import('jimp');
+await new Jimp({ width: 595, height: 842, color: 0xffffffff }).write(file);
+// Both of Jimp's builds: the validator may load either.
+for (const J of [Jimp, createRequire(process.cwd() + '/')('jimp').Jimp]) {
+  J.read = async () => { throw new Error('Jimp.read decodes the whole picture on the main thread'); };
+}
+const { signatureInk } = await import(new URL('validators/redFlagValidator.ts', process.env.SRC_URL).href);
+const doc = { id: 'd1', fileName: 'card.png', storagePath: file, readablePath: file, mimeType: 'image/png',
+  source: 'UPLOADED', documentTypeId: null };
+console.log(JSON.stringify(await signatureInk(doc, 1, JSON.parse(words))));
+process.exit(0);
+`;
+
+// REDFLAG over one-page PAN PDFs read through their own text layer; prints, per file, the
+// signature area, its ink and the finding codes.
+const PDF_PAN_CHILD = `
+const files = process.argv.slice(1);
+const src = process.env.SRC_URL;
+const { extractPdf } = await import(new URL('lib/pdfExtractor.ts', src).href);
+const { signatureArea } = await import(new URL('validators/signatureBox.ts', src).href);
+const { redFlagValidator, signatureInk } = await import(new URL('validators/redFlagValidator.ts', src).href);
+const out = [];
+for (const file of files) {
+  const { words } = await extractPdf(file);
+  const doc = { id: 'd1', fileName: 'card.pdf', storagePath: file, readablePath: file, mimeType: 'application/pdf',
+    source: 'UPLOADED', documentTypeId: null };
+  const r = await redFlagValidator.run({
+    claim: { id: 'c', claimId: 'CLM1', subCategoryId: 's' },
+    documents: [doc],
+    prisma: {},
+    ocr: { extractImageText: async () => '' },
+    shared: new Map(),
+    wordBoxes: new Map([['d1', words]]),
+    pageTexts: new Map([['d1', ['INCOME TAX DEPARTMENT Permanent Account Number Card ABCPK1234E']]]),
+  });
+  const m = await signatureInk(doc, 1, words);
+  out.push({ area: signatureArea(words, 1), ink: m ? m.ink : null, codes: (r.findings ?? []).map((f) => f.code) });
 }
 console.log(JSON.stringify(out));
 process.exit(0);
@@ -263,6 +336,22 @@ describe('client sheet 2026-10-31 - PAN signature area and ink', () => {
     }
   });
 
+  // Value: protects=an older card whose "Signature" label OCR reads next to a holder's name one letter from "not" (Nat, Nit, Net, Nut) skipped; fails_when="not" matches at edit distance 1 again, or "N0t" stops matching; why_new=P6X item 3 (fix-wave re-review minor); seam=none; no_claim=a widget whose "Verified" OCR misread by two letters and "Not" by one
+  it('anchors on "Signature" before a name one letter from "not", and not before "Not" or "N0t"', () => {
+    const after = (a: string, b: string): WordBox[] => [
+      ...ABOVE,
+      W('Signature', 0.6, 0.8, 0.1, 0.02),
+      W(a, 0.71, 0.8, 0.03, 0.02),
+      W(b, 0.75, 0.8, 0.08, 0.02),
+    ];
+    for (const name of ['Nat', 'Nit', 'Net', 'Nut']) {
+      const a = signatureArea(after(name, 'Kumar'), 1);
+      expect(a?.design).toBe('older');
+      near(a?.bbox, OLDER_BOX);
+    }
+    for (const widget of ['Not', 'N0t']) expect(signatureArea(after(widget, 'Kumar'), 1)).toBeNull();
+  });
+
   it('ignores a form label "Signature of ..."', () => {
     const words = [
       ...ABOVE,
@@ -291,6 +380,25 @@ describe('client sheet 2026-10-31 - PAN signature area and ink', () => {
       near(c?.bbox, unrotateBox(CURRENT_BOX, t));
     }
     near(signatureArea(turned(OLDER, 270), 1)?.bbox, { x: 0.7, y: 0.2, w: 0.093, h: 0.35 });
+  });
+
+  // Value: protects=a turned card whose words nearest its label hold no reading line (OCR split them into lone words) keeps its check, in the turn its page read from its other words; fails_when=an undecided neighbourhood counts as reading at 0 against the page's turn; why_new=P6X fix 1 reads each anchor's turn from its 12 nearest words; seam=none; no_claim=which neighbourhood size is best
+  it('keeps the page turn for a turned card whose words near the label read no line', () => {
+    // Eleven lone words stacked above the label are its nearest; LINE, farther up, gives the turn.
+    const lone = Array.from({ length: 11 }, (_, k) => W('word', 0.6, 0.5 + 0.025 * k, 0.1, 0.02));
+    for (const t of [0, 90, 180, 270]) {
+      const o = signatureArea(turned([...ABOVE, ...LINE, ...lone, W('Signature', 0.6, 0.8, 0.1, 0.02)], t), 1);
+      expect(o?.turn).toBe(t);
+      near(o?.bbox, unrotateBox(OLDER_BOX, t));
+    }
+  });
+
+  // Value: protects=an upright card's check when OCR emits a line's right block before its left block with a stamp word between (corpus row 16 p6 lost its check); fails_when=the neighbourhood pairs words that are not next to each other in reading order; why_new=P6X literal rule, corpus e2e; seam=none; no_claim=which block order OCR uses
+  it('pairs only words next to each other in reading order when reading a card\'s turn', () => {
+    const stamp = W('stamp', 0.9, 0.45, 0.01, 0.08);
+    const split = [0.5, 0.55, 0.6].flatMap((y) => [W('right', 0.35, y, 0.1, 0.02), stamp, W('left', 0.1, y, 0.1, 0.02)]);
+    const o = signatureArea([...ABOVE, ...LINE, ...split, W('Signature', 0.1, 0.7, 0.1, 0.02)], 1);
+    expect(o).toMatchObject({ design: 'older', turn: 0 });
   });
 
   it('needs a readable line and most words above the anchor', () => {
@@ -424,6 +532,142 @@ describe('client sheet 2026-10-31 - PAN signature area and ink', () => {
       expect(unsigned(onSmall)).toBe(true);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  // Value: protects=the server's event loop while a PAN photo is measured (Jimp.read held it about 0.5 s on a 12 MP JPEG here, 0.9 s in review); fails_when=the picture path decodes with Jimp again; why_new=P6 review I4 (image path); seam=Jimp.read stubbed to throw in the child; no_claim=TIFF (canvas cannot decode it, so Jimp still does), the PDF path
+  it('measures a picture without decoding it in Jimp', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'p6-nojimp-'));
+    try {
+      const r = runChild<{ ink: number; bbox: WordBox['bbox'] } | null>(NO_JIMP_CHILD, [
+        path.join(dir, 'card.png'),
+        JSON.stringify(CURRENT),
+      ]);
+      expect(r?.ink).toBe(0);
+      near(r?.bbox, CURRENT_BOX);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  // Value: protects=a cut-out PNG card: transparent pixels are neither paper nor ink, so an area partly or wholly transparent is not measured; fails_when=pictureInk measures an area over 5% transparent (canvas reads those pixels black: a strip's edge read as ink, an all-clear picture as blank paper and an ERROR); why_new=P6X review M2; seam=none; no_claim=TIFF (Jimp fallback, stored colour as before), PDF pages
+  it('does not measure a signature area that is partly or wholly transparent', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'p6-alpha-'));
+    try {
+      // CURRENT's area on a 595x842 picture is x 200-359, y 539-581 px: the strip clears x < 248 (30% of it).
+      const card = (name: string, clear?: number[]) => ({
+        file: path.join(dir, name),
+        mimeType: 'image/png',
+        words: CURRENT,
+        png: { width: 595, height: 842, ground: 255, clear },
+      });
+      const cases = JSON.stringify([card('opaque.png'), card('strip.png', [0, 0, 248, 842]), card('clear.png', [0, 0, 595, 842])]);
+      const codes = runChild<string[][]>(VALIDATOR_CHILD, [cases]);
+      expect(runChild<(number | null)[]>(INK_CHILD, [cases])).toEqual([0, null, null]);
+      expect(codes.map(unsigned)).toEqual([true, false, false]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  // Value: protects=a photo's blank/signed outcome, upright or turned by its EXIF tag, and a TIFF's; fails_when=the pixels measured are not the ones OCR's boxes point at (one decoder applies EXIF Orientation and the other not), or a TIFF is no longer measured; why_new=P6X item 2 moved the picture decode to @napi-rs/canvas; seam=none; no_claim=big-endian EXIF and mirrored orientations (probed the same in both decoders, not pinned)
+  it('reads the same blank and signed boxes on a PNG, an EXIF-turned JPEG and a TIFF', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'p6-exif-'));
+    try {
+      // CURRENT's area on 595x842 is x 200-359, y 539-581 px; a signature is a 120x3 px stroke in it.
+      const SIGNED = [220, 555, 120, 3, 20];
+      // Where the area falls on the JPEG as stored, were its EXIF tag ignored: a stroke there reads as ink.
+      const DECOY = [195, 290, 3, 200, 20];
+      const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', tiff: 'image/tiff' };
+      const card = (name: string, png: object) => ({
+        file: path.join(dir, name),
+        mimeType: MIME[name.split('.')[1]],
+        words: CURRENT,
+        png: { width: 595, height: 842, ground: 255, ...png },
+      });
+      const got = runChild<string[][]>(VALIDATOR_CHILD, [
+        JSON.stringify([
+          card('blank.png', {}),
+          card('signed.png', { rect: SIGNED }),
+          card('blank.jpg', { rect: DECOY, exif6: true }),
+          card('signed.jpg', { rect: SIGNED, exif6: true }),
+          card('blank.tiff', {}),
+          card('signed.tiff', { rect: SIGNED }),
+        ]),
+      ]);
+      expect(got.map(unsigned)).toEqual([true, false, true, false, true, false]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+describe('client sheet 2026-10-31 - PAN signature on a page with other text', () => {
+  // The P6X review's A4 page: an upright older-design card in Helvetica, signed over its label.
+  const CARD = [
+    ...(
+      [
+        ['INCOME TAX DEPARTMENT', 800],
+        ['GOVT. OF INDIA', 782],
+        ['RAHUL KUMAR', 764],
+        ['SURESH KUMAR', 746],
+        ['01/01/1990', 728],
+        ['Permanent Account Number', 712],
+        ['ABCPK1234E', 696],
+      ] as const
+    ).map(([t, y]) => `BT /F1 12 Tf 60 ${y} Td (${t}) Tj ET`),
+    '4 w 70 652 m 100 668 l 130 650 l 160 664 l S',
+    'BT /F1 10 Tf 60 630 Td (Signature) Tj ET',
+  ].join('\n');
+  type Read = { area: { design: string; turn: number; bbox: WordBox['bbox'] } | null; ink: number | null; codes: string[] };
+  const read = (pages: Record<string, string>): Read[] => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'p6x-pan-'));
+    try {
+      const files = Object.entries(pages).map(([name, content]) => {
+        const file = path.join(dir, `${name}.pdf`);
+        fs.writeFileSync(file, textPagesPdf([`${CARD}\n${content}`], { mediaBox: '0 0 595 842' }));
+        return file;
+      });
+      return runChild<Read[]>(PDF_PAN_CHILD, files);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  // Value: protects=a signed upright card failed as unsigned because text below it (another document copied upside down or mirrored, with a scanner layer) turned the page to 180 and the blank paper under its label was measured; fails_when=the page's turn is used for an anchor whose own words read at another turn, or a mirrored run votes 180; why_new=P6X review I1; seam=none; no_claim=two cards on one page
+  it('measures no blank paper under an upright card when upside-down or mirrored lines below outvote it', () => {
+    const lines = (m: string): string =>
+      Array.from({ length: 10 }, (_, k) => `BT /F1 12 Tf ${m} 540 ${520 - 30 * k} Tm (the quick brown fox jumps over the lazy dog) Tj ET`).join('\n');
+    for (const r of read({ upsideDown: lines('-1 0 0 -1'), mirrored: lines('-1 0 0 1') })) {
+      // In the card's own turn (0) most of the page's words are below its label: no area.
+      expect(r.area).toBeNull();
+      expect(unsigned(r.codes)).toBe(false);
+    }
+  }, 60_000);
+
+  // Value: protects=a signed upright card failed as unsigned because a few upside-down lines under its label read as the card's own turn; fails_when=an anchor is tried in a turn other than the page's; why_new=P6X fix1 re-review e3/e1; seam=none; no_claim=a turned card on a page whose other text reads upright
+  it('measures no blank paper under an upright card when a stray upside-down line sits under its label', () => {
+    const letter = Array.from({ length: 10 }, (_, k) => `BT /F1 12 Tf 60 ${420 - 25 * k} Td (Dear Sir we enclose the documents for the claim) Tj ET`).join('\n');
+    const flipped = (ys: number[]): string => ys.map((y) => `BT /F1 12 Tf -1 0 0 -1 320 ${y} Tm (the quick brown fox jumps over the lazy dog) Tj ET`).join('\n');
+    for (const r of read({ one: `${flipped([560])}\n${letter}`, two: `${flipped([560, 545])}\n${letter}` })) {
+      expect(r.area).toBeNull();
+      expect(unsigned(r.codes)).toBe(false);
+    }
+  }, 60_000);
+
+  // Value: protects=an upright card on a page whose long sideways caption outvotes its words is left unchecked, not measured in a guessed turn; fails_when=the anchor is tried in its card's turn when the page reads another; why_new=P6X review M1, fix1 re-review (trying other turns raised false ERRORs); seam=none; no_claim=captions near enough to the label to outvote the card's own words
+  it('leaves an upright card unchecked on a page with a long sideways caption', () => {
+    const caption = 'electronically generated document reference printed vertically alongside margin without manual intervention whatsoever';
+    const [alone, down, up] = read({
+      alone: '',
+      down: `BT /F1 8 Tf 0 -1 1 0 20 820 Tm (${caption}) Tj ET`,
+      up: `BT /F1 8 Tf 0 1 -1 0 30 100 Tm (${caption}) Tj ET`,
+    });
+    expect(alone.area).toMatchObject({ design: 'older', turn: 0 });
+    expect(alone.ink).toBeGreaterThan(BLANK_INK_MAX);
+    for (const r of [down, up]) {
+      expect(r.area).toBeNull();
+      expect(unsigned(r.codes)).toBe(false);
     }
   }, 60_000);
 });

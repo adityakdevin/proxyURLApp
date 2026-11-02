@@ -214,13 +214,48 @@ const SIGNATURE_MAX_LONG_SIDE_PX = 2400;
 const WHOLE: BBox = { x: 0, y: 0, w: 1, h: 1 };
 
 /** Ink share of `area` in a decoded bitmap. */
-function inkOf(img: { bitmap: { width: number; height: number; data: Uint8Array } }, area: BBox): number | null {
+function inkOf(img: { bitmap: { width: number; height: number; data: ArrayLike<number> } }, area: BBox): number | null {
   const { width, height, data } = img.bitmap;
   const luma = new Uint8Array(width * height);
   for (let i = 0; i < luma.length; i++) {
     luma[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
   }
   return inkFraction(luma, width, height, area);
+}
+
+/** Share of a picture's signature area that may be transparent (alpha under 128) and still be
+ *  measured. Transparency is neither paper nor ink, and canvas returns it black: a cut-out card's
+ *  clear strip read as ink at its edge, and a wholly clear picture as blank paper, an ERROR. */
+const TRANSPARENT_MAX = 0.05;
+
+/** Ink share of `area` in a picture file. @napi-rs/canvas decodes it off the main thread
+ *  (Jimp.read held the event loop about 0.5-0.9 s on a 12 MP photo) and only the area is copied
+ *  out: the pixels inkFraction takes from the whole picture, by its own rounding.
+ *  Canvas turns a photo by a standard (SHORT) EXIF Orientation tag as Jimp does, and OCR's boxes
+ *  are in Jimp's frame (probed on jimp 1.6.1 and @napi-rs/canvas 1.0.11: orientations 3, 5, 6
+ *  and 8, both byte orders). A malformed LONG tag is applied by Jimp only, so such a photo is
+ *  measured in the wrong frame.
+ *  Canvas cannot decode TIFF, so a picture it cannot open goes to Jimp as before.
+ *  Canvas decodes a truncated file and fills the missing part with one colour, which reads as
+ *  blank paper. Such a file cannot reach here today: OCR gives a picture word boxes only after
+ *  Jimp decodes it (`upscaleSmallImage` in ocr.ts), and Jimp rejects truncation. If OCR's decode
+ *  moves to canvas, add a guard against a partial decode here. */
+async function pictureInk(file: string, area: BBox): Promise<number | null> {
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+  const img = await loadImage(file).catch(() => null);
+  if (!img) return inkOf(await Jimp.read(file), area);
+  const x0 = Math.max(0, Math.round(area.x * img.width));
+  const y0 = Math.max(0, Math.round(area.y * img.height));
+  const w = Math.min(img.width, Math.round((area.x + area.w) * img.width)) - x0;
+  const h = Math.min(img.height, Math.round((area.y + area.h) * img.height)) - y0;
+  if (w < 1 || h < 1) return null;
+  const ctx = createCanvas(w, h).getContext('2d');
+  ctx.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let clear = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] < 128) clear++;
+  if (clear > TRANSPARENT_MAX * w * h) return null;
+  return inkOf({ bitmap: { width: w, height: h, data } }, WHOLE);
 }
 
 /** Ink share in the customer's signature area of a PAN page, and that area clamped to
@@ -251,7 +286,7 @@ export async function signatureInk(
       return ink === null ? null : { ink, bbox };
     }
     if (!mime.startsWith('image/') || page !== 1) return null;
-    const ink = inkOf(await Jimp.read(doc.readablePath), bbox);
+    const ink = await pictureInk(doc.readablePath, bbox);
     return ink === null ? null : { ink, bbox };
   } catch {
     return null;

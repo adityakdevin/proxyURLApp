@@ -61,3 +61,34 @@ export function imagePdfPages(pages: ImagePage[]): Buffer {
   );
   return Buffer.concat(parts);
 }
+
+/** A PDF with one text page per content stream, in `font`; `pageExtra[i]` is added to page i's
+ *  dictionary (e.g. "/Rotate 90"). */
+export function textPagesPdf(
+  contents: string[],
+  { font = 'Helvetica', mediaBox = '0 0 200 200', pageExtra = [] as string[] } = {}
+): Buffer {
+  const n = contents.length;
+  const objs = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    `<</Type/Pages/Kids[${contents.map((_, i) => `${4 + 2 * i} 0 R`).join(' ')}]/Count ${n}>>`,
+    `<</Type/Font/Subtype/Type1/BaseFont/${font}>>`,
+  ];
+  contents.forEach((c, i) => {
+    objs.push(
+      `<</Type/Page/Parent 2 0 R/MediaBox[${mediaBox}]${pageExtra[i] ?? ''}/Resources<</Font<</F1 3 0 R>>>>/Contents ${5 + 2 * i} 0 R>>`
+    );
+    objs.push(`<</Length ${c.length}>>\nstream\n${c}\nendstream`);
+  });
+  let out = '%PDF-1.4\n';
+  const offsets = objs.map((o, i) => {
+    const at = out.length;
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    return at;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  out += offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  out += `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}

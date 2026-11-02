@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { WordBox } from '../validators/types.js';
-import { BBox, clamp01 } from './bbox.js';
+import { BBox, clamp01, rotateBox, unrotateBox } from './bbox.js';
 
 /**
  * Cap pages scanned per PDF so a giant document can't dominate a run.
@@ -153,11 +153,32 @@ export function mulTransform(m1: Matrix, m2: Matrix): Matrix {
   ];
 }
 
+/** A run whose off-axis direction is under this share of its on-axis one (about 1 degree) counts
+ *  as a quarter turn: float noise in a turned matrix, not skew. */
+const QUARTER_TURN_SLOP = 0.02;
+
+/** The counter-clockwise quarter turn (as `rotateBox`) after which a run whose viewport
+ *  transform is `tx` advances along +x; 0 for a +x run, a skewed one and a mirrored one. */
+function runTurn(tx: Matrix): number {
+  const [a, b, c, d] = tx;
+  // The viewport's y-flip gives every upright or turned run a negative determinant. A mirrored
+  // run (positive) is no quarter turn: read as one it voted 180 against an upright PAN card.
+  if (a * d - b * c > 0) return 0;
+  if (Math.abs(b) <= QUARTER_TURN_SLOP * Math.abs(a)) return a < 0 ? 180 : 0;
+  if (Math.abs(a) <= QUARTER_TURN_SLOP * Math.abs(b)) return b > 0 ? 90 : 270;
+  return 0;
+}
+
 /**
  * Convert one pdfjs text run into normalized ([0..1], top-left) per-word boxes. The page
  * viewport transform already bakes in rotation and the y-flip, so we just multiply and
  * divide by the viewport dimensions. The run width is distributed across whitespace-split
  * words proportionally to character count. Exported for unit testing the coordinate math.
+ *
+ * A run the viewport shows sideways or upside down (upright text on a /Rotate page, a scanner's
+ * turned OCR layer) is laid out on the page turned so that it reads left to right, and its boxes
+ * turned back; laid along +x they sat beside the words, so `readingTurn` read 0 and highlights
+ * missed. A skewed run keeps the +x layout.
  */
 export function runToWords(
   str: string,
@@ -172,8 +193,12 @@ export function runToWords(
   if (str.trim() === '' || !vw || !vh) return [];
   const tx = mulTransform(viewportTransform, itemTransform);
   const fontHeight = Math.hypot(tx[2], tx[3]) || itemHeight;
-  const left = tx[4];
-  const top = tx[5] - fontHeight; // tx[5] is the baseline; subtract ascent for the top edge
+  const turn = runTurn(tx);
+  // Turn 0 keeps the page's own numbers, so its boxes are bit for bit as before.
+  const [pw, ph] = turn === 90 || turn === 270 ? [vh, vw] : [vw, vh];
+  const start = rotateBox({ x: tx[4] / vw, y: tx[5] / vh, w: 0, h: 0 }, turn);
+  const left = turn ? start.x * pw : tx[4];
+  const top = (turn ? start.y * ph : tx[5]) - fontHeight; // from the baseline, less the ascent
   const scaleX = Math.hypot(viewportTransform[0], viewportTransform[1]);
   const runWidth = itemWidth * scaleX;
   const len = str.length || 1;
@@ -183,16 +208,8 @@ export function runToWords(
     const tokW = (token.length / len) * runWidth;
     const t = token.trim();
     if (t) {
-      out.push({
-        text: t,
-        page,
-        bbox: {
-          x: clamp01(cursor / vw),
-          y: clamp01(top / vh),
-          w: clamp01(tokW / vw),
-          h: clamp01(fontHeight / vh),
-        },
-      });
+      const b = unrotateBox({ x: cursor / pw, y: top / ph, w: tokW / pw, h: fontHeight / ph }, turn);
+      out.push({ text: t, page, bbox: { x: clamp01(b.x), y: clamp01(b.y), w: clamp01(b.w), h: clamp01(b.h) } });
     }
     cursor += tokW;
   }
