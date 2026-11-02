@@ -89,6 +89,62 @@ describe('dupValidator — Duplicacy sheet numbers', () => {
     expect(f.message).toBe('Policy number "300112345678" also appears on claim MZBEP812LSN100009.');
   });
 
+  it('fails a claim whose short marriage registration number appears on another claim', async () => {
+    const prisma = {
+      claimFieldValue: {
+        deleteMany: async () => ({}),
+        createMany: async () => ({}),
+        findMany: async ({ where }: { where: { field: string; norm: { in: string[] } } }) =>
+          where.field === 'CERT_REG_NO' && where.norm.in.includes('318MARRIAGECERTIFICATE')
+            ? [{ norm: '318MARRIAGECERTIFICATE', claim: { claimId: 'MZBEP812LSN100009' } }]
+            : [],
+      },
+    };
+    const text = 'MARRIAGE REGISTRATION CERTIFICATE\nRegistration No: 318\nDate of Registration : 18/01/2024';
+    const outcome = await dupValidator.run({
+      claim: { id: 'c1', claimId: 'MZBEP812LSN100008', subCategoryId: 's1' },
+      documents: [],
+      prisma: prisma as never,
+      ocr: {} as never,
+      shared: new Map([['d1', text]]),
+      pageTexts: new Map([['d1', [text]]]),
+      wordBoxes: new Map(),
+    });
+    expect(outcome.status).toBe('FAILED');
+    const f = outcome.findings!.find((x) => x.code === 'DUP_CERT_REG_NO')!;
+    expect(f.severity).toBe('ERROR');
+    expect(f.message).toBe(
+      'Certificate registration number "318 (marriage certificate)" also appears on claim MZBEP812LSN100009.'
+    );
+  });
+
+  it('fails a claim whose certificate key number appears on another claim', async () => {
+    const prisma = {
+      claimFieldValue: {
+        deleteMany: async () => ({}),
+        createMany: async () => ({}),
+        findMany: async ({ where }: { where: { field: string; norm: { in: string[] } } }) =>
+          where.field === 'KEY_NO' && where.norm.in.includes('K12345678901234567890')
+            ? [{ norm: 'K12345678901234567890', claim: { claimId: 'MZBEP812LSN100009' } }]
+            : [],
+      },
+    };
+    const text = 'CERTIFICATE OF MARRIAGE\nKey No. K12345678901234567890';
+    const outcome = await dupValidator.run({
+      claim: { id: 'c1', claimId: 'MZBEP812LSN100008', subCategoryId: 's1' },
+      documents: [],
+      prisma: prisma as never,
+      ocr: {} as never,
+      shared: new Map([['d1', text]]),
+      pageTexts: new Map([['d1', [text]]]),
+      wordBoxes: new Map(),
+    });
+    expect(outcome.status).toBe('FAILED');
+    const f = outcome.findings!.find((x) => x.code === 'DUP_KEY_NO')!;
+    expect(f.severity).toBe('ERROR');
+    expect(f.message).toBe('Certificate key number "K12345678901234567890" also appears on claim MZBEP812LSN100009.');
+  });
+
   // Duplicacy sheet: "If Address is Same in 2 different Case Ids, then Redflag".
   it('fails a claim whose address appears on another claim', async () => {
     const prisma = {
