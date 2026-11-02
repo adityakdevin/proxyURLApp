@@ -136,6 +136,12 @@ function pagesPaintedThrough(root: Element | null, n: number, failed: Set<number
  *
  * Rendered by the standalone /claims/:id/documents/:documentId window — a reviewer needs
  * the document open beside the claim form, which a modal cannot do.
+ *
+ * Key it by `documentId`: its per-document state (page count, zoom, rotation, failures)
+ * starts fresh only on a new mount. Do not reset that state in an effect instead. react-pdf
+ * 11 reports the page count from its own effect, in the same commit as this component's
+ * mount effects, and a child's effects run first, so a reset effect zeroed the count and
+ * every PDF rendered blank.
  */
 export function DocumentViewerPanel({
   claimId,
@@ -183,18 +189,6 @@ export function DocumentViewerPanel({
   const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
   const anchor = useRef<{ ax: number; ay: number; ratio: number; cx: number; cy: number } | null>(null);
-
-  useEffect(() => {
-    setNumPages(0);
-    setPdfFailed(false);
-    setImgFailed(false);
-    setImgLoaded(false);
-    setRenderedPages(0);
-    failedPages.current = new Set();
-    setZoom(1);
-    setRotation(0);
-    setImgSize({ w: 0, h: 0 });
-  }, [documentId]);
 
   useEffect(() => {
     let cancelled = false;
