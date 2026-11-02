@@ -11,10 +11,12 @@
  * I/O (readPdfInfo for the Producer/Creator watermark check) lives HERE; redFlagLogic
  * and segment stay pure so their unit tests run under jest (spec decision 2).
  */
-import { Validator, ValidatorContext, FindingInput, WordBox } from './types.js';
+import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox } from './types.js';
 import { BBox, unionBBox } from '../lib/bbox.js';
 import { segment, DocInstance } from './segment.js';
-import { readPdfInfo, pdfPageTextStats } from '../lib/pdfExtractor.js';
+import { readPdfInfo, pdfPageTextStats, rasterizePdf, clipToPage, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
+import { Jimp } from 'jimp';
+import { signatureArea, signatureExpected, inkFraction, BLANK_INK_MAX } from './signatureBox.js';
 import {
   checkPan,
   panRead,
@@ -40,6 +42,8 @@ import {
   checkTimestamps,
   checkDates,
   checkNominee,
+  checkInternetImage,
+  checkSpecimenCard,
   checkEditableText,
   ADVISORY_CODES,
   RedFlagFinding,
@@ -160,8 +164,13 @@ const makeToFinding =
     };
   };
 
+/** govtCodes of identity cards, where a DEMO/SPECIMEN/SAMPLE stamp means a non-issued card. */
+const ID_CARD_CODES = new Set(['PAN', 'AADHAR', 'DL', 'VOTER_ID', 'PASSPORT']);
+
 /** Reviewer-facing rule names for the per-rule counts in the card summary. */
 const RULE_LABEL: Record<string, string> = {
+  REDFLAG_INTERNET_IMAGE: 'Internet image',
+  REDFLAG_SPECIMEN_CARD: 'Specimen card',
   REDFLAG_PAN_FORMAT: 'PAN format',
   REDFLAG_PAN_CATEGORY: 'PAN category',
   REDFLAG_PAN_HOLDER_TYPE: 'PAN holder type',
@@ -194,7 +203,60 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_PASSPORT_UNREADABLE: 'Passport no. unreadable',
   REDFLAG_LAYER_IMAGE_MISMATCH: 'Picture vs text layer',
   REDFLAG_SMALL_IMAGE_UNREAD: 'Small picture, no ID read',
+  REDFLAG_PAN_UNSIGNED: 'PAN not signed',
 };
+
+const SIGNATURE_RENDER_SCALE = 2;
+/** Long-side bound of the clipped render: a large OCR box on a "fit to image" page is otherwise
+ *  a multi-megapixel PNG for Jimp to decode synchronously. */
+const SIGNATURE_MAX_LONG_SIDE_PX = 2400;
+
+const WHOLE: BBox = { x: 0, y: 0, w: 1, h: 1 };
+
+/** Ink share of `area` in a decoded bitmap. */
+function inkOf(img: { bitmap: { width: number; height: number; data: Uint8Array } }, area: BBox): number | null {
+  const { width, height, data } = img.bitmap;
+  const luma = new Uint8Array(width * height);
+  for (let i = 0; i < luma.length; i++) {
+    luma[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+  }
+  return inkFraction(luma, width, height, area);
+}
+
+/** Ink share in the customer's signature area of a PAN page, and that area clamped to
+ *  the page; null when there is no anchor, no part of the area is on the page, or the page cannot
+ *  be opened.
+ *  A PDF renders only the area, so Jimp never decodes a full-page PNG on the main thread (a
+ *  "fit to image" page at scale 2 is tens of megapixels). pdf.js still decodes the page's
+ *  embedded picture to draw it, as every OCR render does. Under the size bound the clipped
+ *  render matches the same pixels of a full render, so the ink share is unchanged. */
+export async function signatureInk(
+  doc: ValidatorDoc,
+  page: number,
+  words: WordBox[]
+): Promise<{ ink: number; bbox: BBox } | null> {
+  // A clip past the page edge renders as white paper, so only the on-page part is measured,
+  // and an area with no on-page part is not checked.
+  const area = signatureArea(words, page);
+  const bbox = area ? clipToPage(area.bbox) : undefined;
+  if (!bbox) return null;
+  try {
+    const mime = doc.mimeType ?? '';
+    if (mime === 'application/pdf') {
+      const [r] = await rasterizePdf(doc.readablePath, MAX_PDF_PAGES, SIGNATURE_RENDER_SCALE, [page], {
+        clip: bbox,
+        maxLongSidePx: SIGNATURE_MAX_LONG_SIDE_PX,
+      });
+      const ink = r ? inkOf(await Jimp.read(r.png), WHOLE) : null;
+      return ink === null ? null : { ink, bbox };
+    }
+    if (!mime.startsWith('image/') || page !== 1) return null;
+    const ink = inkOf(await Jimp.read(doc.readablePath), bbox);
+    return ink === null ? null : { ink, bbox };
+  } catch {
+    return null;
+  }
+}
 
 export const redFlagValidator: Validator = {
   key: 'REDFLAG',
@@ -228,6 +290,10 @@ export const redFlagValidator: Validator = {
       for (const inst of pages) {
         // Nominee rows sit on insurance pages, which carry no govt code — check every page.
         for (const f of checkNominee(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
+        for (const f of checkInternetImage(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
+        if (inst.govtCode && ID_CARD_CODES.has(inst.govtCode)) {
+          for (const f of checkSpecimenCard(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
+        }
         const rules = inst.govtCode ? PAGE_RULES[inst.govtCode] : undefined;
         if (inst.govtCode === 'PAN' || inst.govtCode === 'AADHAR') {
           // Every PAN-shaped token counts (a page can hold a firm's and a partner's card, and an
@@ -237,6 +303,20 @@ export const redFlagValidator: Validator = {
           for (const pan of shaped) pans.push({ documentId: doc.id, page: inst.page ?? 1, pan });
           const read = shaped.size === 0 && inst.govtCode === 'PAN' ? panRead(inst.text) : undefined;
           if (read) pans.push({ documentId: doc.id, page: inst.page ?? 1, pan: read.pan });
+        }
+        if (inst.govtCode === 'PAN' && inst.page && signatureExpected(inst.text, inst.page)) {
+          const m = await signatureInk(doc, inst.page, ctx.wordBoxes.get(doc.id) ?? []);
+          if (m && m.ink < BLANK_INK_MAX) {
+            findings.push({
+              documentId: doc.id,
+              code: 'REDFLAG_PAN_UNSIGNED',
+              severity: 'ERROR',
+              message: `Customer signature box on the PAN card (page ${inst.page}) is blank`,
+              page: inst.page,
+              bbox: m.bbox,
+              data: { inkPct: Math.round(m.ink * 10000) / 100 },
+            });
+          }
         }
         if (!rules) continue;
         for (const rule of rules) for (const f of rule(inst.text, inst.page)) findings.push(toFinding(doc.id, f));

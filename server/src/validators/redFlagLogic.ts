@@ -174,7 +174,7 @@ export function panRead(text: string): { pan: string; loose: boolean } | undefin
 }
 
 /** "Father's Name" (OCR reads "Name" as "Mame") or Hindi "pita": only an individual's card prints one. */
-const PAN_FATHER_LABEL = /father['\u2019]?s?\s*[nm]ame|\u092A\u093F\u0924\u093E/i;
+export const PAN_FATHER_LABEL = /father['\u2019]?s?\s*[nm]ame|\u092A\u093F\u0924\u093E/i;
 
 /** The holder-name line: the one after the first "Name" label that is not a relative's. Undefined
  *  when there is no such label or the line has no upper-case word, so a name line that OCR
@@ -900,6 +900,43 @@ export function checkNominee(text: string, page: number | null = null): RedFlagF
   }
   if (!details || name.length > 0) return [];
   return [err('REDFLAG_NOMINEE_NO_NAME', 'No name in Nominee but other details available', page)];
+}
+
+// Image-fraud signals (client sheet 2026-10-31). A browser print of a Google Images result carries
+// the thumbnail host in its footer URL; a generated or specimen ID card carries a DEMO/SPECIMEN/SAMPLE
+// stamp. The scheme is not matched: OCR garbles it ("hitps:/"), the host survives.
+const INTERNET_IMAGE_RE = /encrypted-tbn\d?\.gstatic\.com|gstatic\.com\/images/i;
+// Labels and wording that use these words without marking the card as a specimen: a specimen
+// signature, a dealer's DEMO VEHICLE, a form's SAMPLE OF SIGNATURES or SPECIMEN OF FORM.
+const SPECIMEN_NOT_MARKER_RE = /^\s+(?:signature|claim|copy|of|vehicle|car|form)\b/i;
+
+/** Every page. At most one finding per page, so a URL in a print header and footer counts once. */
+export function checkInternetImage(text: string, page: number | null = null): RedFlagFinding[] {
+  const m = INTERNET_IMAGE_RE.exec(text);
+  if (!m) return [];
+  const subject = page == null ? 'This document' : `Page ${page}`;
+  return [
+    err(
+      'REDFLAG_INTERNET_IMAGE',
+      `${subject} is a printout of a Google Images search result (${m[0]}), not a scan of the customer's own document`,
+      page,
+      { source: m[0] },
+    ),
+  ];
+}
+
+/** ID pages only (the validator decides). Upper-case markers only: card stamps are capitals. */
+export function checkSpecimenCard(text: string, page: number | null = null): RedFlagFinding[] {
+  for (const m of text.matchAll(/\b(DEMO|SPECIMEN|SAMPLE)\b/g)) {
+    if (SPECIMEN_NOT_MARKER_RE.test(text.slice(m.index + m[0].length))) continue;
+    const subject = page == null ? 'This ID card' : `ID card on page ${page}`;
+    return [
+      err('REDFLAG_SPECIMEN_CARD', `${subject} is marked "${m[0]}": a specimen or generated card, not an issued one`, page, {
+        marker: m[0],
+      }),
+    ];
+  }
+  return [];
 }
 
 // ── Editable text in a scanned PDF (Data Pattern sheet, Phase 1) ─────────────────

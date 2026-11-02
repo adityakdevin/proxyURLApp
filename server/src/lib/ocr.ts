@@ -5,22 +5,9 @@ import { createWorker, Worker } from 'tesseract.js';
 import { OcrPort, PdfRegion, WordBox } from '../validators/types.js';
 import { rasterizePdf, MAX_PDF_PAGES, activeNow } from './pdfExtractor.js';
 import { estimateSkewDegrees } from './deskew.js';
-import { clamp01 } from './bbox.js';
+import { clamp01, unrotateBox } from './bbox.js';
 import { scheduleOcr } from './ocrSchedule.js';
 import { getSpell, isRealWord, type Spell } from '../validators/dictionary.js';
-
-/**
- * Map a normalized box from an image rotated counter-clockwise by `deg` back onto the page
- * as the reviewer sees it. Without this, a card read at 270° highlights the wrong region —
- * the box would be drawn in the rotated frame nobody is looking at.
- */
-function unrotateBox(b: WordBox['bbox'], deg: number): WordBox['bbox'] {
-  const { x, y, w, h } = b;
-  if (deg === 90) return { x: 1 - y - h, y: x, w: h, h: w };
-  if (deg === 180) return { x: 1 - x - w, y: 1 - y - h, w, h };
-  if (deg === 270) return { x: y, y: 1 - x - w, w: h, h: w };
-  return b;
-}
 
 /** Walk Tesseract's block hierarchy (v5) — or the flat `words` fallback — into WordBoxes.
  *  `width`/`height` are the ORIGINAL page's; `deg` is the rotation the winning OCR pass
