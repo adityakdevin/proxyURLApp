@@ -14,7 +14,7 @@
  *                                                   ├─ OCR-adjacent      → ERROR   "unreadable" (possible misread)
  *                                                   └─ clean but invalid → ERROR   "malformed" (red flag)
  */
-import { editDistanceCapped, isDoubtfulHit } from './logic.js';
+import { editDistanceCapped, isDoubtfulHit, GST_CERT_RE, NOT_AN_ID_CARD, PASSPORT_MRZ } from './logic.js';
 import { AI_RE } from '../lib/fileMeta.js';
 
 export interface RedFlagFinding {
@@ -138,31 +138,151 @@ export const PAN_CATEGORY: Record<string, string> = {
   G: 'Government',
 };
 
-export function checkPan(text: string, page: number | null = null): RedFlagFinding[] {
+/** The label for the loose read; wider than the labelled read because OCR mangles
+ *  "Permanent" ("Pormanent") but rarely "Account Number". */
+const PAN_LOOSE_LABEL = /\bP\.?A\.?N\b|account\s+number/i;
+
+/** What the page says its PAN is. A well-shaped PAN anywhere wins (as before), else the
+ *  labelled candidate if it carries a digit, else the first token within 4 lines of a PAN
+ *  label that starts with 3 letters, has a digit and is at most 15 characters (`loose`).
+ *  The loose token catches an 11-character PAN or a misread printed below the label line. */
+export function panRead(text: string): { pan: string; loose: boolean } | undefined {
   // A real PAN anywhere on the page wins over the word after the label: "PAN Services Unit"
   // is NSDL's address line on the card's back, and reading "SERVICES" as the PAN number
   // raised a malformed-PAN red flag on a valid card (client QA 2026-10, VIN ...630607).
   const shaped = /\b[A-Z]{5}[0-9]{4}[A-Z]\b/.exec(text.toUpperCase());
-  const labelled = shaped ? undefined : labeledCandidate(text, /\bP\.?A\.?N\b|permanent\s+account\s+number/i, /(?!)/);
+  if (shaped) return { pan: shaped[0], loose: false };
   // A PAN always carries four digits; a labelled token with none is a word, not a number.
-  const cand = shaped ? shaped[0] : labelled && /\d/.test(labelled) ? labelled : undefined;
-  if (!cand) return [];
+  const labelled = labeledCandidate(text, /\bP\.?A\.?N\b|permanent\s+account\s+number/i, /(?!)/);
+  if (labelled && /\d/.test(labelled)) return { pan: labelled, loose: false };
+  const lines = text.split(/\r?\n/);
+  // Every PAN label opens its own window, except NSDL's address line ("PAN Services Unit"),
+  // whose next line is a postcode. On the label line only the text after the label is read.
+  for (let i = 0; i < lines.length; i++) {
+    const m = PAN_LOOSE_LABEL.exec(lines[i]);
+    if (!m || /services\s+unit/i.test(lines[i])) continue;
+    for (let j = i; j < Math.min(i + 5, lines.length); j++) {
+      const line = j === i ? lines[j].slice(m.index + m[0].length) : lines[j];
+      for (const raw of line.split(/\s+/)) {
+        // Separators are OCR noise inside a PAN; a token still non-alphanumeric (a date) is no read.
+        const tok = stripSep(raw.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')).toUpperCase();
+        if (/^[A-Z0-9]+$/.test(tok) && tok.length <= 15 && /^[A-Z]{3}/.test(tok) && /\d/.test(tok)) return { pan: tok, loose: true };
+      }
+    }
+  }
+  return undefined;
+}
+
+/** "Father's Name" (OCR reads "Name" as "Mame") or Hindi "pita": only an individual's card prints one. */
+export const PAN_FATHER_LABEL = /father['\u2019]?s?\s*[nm]ame|\u092A\u093F\u0924\u093E/i;
+
+/** The holder-name line: the one after the first "Name" label that is not a relative's. Undefined
+ *  when there is no such label or the line has no upper-case word, so a name line that OCR
+ *  turned into punctuation never raises a 5th-letter flag. */
+function panHolderName(text: string): string | undefined {
+  const lines = text.split(/\r?\n/);
+  const i = lines.findIndex((l) => /\bname\b/i.test(l) && !/father|mother|spouse|guardian/i.test(l));
+  if (i < 0) return undefined;
+  // Words already on the label line ("NAME RAVI KUMAR") mean the next line is the father's, not the holder's.
+  if (/\b[A-Z]+\b/.test(lines[i].replace(/^.*?\bname\b/i, ''))) return undefined;
+  const line = lines[i + 1];
+  // A digit is an OCR misread ("5HAH"); the word list would drop that word and raise a false red.
+  return line && /\b[A-Z]+\b/.test(line) && !/\d/.test(line) ? line.trim() : undefined;
+}
+
+/** The father's-name words: after the label on its line, plus the next line. */
+function panFatherName(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const i = lines.findIndex((l) => PAN_FATHER_LABEL.test(l));
+  if (i < 0) return '';
+  return `${lines[i].replace(/^.*?(?:father['\u2019]?s?\s*[nm]ame|\u092A\u093F\u0924\u093E)/i, '')} ${lines[i + 1] ?? ''}`;
+}
+
+export function checkPan(text: string, page: number | null = null): RedFlagFinding[] {
+  const read = panRead(text);
+  if (!read) return [];
+  const cand = read.pan;
   if (PAN_RE.test(cand)) {
     const cat = PAN_CATEGORY[cand[3]];
-    return cat
-      ? [info('REDFLAG_PAN_OK', `PAN "${cand}" format is valid; 4th letter '${cand[3]}' = ${cat}`, page, { pan: cand, category: cat })]
-      : [err('REDFLAG_PAN_CATEGORY', `PAN 4th letter '${cand[3]}' is not a valid holder category`, page, { pan: cand })];
+    if (!cat) return [err('REDFLAG_PAN_CATEGORY', `PAN 4th letter '${cand[3]}' is not a valid holder category`, page, { pan: cand })];
+    const out: RedFlagFinding[] = [];
+    // A page with two PAN cards (a firm's and a partner's) cannot tie the father label or the
+    // name line to one number, so the holder checks stay quiet; the OK note still stands.
+    const twoCards = new Set(text.toUpperCase().match(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/g)).size > 1;
+    const individualCard = !twoCards && PAN_FATHER_LABEL.test(text);
+    if (individualCard && cand[3] !== 'P') {
+      out.push(err('REDFLAG_PAN_HOLDER_TYPE', `PAN "${cand}" has 4th letter '${cand[3]}' (${cat}), but the card prints a father's name, so it belongs to an individual (4th letter 'P')`, page, { pan: cand }));
+    } else {
+      out.push(info('REDFLAG_PAN_OK', `PAN "${cand}" format is valid; 4th letter '${cand[3]}' = ${cat}`, page, { pan: cand, category: cat }));
+    }
+    if (!twoCards && (individualCard || cand[3] === 'P')) {
+      const name = panHolderName(text);
+      // The 5th letter is fixed from the surname at allotment; a card reprinted after marriage
+      // keeps it and still prints the father's name, so his words count too.
+      const startsWord = (s: string) => (s.match(/\b[A-Z]+\b/g) ?? []).some((w) => w[0] === cand[4]);
+      if (name && !startsWord(name) && !startsWord(panFatherName(text))) {
+        out.push(err('REDFLAG_PAN_NAME_LETTER', `PAN "${cand}" 5th letter '${cand[4]}' starts no word of the holder's name "${name}"`, page, { pan: cand }));
+      }
+    }
+    return out;
   }
+  if (cand.length !== 10) return [err('REDFLAG_PAN_FORMAT', `PAN "${cand}" is ${cand.length} characters, not 10`, page, { pan: cand })];
   // Visible, worded as a possible misread: warnings are hidden, and an unverifiable ID must
   // not pass silently (security review, 2026-10-13). Same for DL and passport below.
-  if (ocrAdjacent(cand, PAN_RE)) return [err('REDFLAG_PAN_UNREADABLE', `PAN "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page)];
+  if (read.loose || ocrAdjacent(cand, PAN_RE)) {
+    return [err('REDFLAG_PAN_UNREADABLE', `PAN "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page, read.loose ? { pan: cand } : undefined)];
+  }
   return [err('REDFLAG_PAN_FORMAT', `PAN "${cand}" is not a valid 10-char format (AAAAA9999A)`, page, { pan: cand })];
+}
+
+/** A customer whose DMS name says company, but every PAN card in the claim is an individual's.
+ *  Only LLP/PVT/PRIVATE/LTD/LIMITED/CORPORATION count: "AND SONS", "ENTERPRISES" and "TRADERS"
+ *  are proprietorships, which file under the owner's individual PAN (Decision 4). */
+export function checkCustomerPanType(
+  customerName: string | null | undefined,
+  pans: { documentId: string; page: number; pan: string }[]
+): { documentId: string; finding: RedFlagFinding } | null {
+  if (!customerName || !/\b(?:LLP|PVT|PRIVATE|LTD|LIMITED|CORPORATION)\b/i.test(customerName)) return null;
+  // A read of any length whose 4th letter is a known non-individual category is the company's card.
+  if (pans.some((p) => p.pan[3] !== 'P' && (p.pan.length === 10 || PAN_CATEGORY[p.pan[3]]))) return null;
+  const reads = pans.filter((p) => p.pan.length === 10);
+  if (reads.length === 0) return null;
+  const first = reads[0];
+  return {
+    documentId: first.documentId,
+    finding: err(
+      'REDFLAG_PAN_HOLDER_TYPE',
+      `Customer "${customerName}" is a company, but the PAN card on page ${first.page} is an individual's (4th letter 'P'); a company's PAN has 'C', an LLP's 'F'`,
+      first.page,
+      { pan: first.pan }
+    ),
+  };
 }
 
 // ── GST ──────────────────────────────────────────────────────────────────────
 const GST_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+/** The registration number printed on a GST certificate. Two leading digits are required so a
+ *  vehicle number ("MP09AB1234") on a document that merely cites a certificate stays out. */
+export function certGstin(text: string): string | undefined {
+  return /registration\s*number\s*[:\-]?\s*(\d{2}[A-Z0-9]{8,16})/i.exec(text)?.[1].toUpperCase();
+}
+
+/** A 15-character GSTIN whose shape and check character hold once OCR misreads are undone (gstFold). */
+export function verifiedGstin(raw: string): boolean {
+  if (raw.length !== 15) return false;
+  const f = gstFold(raw);
+  return GST_RE.test(f) && gstCheckChar(f) === f[14];
+}
+
 export function checkGst(text: string, page: number | null = null): RedFlagFinding[] {
-  const cand = labeledCandidate(text, /\bGSTIN\b|\bGST\s*(?:no|reg)/i, /\b[0-9]{2}[A-Z0-9]{13}\b/);
+  const found = labeledCandidate(text, /\bGSTIN\b|\bGST\s*(?:no|reg)/i, /\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z0-9]{2,6}\b/);
+  // A word after the label ("GSTIN : POLICY") is no candidate: every GSTIN has digits.
+  let cand = found && /\d/.test(found) ? found : undefined;
+  // A certificate prints its number after "Registration Number". Requiring two leading digits
+  // keeps a vehicle number ("MP09AB1234") on a policy that cites a registration certificate out.
+  if (!cand && GST_CERT_RE.test(text)) {
+    cand = certGstin(text);
+  }
   if (!cand) return [];
   if (GST_RE.test(cand)) return [];
   const folded = cand.length === 15 ? gstFold(cand) : '';
@@ -178,10 +298,16 @@ export function checkGst(text: string, page: number | null = null): RedFlagFindi
 // ── DL (state 2 letters + 13 digits = 15 alphanumeric) ──────────────────────────
 const DL_RE = /^[A-Z]{2}[0-9]{13}$/;
 export function checkDl(text: string, page: number | null = null): RedFlagFinding[] {
-  const cand = labeledCandidate(text, /\bD\.?L\.?\s*(?:no|number)?\b|driving\s+licen[cs]e/i, /\b[A-Z]{2}[0-9]{2}\s?[0-9]{11}\b/);
-  if (!cand) return [];
+  // A number printed with a space ("MH12 2024009876501") is found on its own, ahead of any label.
+  const printed = /\b([A-Z]{2}[ \t-]?[0-9A-Z]{2,3}[ \t-]?[0-9]{5,15})\b/.exec(text.toUpperCase());
+  const cand =
+    (printed ? stripSep(printed[1]) : undefined) ??
+    labeledCandidate(text, /\bD\.?L\.?\s*(?:no|number)?\b|driving\s+licen[cs]e/i, /\b[A-Z]{2}[0-9]{2}\s?[0-9]{11}\b/);
+  // A word after the label ("DRIVING LICENCE / STATE OF ...") is no candidate: every DL has digits.
+  if (!cand || !/\d/.test(cand)) return [];
   if (DL_RE.test(cand)) return [];
-  if (ocrAdjacent(cand, DL_RE)) return [err('REDFLAG_DL_UNREADABLE', `DL number "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page)];
+  // A letter after the 2-letter state code is a digit misread (O for 0, D for 0).
+  if (/[A-Z]/.test(cand.slice(2)) || ocrAdjacent(cand, DL_RE)) return [err('REDFLAG_DL_UNREADABLE', `DL number "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page, { dl: cand })];
   // The sheet's "16 digits" counts the space printed after the RTO code: "MH14 20110012345"
   // (decision of 2026-09-24). `cand` has its separators stripped, so the message states the
   // rule it is actually checked against and shows the printed 16-character form beside it.
@@ -207,12 +333,160 @@ export function checkUdyam(text: string, page: number | null = null): RedFlagFin
   return [err('REDFLAG_UDYAM_FORMAT', `Udyam number "${cand}" is not UDYAM-SS-DD-NNNNNNN`, page, { udyam: cand })];
 }
 
+// ── Passport MRZ (ICAO 9303 TD3, second line) ───────────────────────────────────
+/** ICAO 9303 check digit: weights 7, 3, 1 repeating; '<' = 0, digits as they are, A = 10 ... Z = 35; sum mod 10. */
+export function mrzCheckDigit(s: string): string {
+  const weights = [7, 3, 1];
+  let sum = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const v = c === '<' ? 0 : c >= '0' && c <= '9' ? Number(c) : c.charCodeAt(0) - 55;
+    sum += v * weights[i % 3];
+  }
+  return String(sum % 10);
+}
+
+export interface ParsedMrz {
+  data: string;
+  folds: number;
+  personal: string;
+  final: string;
+}
+
+/** The 28 data characters of line 2 by position: L letter, D digit, F digit or '<', S as read. */
+const MRZ_KINDS = 'LDDDDDDDFDLLLDDDDDDDSDDDDDDD';
+const MRZ_LINE_RE =
+  /([A-Z0-9$]{8}[<0-9][0-9][A-Z]{3}[0-9A-Z$]{6}[0-9][MF<][0-9A-Z$]{6}[0-9])(?:([A-Z0-9<]{14}[0-9<])([0-9])|([<KL]{0,23})([0-9]))/;
+// The folds follow what OCR confuses: the digits 0 1 2 5 6 8 and '$' with the letters O I Z S G B, and
+// O Q D / I L / Z / S $ / G / B read where a digit belongs. Folding is by position, never over the whole
+// line, because the nationality and the number's first character are real letters.
+const DIGIT_TO_LETTER: Record<string, string> = { '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '6': 'G', '8': 'B', $: 'S' };
+const LETTER_TO_DIGIT: Record<string, string> = { O: '0', Q: '0', D: '0', I: '1', L: '1', Z: '2', S: '5', $: '5', G: '6', B: '8' };
+
+/** Every TD3 line 2 on the page read through OCR noise, in page order (a sheet may carry two data pages). */
+export function parseMrzAll(text: string): ParsedMrz[] {
+  const found: ParsedMrz[] = [];
+  for (const raw of text.toUpperCase().split('\n')) {
+    const m = MRZ_LINE_RE.exec(raw.replace(/\s+/g, '').replace(/«/g, '<'));
+    if (!m) continue;
+    let data = '';
+    let folds = 0;
+    let ok = true;
+    for (let i = 0; i < 28 && ok; i++) {
+      const c = m[1][i];
+      const kind = MRZ_KINDS[i];
+      let out = c;
+      if (kind === 'L' && !/[A-Z]/.test(c)) out = DIGIT_TO_LETTER[c];
+      else if ((kind === 'D' || kind === 'F') && !/[0-9]/.test(c) && !(kind === 'F' && c === '<')) out = LETTER_TO_DIGIT[c];
+      if (out === undefined) ok = false;
+      else {
+        if (out !== c) folds++;
+        data += out;
+      }
+    }
+    if (!ok) continue;
+    const tail = m[2] ?? m[4];
+    const personal = m[2] !== undefined && !/^[<KL]*$/.test(m[2]) ? m[2] : '<'.repeat(15);
+    if (tail !== personal) folds++;
+    // A failing personal-number check digit is a fold, not a finding: on an OCR read a misaligned or
+    // misread tail (a dropped filler, a filler read as a letter) is likelier than a real edit.
+    // '<' counts as 0 there, as ICAO allows for an empty personal number.
+    else if (personal[14] !== undefined && mrzCheckDigit(personal.slice(0, 14)) !== (personal[14] === '<' ? '0' : personal[14])) folds++;
+    found.push({ data, folds, personal, final: m[3] ?? m[5] });
+  }
+  return found;
+}
+
+/** The first line 2 of a TD3 passport MRZ read through OCR noise; undefined when no line parses. */
+export function parseMrz(text: string): ParsedMrz | undefined {
+  return parseMrzAll(text)[0];
+}
+
+const MRZ_FOLD_NOTE = 'The MRZ was read with OCR corrections, so this may be a misread, please confirm visually';
+
+function mrzFindings(mrz: ParsedMrz, page: number, invoiceDay: string | undefined): { findings: RedFlagFinding[]; number?: string } {
+  const { data, personal, final, folds } = mrz;
+  const checks: [string, string, string][] = [
+    ['number', data.slice(0, 9), data[9]],
+    ['date of birth', data.slice(13, 19), data[19]],
+    ['expiry', data.slice(21, 27), data[27]],
+    ['whole line', data.slice(0, 10) + data.slice(13, 20) + data.slice(21, 28) + personal, final],
+  ];
+  const failed = checks.filter(([, body, digit]) => mrzCheckDigit(body) !== digit).map(([name]) => name);
+  const number = data.slice(0, 9).replace(/<+$/, '');
+  const findings: RedFlagFinding[] = [];
+  if (failed.length) {
+    // A clean read (0 folds) that fails is a real edit or misprint, so it is an ERROR. A fold is a guess
+    // about the OCR, so a failure after one may be our guess or the scan, and is only a note to confirm.
+    const list = failed.join(', ');
+    findings.push(
+      folds === 0
+        ? err('REDFLAG_PASSPORT_MRZ', `Passport MRZ check digit fails for: ${list}. The MRZ has been edited or misprinted`, page, { passport: number, failed })
+        : info('REDFLAG_PASSPORT_MRZ_UNSURE', `Passport MRZ check digit fails for: ${list}. ${MRZ_FOLD_NOTE}`, page)
+    );
+  }
+  if (!failed.includes('expiry') && invoiceDay) {
+    const expiry = `20${data.slice(21, 23)}-${data.slice(23, 25)}-${data.slice(25, 27)}`;
+    if (expiry < invoiceDay)
+      findings.push(
+        err('REDFLAG_PASSPORT_EXPIRED', `Passport expired on ${expiry} (MRZ), before the invoice date ${invoiceDay}`, page, {
+          passport: number,
+          expiry,
+          invoiceDate: invoiceDay,
+        })
+      );
+  }
+  return { findings, number };
+}
+
+/** MRZ check digits and expiry over one file's passport pages. */
+export function checkPassportMrz(pages: { page: number; text: string }[], invoiceDate?: Date | null): RedFlagFinding[] {
+  const invoiceDay = invoiceDate ? invoiceDate.toISOString().slice(0, 10) : undefined;
+  const okNote = (page: number, num: string) =>
+    info(
+      'REDFLAG_PASSPORT_OK',
+      `Passport basic checks passed: number "${num}" is 1 letter + 7 digits and the MRZ check digits (number, date of birth, expiry, whole line) are valid`,
+      page,
+      { passport: num }
+    );
+  // One entry per MRZ, not per page: two data pages can share a sheet, and the old one must not
+  // raise EXPIRED above a valid new one.
+  const perPage = pages.flatMap((p): { page: number; findings: RedFlagFinding[]; number?: string }[] => {
+    const all = parseMrzAll(p.text);
+    if (all.length) return all.map((mrz) => ({ page: p.page, ...mrzFindings(mrz, p.page, invoiceDay) }));
+    if (!PASSPORT_MRZ.test(p.text)) return [];
+    return [
+      {
+        page: p.page,
+        findings: [
+          info('REDFLAG_PASSPORT_MRZ_UNSURE', 'Passport MRZ could not be read, so its check digits were not verified, please confirm visually', p.page),
+        ],
+      },
+    ];
+  });
+  for (const r of perPage) if (r.number && !r.findings.length) r.findings.push(okNote(r.page, r.number));
+  // The expiry is judged on the invoice date (Decision 11): a renewed passport's bundle often carries
+  // the old one too, so an old passport is not flagged while another page in the file passes and is valid.
+  if (perPage.some((r) => r.findings.some((f) => f.code === 'REDFLAG_PASSPORT_OK'))) {
+    for (const r of perPage) {
+      if (!r.number) continue;
+      r.findings = r.findings.filter((f) => f.code !== 'REDFLAG_PASSPORT_EXPIRED');
+      if (!r.findings.length) r.findings.push(okNote(r.page, r.number));
+    }
+  }
+  return perPage.flatMap((r) => r.findings);
+}
+
 // ── Passport number (1 letter + 7 digits) ───────────────────────────────────────
 const PASSPORT_NO_RE = /^[A-Z][0-9]{7}$/;
 export function checkPassportNumber(text: string, page: number | null = null): RedFlagFinding[] {
   const cand = labeledCandidate(text, /\bpassport\s*(?:no|number)\b/i, /\b[A-PR-WYa-pr-wy][0-9]{7}\b/);
   if (!cand) return [];
-  if (PASSPORT_NO_RE.test(cand)) return [];
+  if (PASSPORT_NO_RE.test(cand)) {
+    // On a page whose MRZ parses, checkPassportMrz gives the one passport note.
+    if (parseMrz(text)) return [];
+    return [info('REDFLAG_PASSPORT_OK', `Passport number "${cand}" format is valid (1 letter + 7 digits)`, page, { passport: cand })];
+  }
   if (ocrAdjacent(cand, PASSPORT_NO_RE)) return [err('REDFLAG_PASSPORT_UNREADABLE', `Passport no. "${cand}" could not be verified — possibly a scan misread, please confirm visually`, page)];
   return [err('REDFLAG_PASSPORT_FORMAT', `Passport number "${cand}" is not 1 letter + 7 digits`, page, { passport: cand })];
 }
@@ -234,7 +508,15 @@ export function checkPassportPages(pages: { page: number; text: string }[]): Red
   const nums = new Set<string>();
   let firstPage: number | null = null;
   for (const p of pages) {
-    for (const m of p.text.toUpperCase().matchAll(/\b[A-PR-WY][0-9]{7}\b/g)) {
+    const up = p.text.toUpperCase();
+    let prevEnd = 0;
+    for (const m of up.matchAll(/\b[A-PR-WY][0-9]{7}\b/g)) {
+      // The back of a renewed passport prints the old number under "Old Passport No.". Only the
+      // first number after that label is the old one, so the label must sit between the previous
+      // number and this one: a current number printed after the old one still counts.
+      const runUp = up.slice(Math.max(prevEnd, m.index - 80), m.index);
+      prevEnd = m.index + m[0].length;
+      if (/OLD\s+PASSPORT\s+N[O0]/.test(runUp)) continue;
       nums.add(m[0]);
       if (firstPage === null) firstPage = p.page;
     }
@@ -248,7 +530,15 @@ export function checkPassportPages(pages: { page: number; text: string }[]): Red
 }
 
 /** Every VID label and its digit run, for checkVid; same shape as labelledDigits. */
-const VID_LABEL_RE = /\b(?:V\.?I\.?D|virtual\s*id)\b([^0-9]{0,24})((?:\d[ \t-]?){7,20}\d)/gi;
+const VID_LABEL_RE = /\b(?:V\.?I\.?D|virtual\s*id)\b([^0-9$]{0,24})((?:[\d$][ \t-]?){7,20}[\d$])/gi;
+
+/** A VID label, a mandatory ':' or ';', then text but no digit run: the label was found, the
+ *  number was not read. The separator keeps consent and form prose ("Aadhaar number/VID,
+ *  hereby give my consent") from reading as an unreadable VID. */
+const VID_LABEL_ONLY_RE = /\b(?:V\.?I\.?D|virtual\s*id)\b[ \t]*[:;][ \t]*([^\n]{0,30})/i;
+
+/** OCR often reads a VID digit as `$`, so `$` counts as a digit when measuring a VID. */
+const vidDigits = (s: string): string => s.replace(/[^\d$]/g, '');
 
 /** Label-anchored digit run following an Aadhaar/VID label. Group 1 = the text between
  *  label and number (used to reject a number that actually belongs to a nearby label). */
@@ -263,7 +553,8 @@ const labelledDigits = (text: string, label: string): RegExpExecArray | null =>
  *  was invisible to it — the document simply looked like it carried no Aadhaar at all. */
 export function checkAadhaarFormat(text: string, page: number | null = null): RedFlagFinding[] {
   const m = labelledDigits(text, 'aadha?a?r|uidai');
-  if (!m) return [];
+  // 1800 is the toll-free prefix ("help@uidai.gov.in 1800 300 1947"), not an Aadhaar number.
+  if (!m || stripSep(m[2]).startsWith('1800')) return unlabelledAadhaarFormat(text, page);
   // The number after an Aadhaar label may belong to the VID or the enrolment no. printed
   // beside it; those have their own lengths and their own rule.
   if (/\b(?:vid|enrol)/i.test(m[1])) return [];
@@ -274,6 +565,34 @@ export function checkAadhaarFormat(text: string, page: number | null = null): Re
       aadhaar: digits,
     }),
   ];
+}
+
+/** Aadhaar-sized run of three space-separated groups with no label. A back or a card whose
+ *  number sits on its own line carries no "Aadhaar" word beside it. */
+const UNLABELLED_AADHAAR_RE = /\b(\d{4,5})[ \t](\d{4,5})[ \t](\d{1,5})\b(?![ \t]?\d)/g;
+
+function unlabelledAadhaarFormat(text: string, page: number | null): RedFlagFinding[] {
+  // A payslip or policy page can print any number; only an ID card gets the unlabelled scan.
+  if (NOT_AN_ID_CARD.test(text)) return [];
+  for (const m of text.matchAll(UNLABELLED_AADHAAR_RE)) {
+    if (isAadhaarLookalike(text, m.index)) continue;
+    // More digits after it on the same line make this the head of a longer number, such as
+    // a VID whose label OCR garbled ("/ID : 9123 4567 8 D9 1234").
+    if (/^[ \t]+\S*\d/.test(text.slice(m.index + m[0].length))) continue;
+    // A VID printed just above is the VID's own fragment, not an Aadhaar number.
+    if (/\bv\.?i\.?d\b|virtual/i.test(text.slice(Math.max(0, m.index - 30), m.index))) continue;
+    const digits = stripSep(m[0]);
+    // UIDAI issues no number starting 0 or 1: an STD landline ("0731 2345 678") or 1800 line.
+    if (/^[01]/.test(digits)) continue;
+    // 9 to 13 digits: a wider band would catch phone and account numbers (Decision 5).
+    if (digits.length === 12 || digits.length < 9 || digits.length > 13) continue;
+    return [
+      err('REDFLAG_AADHAAR_FORMAT', `Aadhaar number "${m[0]}" is ${digits.length} digits, not 12`, page, {
+        aadhaar: digits,
+      }),
+    ];
+  }
+  return [];
 }
 
 // 16, per UIDAI's published VID format and the reviewer sheet of 2026-09-03, which reported
@@ -287,28 +606,40 @@ const VID_DIGITS = 16;
  *  "91234567 89012345 4", client QA 2026-10). A 4-digit fifth group
  *  is a neighbouring number on the same line, not part of the VID. */
 function vidRead(raw: string): string {
-  const grouped = /^\d{4}[ \t-]\d{4}[ \t-]\d{4}[ \t-]\d{4}(?=[ \t-]|$)/.exec(raw);
+  const grouped = /^[\d$]{4}[ \t-][\d$]{4}[ \t-][\d$]{4}[ \t-][\d$]{4}(?=[ \t-]|$)/.exec(raw);
   if (grouped) return grouped[0];
   const tail = /^(.*\d)[ \t-]+\d{1,2}$/.exec(raw);
-  return tail && stripSep(tail[1]).length === VID_DIGITS ? tail[1] : raw;
+  return tail && vidDigits(tail[1]).length === VID_DIGITS ? tail[1] : raw;
 }
 
 /** Virtual ID (VID) printed beside the Aadhaar number must be VID_DIGITS long. */
 export function checkVid(text: string, page: number | null = null): RedFlagFinding[] {
   const reads = [...text.matchAll(VID_LABEL_RE)].map((m) => vidRead(m[2].trim()));
-  if (reads.length === 0) return [];
+  if (reads.length === 0) {
+    const label = VID_LABEL_ONLY_RE.exec(text);
+    const tail = label?.[1].trim() ?? '';
+    // A blank form line ("VID: ______") is an empty field, not a read.
+    if (tail.startsWith('_')) return [];
+    if (tail.replace(/[^A-Za-z0-9]/g, '').length < 6 || !/\d/.test(tail)) return [];
+    return [
+      err('REDFLAG_VID_UNREADABLE', `VID could not be read ("${tail}"), possibly a scan misread, please confirm visually`, page, { vid: tail }),
+    ];
+  }
   // The page prints the VID more than once (front and back of an e-Aadhaar): one clean
   // 16-digit read settles it, however garbled the other is ("11122223333 4444"
   // above a clean "9111 2222 3333 4444").
-  if (reads.some((r) => stripSep(r).length === VID_DIGITS)) return [];
+  if (reads.some((r) => vidDigits(r).length === VID_DIGITS)) return [];
   const raw = reads[0];
-  const digits = stripSep(raw);
+  const digits = vidDigits(raw);
   // Irregular grouping ("9876 5432 109 87654") is most likely an OCR misread, not a forged
   // VID. Still a red flag, worded as a possible misread: warnings are hidden from reviewers,
   // and a malformed ID must not pass silently (security review, 2026-10-13).
   const groups = raw.split(/[ \t-]+/);
   if (groups.length > 1 && groups.some((g) => g.length !== 4) && Math.abs(digits.length - VID_DIGITS) <= 1) {
-    return [err('REDFLAG_VID_UNREADABLE', `VID "${raw}" could not be read reliably (${digits.length} digits) — possibly a scan misread, please confirm visually`, page, { vid: digits })];
+    const side = digits.length < VID_DIGITS ? 'short' : 'long';
+    return [
+      err('REDFLAG_VID_UNREADABLE', `VID "${raw}" is ${digits.length} digits, not ${VID_DIGITS} (one group is ${side}), possibly a scan misread, please confirm visually`, page, { vid: digits }),
+    ];
   }
   return [
     err('REDFLAG_VID_FORMAT', `VID "${raw}" is ${digits.length} digits, not ${VID_DIGITS}`, page, { vid: digits }),
@@ -322,22 +653,130 @@ export const AADHAAR_GROUP_RE = /\b(\d{4}\s?\d{4}\s?\d{4})\b(?!\s?\d)/g;
  *  number ("Toll Free No: 1800 2666 9666") is Aadhaar-shaped, and reading it as one made a
  *  legitimate claim hard-fail with "Aadhaar number differs across pages". */
 export const AADHAAR_COMPETING_LABEL =
-  /(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax|\bph\b|enrol|\bvid\b|\buan\b|\bpf\b|invoice|policy|emp(?:loyee)?\s*(?:code|id|no)|\bcode\b|a\/c|account|acct)[^0-9]{0,12}$/i;
+  /(?:toll|free|phone|mobile|help\s*desk|helpline|contact|fax|\bph\b|\btel\b|en[rv]o[l1i]|\bvid\b|\buan\b|\bpf\b|invoice|policy|emp(?:loyee)?\s*(?:code|id|no)|\bcode\b|a\/c|account|acct)[^0-9]{0,12}$/i;
+
+/** True when a match at `index` is not an Aadhaar number: a competing label sits right
+ *  before it, or a digit precedes it. Digits immediately before mean this is the tail of a
+ *  longer run, such as the last three groups of a 16-digit VID, which the lookahead alone
+ *  cannot reject. Same LINE only: a card prints its number on its own line under the date
+ *  of birth, and treating that line break as a continuation rejected the real number. */
+function isAadhaarLookalike(text: string, index: number): boolean {
+  const runUp = text.slice(Math.max(0, index - 30), index);
+  return AADHAAR_COMPETING_LABEL.test(runUp) || /\d[ \t-]?$/.test(runUp);
+}
 
 /** Distinct 12-digit Aadhaar numbers on one page, excluding phone-shaped lookalikes. */
 export function aadhaarNumbers(text: string): string[] {
   const out = new Set<string>();
   for (const m of text.matchAll(AADHAAR_GROUP_RE)) {
-    const runUp = text.slice(Math.max(0, m.index - 30), m.index);
-    if (AADHAAR_COMPETING_LABEL.test(runUp)) continue;
-    // Digits immediately before mean this is the tail of a longer run — the last three
-    // groups of a 16-digit VID, which the lookahead alone cannot reject. Same LINE only:
-    // a card prints its number on its own line under the date of birth, and treating that
-    // line break as a continuation rejected the real Aadhaar number.
-    if (/\d[ \t-]?$/.test(runUp)) continue;
-    out.add(stripSep(m[1]));
+    if (isAadhaarLookalike(text, m.index)) continue;
+    // After a '/' the run is the year of a date ("01/01/1985 1234 5678") or the tail of an
+    // enrolment number. Only here, not in isAadhaarLookalike: the unlabelled length scan
+    // shares that helper and is left as it was. A number that passes the check digit is
+    // kept: a stray slash from OCR ("MALE\n/ 4132 9642 2840") must not hide a real card.
+    const digits = stripSep(m[1]);
+    if (/\/[ \t]?$/.test(text.slice(Math.max(0, m.index - 30), m.index)) && !verhoeffOk(digits)) continue;
+    out.add(digits);
   }
   return [...out];
+}
+
+const VERHOEFF_D = [
+  '0123456789', '1234067895', '2340178956', '3401289567', '4012395678',
+  '5987604321', '6598710432', '7659821043', '8765932104', '9876543210',
+].map((r) => [...r].map(Number));
+const VERHOEFF_P = [
+  '0123456789', '1576283094', '5803796142', '8916043527',
+  '9453126870', '4286573901', '2793806415', '7046913258',
+].map((r) => [...r].map(Number));
+
+/** Verhoeff check over a digit string (UIDAI: the 12th Aadhaar digit is a Verhoeff check digit). */
+export function verhoeffOk(digits: string): boolean {
+  let c = 0;
+  const rev = [...digits].reverse();
+  for (let i = 0; i < rev.length; i++) c = VERHOEFF_D[c][VERHOEFF_P[i % 8][Number(rev[i])]];
+  return c === 0;
+}
+
+/**
+ * Is a page's read exact (Decision 7)? Only when META took the page from the PDF's own text
+ * layer (not OCR) AND that layer is visible AND the page has no hidden text op. A scanner app's
+ * invisible OCR layer is a text layer too, and a visible watermark or stamp beside it does not
+ * make the scanner's one-digit misread exact. No stats (an image, or pdf.js failed) is not exact.
+ */
+export function cleanRead(
+  inTextLayer: boolean,
+  stat: { visibleText: boolean; hiddenText: boolean } | undefined
+): boolean {
+  return inTextLayer && stat?.visibleText === true && stat.hiddenText === false;
+}
+
+export interface AadhaarRead {
+  documentId: string;
+  page: number;
+  text: string;
+  /** The page is the PDF's own visible text layer, not OCR output. */
+  clean: boolean;
+}
+
+/**
+ * A 12-digit Aadhaar number that fails its Verhoeff check digit. One OCR misread digit fails
+ * the check too, so it is an ERROR only when the number is card-shaped (printed as three
+ * whitespace-separated 4-digit groups, or right after an Aadhaar/UIDAI label) AND the read is
+ * exact: a clean read, or the same number read on two or more distinct pages. Anything else,
+ * such as a 12-digit application or account number, is an INFO note (Decision 7).
+ */
+export function checkAadhaarChecksum(reads: AadhaarRead[]): { documentId: string; finding: RedFlagFinding }[] {
+  const byNumber = new Map<string, AadhaarRead[]>();
+  const cardShaped = new Set<string>();
+  for (const r of reads) {
+    // Like the unlabelled scan, a payslip or policy page is no ID card (Task 4).
+    if (NOT_AN_ID_CARD.test(r.text)) continue;
+    const nums = new Set(aadhaarNumbers(r.text));
+    // AADHAAR_GROUP_RE also takes 12 contiguous digits (an application or account number), so
+    // note which numbers were printed as three whitespace-separated 4-digit groups.
+    const grouped = new Set(
+      [...r.text.matchAll(/(?<!\d)(\d{4})[ \t](\d{4})[ \t](\d{4})(?![ \t]?\d)/g)].map((g) => g[1] + g[2] + g[3])
+    );
+    const m = labelledDigits(r.text, 'aadha?a?r|uidai');
+    // The same guards as aadhaarNumbers and checkAadhaarFormat: a phone or toll-free number
+    // after "UIDAI" or "Aadhaar" is not the card number.
+    if (
+      m &&
+      !/\b(?:vid|enrol)/i.test(m[1]) &&
+      !AADHAAR_COMPETING_LABEL.test(m[1]) &&
+      stripSep(m[2]).length === 12 &&
+      !stripSep(m[2]).startsWith('1800')
+    ) {
+      nums.add(stripSep(m[2]));
+      grouped.add(stripSep(m[2]));
+    }
+    for (const n of nums) {
+      if (verhoeffOk(n)) continue;
+      if (grouped.has(n)) cardShaped.add(n);
+      byNumber.set(n, [...(byNumber.get(n) ?? []), r]);
+    }
+  }
+  const out: { documentId: string; finding: RedFlagFinding }[] = [];
+  for (const [n, rs] of byNumber) {
+    const first = rs[0];
+    // The same scan attached to two documents is one read, not two that "agree".
+    const pages = new Set(
+      [...new Map(rs.map((r) => [r.text.trim(), r])).values()].map((r) => `${r.documentId}:${r.page}`)
+    );
+    const base = `Aadhaar number ${n} fails the Aadhaar check digit`;
+    const finding =
+      cardShaped.has(n) && (rs.some((r) => r.clean) || pages.size >= 2)
+        ? err('REDFLAG_AADHAAR_CHECKSUM', `${base}, so it is not a valid Aadhaar number`, first.page, { aadhaar: n })
+        : info(
+            'REDFLAG_AADHAAR_CHECKSUM_UNSURE',
+            `${base}; it was read once by OCR, so it may be a misread, please confirm visually`,
+            first.page,
+            { aadhaar: n }
+          );
+    out.push({ documentId: first.documentId, finding });
+  }
+  return out;
 }
 
 /** Aadhaar 12-digit + front/back consistency, across the pages of ONE file. */
@@ -352,17 +791,26 @@ export function aadhaarNumbers(text: string): string[] {
  */
 export function checkAadhaar(pages: { page: number; text: string }[]): RedFlagFinding[] {
   const seen: { page: number; num: string; dob: string | null }[] = [];
+  const dobPages: number[] = [];
+  const frontPages = new Set<number>();
   for (const p of pages) {
     // The holder's birth date, so two cards far apart can still be told to be ONE person.
-    const dob = /(?:dob|date\s*of\s*birth|year\s*of\s*birth)[^0-9]{0,12}(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{4}|\d{4})/i.exec(p.text);
+    // A space may stand for a date separator ("14/05 1981"): OCR drops the second slash.
+    const dob = /(?:dob|date\s*of\s*birth|year\s*of\s*birth)[^0-9]{0,12}(\d{1,2}[\/.\-\s]\d{1,2}[\/.\-\s]\d{4}|\d{4})/i.exec(p.text);
+    // Recorded for every page, numbered or not: a front whose number OCR missed is still
+    // the front its back belongs to.
+    if (dob) dobPages.push(p.page);
+    // Enrolment or gender wording means a front, or a whole letter, whose DOB OCR missed.
+    // It is never a back, so it must not be paired with an earlier person's card.
+    else if (/\ben[rv]o[l1i]{1,2}ment\b/i.test(p.text) || /\b(?:male|female)\b/i.test(p.text)) frontPages.add(p.page);
     for (const n of aadhaarNumbers(p.text)) seen.push({ page: p.page, num: n, dob: dob?.[1] ?? null });
   }
   // A back side prints no birth date. Pair it with the nearest front before it, so a back
   // several pages from its front is still compared (review, 2026-10-13).
   const frontOf = (back: { page: number; dob: string | null }) =>
-    back.dob !== null
+    back.dob !== null || frontPages.has(back.page)
       ? null
-      : Math.max(-1, ...seen.filter((x) => x.dob !== null && x.page < back.page).map((x) => x.page));
+      : Math.max(-1, ...dobPages.filter((pg) => pg < back.page));
   const out: RedFlagFinding[] = [];
   const reported = new Set<string>();
   for (const a of seen) {
@@ -454,6 +902,43 @@ export function checkNominee(text: string, page: number | null = null): RedFlagF
   return [err('REDFLAG_NOMINEE_NO_NAME', 'No name in Nominee but other details available', page)];
 }
 
+// Image-fraud signals (client sheet 2026-10-31). A browser print of a Google Images result carries
+// the thumbnail host in its footer URL; a generated or specimen ID card carries a DEMO/SPECIMEN/SAMPLE
+// stamp. The scheme is not matched: OCR garbles it ("hitps:/"), the host survives.
+const INTERNET_IMAGE_RE = /encrypted-tbn\d?\.gstatic\.com|gstatic\.com\/images/i;
+// Labels and wording that use these words without marking the card as a specimen: a specimen
+// signature, a dealer's DEMO VEHICLE, a form's SAMPLE OF SIGNATURES or SPECIMEN OF FORM.
+const SPECIMEN_NOT_MARKER_RE = /^\s+(?:signature|claim|copy|of|vehicle|car|form)\b/i;
+
+/** Every page. At most one finding per page, so a URL in a print header and footer counts once. */
+export function checkInternetImage(text: string, page: number | null = null): RedFlagFinding[] {
+  const m = INTERNET_IMAGE_RE.exec(text);
+  if (!m) return [];
+  const subject = page == null ? 'This document' : `Page ${page}`;
+  return [
+    err(
+      'REDFLAG_INTERNET_IMAGE',
+      `${subject} is a printout of a Google Images search result (${m[0]}), not a scan of the customer's own document`,
+      page,
+      { source: m[0] },
+    ),
+  ];
+}
+
+/** ID pages only (the validator decides). Upper-case markers only: card stamps are capitals. */
+export function checkSpecimenCard(text: string, page: number | null = null): RedFlagFinding[] {
+  for (const m of text.matchAll(/\b(DEMO|SPECIMEN|SAMPLE)\b/g)) {
+    if (SPECIMEN_NOT_MARKER_RE.test(text.slice(m.index + m[0].length))) continue;
+    const subject = page == null ? 'This ID card' : `ID card on page ${page}`;
+    return [
+      err('REDFLAG_SPECIMEN_CARD', `${subject} is marked "${m[0]}": a specimen or generated card, not an issued one`, page, {
+        marker: m[0],
+      }),
+    ];
+  }
+  return [];
+}
+
 // ── Editable text in a scanned PDF (Data Pattern sheet, Phase 1) ─────────────────
 // "If any text is editable in any pdf file — in case we can add any text on scanned pdf,
 // it is edited." In a bundle that is otherwise scanned (image pages with no visible text),
@@ -462,7 +947,7 @@ export function checkNominee(text: string, page: number | null = null): RedFlagF
 // INFO, not WARNING: warnings are hidden, and a forgery signal must stay in front of the
 // reviewer (review, 2026-10-13).
 /** INFO findings that are advisories a reviewer should look at, not checks that passed. */
-export const ADVISORY_CODES = new Set(['REDFLAG_EDITABLE_TEXT', 'REDFLAG_NO_SIGNATURE', 'REDFLAG_SIGNATORY_UNREADABLE']);
+export const ADVISORY_CODES = new Set(['REDFLAG_EDITABLE_TEXT', 'REDFLAG_NO_SIGNATURE', 'REDFLAG_SIGNATORY_UNREADABLE', 'REDFLAG_PASSPORT_MRZ_UNSURE', 'REDFLAG_AADHAAR_CHECKSUM_UNSURE']);
 
 export function checkEditableText(
   stats: { image: boolean; visibleText: boolean }[],

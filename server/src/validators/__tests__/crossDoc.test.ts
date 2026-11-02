@@ -14,6 +14,7 @@ import {
   extractVehicleNos,
   extractField,
   crossDocFieldFindings,
+  gstCertFindings,
   CrossPage,
 } from '../crossDocLogic.js';
 
@@ -460,5 +461,41 @@ describe('names that are not people (production, 2026-09-26)', () => {
   it('keeps real names, including short surnames', () => {
     expect(extractNames('Customer Name : RAKESH PRASAD UNIYAL')).toEqual(['RAKESH PRASAD UNIYAL']);
     expect(extractNames('Owner Name : OM PRAKASH')).toEqual(['OM PRAKASH']);
+  });
+});
+
+describe('GST certificate vs the claim GSTIN (client sheet 2026-10-31)', () => {
+  const INV = 'TAX INVOICE\nInvoice No: INV-1\nDealer GSTIN: 27PQRSX5678K1ZY\nBuyer GSTIN: 23ABCDE1234F1Z8';
+  const CERT = 'Form GST REG-06\nRegistration Certificate\nRegistration Number : 23ABCDE1234F1Z\nLegal Name : ABC TRADERS';
+  const pages = (cert: string, inv = INV): CrossPage[] => [
+    { documentId: 'd1', page: 1, text: inv },
+    { documentId: 'd1', page: 12, text: cert, govtCode: 'GST' },
+  ];
+
+  it('flags a certificate number that is the claim GSTIN without its check character', () => {
+    expect(gstCertFindings(pages(CERT))).toMatchObject([
+      {
+        documentId: 'd1',
+        page: 12,
+        code: 'CROSS_GSTIN_MISMATCH',
+        severity: 'ERROR',
+        message:
+          'GSTIN "23ABCDE1234F1Z" on the GST certificate has 14 characters; "23ABCDE1234F1Z8" (INVOICE, page 1) has 15: the certificate is missing the check character.',
+        data: { field: 'GSTIN', expected: '23ABCDE1234F1Z8', actual: '23ABCDE1234F1Z' },
+      },
+    ]);
+    expect(gstCertFindings(pages(CERT.replace('23ABCDE1234F1Z', '23ABCDEI234FIZ')))).toHaveLength(1);
+  });
+  it('accepts a certificate that matches once OCR misreads are folded, check character included', () => {
+    expect(gstCertFindings(pages(CERT.replace('23ABCDE1234F1Z', '23ABCDEI234FIZB')))).toEqual([]);
+  });
+  it('leaves another registration of the same PAN alone', () => {
+    expect(gstCertFindings(pages(CERT.replace('23ABCDE1234F1Z', '23ABCDE1234F2Z7')))).toEqual([]);
+  });
+  it('ignores a claim GSTIN that fails its own check character', () => {
+    expect(gstCertFindings(pages(CERT, INV.replace('1Z8', '1Z5')))).toEqual([]);
+  });
+  it('leaves a 15-character certificate with another last character to the GST format rule', () => {
+    expect(gstCertFindings(pages(CERT.replace('23ABCDE1234F1Z', '23ABCDE1234F1Z5')))).toEqual([]);
   });
 });

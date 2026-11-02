@@ -3,7 +3,17 @@ import fs from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { mulTransform, oneDocumentAtATime, pdfjsAssetDir, queuedMs, runToWords, withActiveTimeout } from '../pdfExtractor.js';
+import { deflateSync } from 'zlib';
+import { imagePdf, textPagesPdf } from '../../__tests__/helpers/imagePdf.js';
+import {
+  clipToPage,
+  mulTransform,
+  oneDocumentAtATime,
+  pdfjsAssetDir,
+  queuedMs,
+  runToWords,
+  withActiveTimeout,
+} from '../pdfExtractor.js';
 
 describe('pdfExtractor coordinate math', () => {
   it('mulTransform matches affine matrix composition', () => {
@@ -39,9 +49,45 @@ describe('pdfExtractor coordinate math', () => {
     }
   });
 
+  // Value: protects=a skewed run's boxes stay as before P6X (only quarter-turned runs are laid along their direction); fails_when=the turn snap takes a 30 degree run as a quarter turn, or the +x layout changes; why_new=P6X item 1 keeps skewed runs bit for bit; seam=none; no_claim=that the +x layout is right for a skewed run
+  it('keeps the +x layout for a skewed run', () => {
+    const [c, s] = [Math.cos(Math.PI / 6), Math.sin(Math.PI / 6)];
+    const item = [10 * c, 10 * s, -10 * s, 10 * c, 50, 100]; // 30 degrees, baseline start (50, 100)
+    const words = runToWords('ab cd', item, 100, 10, [1, 0, 0, -1, 0, 200], 300, 200, 1);
+    // From the baseline start (50, 100) along +x, top = baseline - font height 10.
+    expect(words.map((w) => w.bbox)).toEqual([
+      { x: 50 / 300, y: 90 / 200, w: 40 / 300, h: 10 / 200 },
+      { x: 110 / 300, y: 90 / 200, w: 40 / 300, h: 10 / 200 },
+    ]);
+  });
+
   it('returns nothing for blank or zero-size input', () => {
     expect(runToWords('   ', [1, 0, 0, 1, 0, 0], 10, 10, [1, 0, 0, 1, 0, 0], 100, 100, 1)).toHaveLength(0);
     expect(runToWords('x', [1, 0, 0, 1, 0, 0], 10, 10, [1, 0, 0, 1, 0, 0], 0, 0, 1)).toHaveLength(0);
+  });
+});
+
+describe('clipToPage', () => {
+  // An editor-cropped scan (CropBox narrower than the MediaBox) draws its picture mostly off the page.
+  it('keeps only the part of a picture box the page shows', () => {
+    const b = clipToPage({ x: 0.975, y: 0.2, w: 0.55, h: 0.24 })!;
+    expect(b.x).toBeCloseTo(0.975, 9);
+    expect(b.y).toBeCloseTo(0.2, 9);
+    expect(b.w).toBeCloseTo(0.025, 9);
+    expect(b.h).toBeCloseTo(0.24, 9);
+    const c = clipToPage({ x: -0.1, y: 0.5, w: 0.5, h: 0.7 })!;
+    expect(c.x).toBe(0);
+    expect(c.y).toBeCloseTo(0.5, 9);
+    expect(c.w).toBeCloseTo(0.4, 9);
+    expect(c.h).toBeCloseTo(0.5, 9);
+  });
+  it('leaves a box inside the page as it is', () => {
+    expect(clipToPage({ x: 0.1, y: 0.2, w: 0.8, h: 0.5 })).toEqual({ x: 0.1, y: 0.2, w: 0.8, h: 0.5 });
+  });
+  it('drops a box that leaves a sliver under 2% of the page', () => {
+    expect(clipToPage({ x: 0.995, y: 0.2, w: 0.55, h: 0.24 })).toBeUndefined();
+    expect(clipToPage({ x: 0.1, y: 0.99, w: 0.5, h: 0.3 })).toBeUndefined();
+    expect(clipToPage({ x: 1.2, y: 0.2, w: 0.5, h: 0.3 })).toBeUndefined();
   });
 });
 
@@ -102,6 +148,56 @@ function jpxScanPdf(blankFirstPage = false): Buffer {
   return Buffer.concat(parts);
 }
 
+/** An A4 page whose only picture is a 700x450 px image in a /Stamp annotation's appearance:
+ *  Rect [300 500 500 650], form BBox [0 0 100 75] with `matrix`, the image filling the BBox. */
+function stampPdf(matrix = '1 0 0 1 0 0', extra: { rotate?: number; pageCm?: string } = {}): Buffer {
+  const pixels = deflateSync(Buffer.alloc(700 * 450));
+  const ap = 'q 100 0 0 75 0 0 cm /Im1 Do Q';
+  const objs = [
+    Buffer.from('<</Type/Catalog/Pages 2 0 R>>'),
+    Buffer.from('<</Type/Pages/Kids[3 0 R]/Count 1>>'),
+    Buffer.from(
+      '<</Type/Page/Parent 2 0 R/MediaBox[0 0 595.28 841.89]/Annots[4 0 R]' +
+        (extra.rotate ? `/Rotate ${extra.rotate}` : '') +
+        (extra.pageCm ? '/Resources<</XObject<</Im1 6 0 R>>>>/Contents 7 0 R' : '') +
+        '>>'
+    ),
+    Buffer.from('<</Type/Annot/Subtype/Stamp/Rect[300 500 500 650]/F 4/AP<</N 5 0 R>>>>'),
+    Buffer.from(
+      `<</Type/XObject/Subtype/Form/BBox[0 0 100 75]/Matrix[${matrix}]/Resources<</XObject<</Im1 6 0 R>>>>` +
+        `/Length ${ap.length}>>\nstream\n${ap}\nendstream`
+    ),
+    Buffer.concat([
+      Buffer.from(
+        '<</Type/XObject/Subtype/Image/Width 700/Height 450/ColorSpace/DeviceGray/BitsPerComponent 8' +
+          `/Filter/FlateDecode/Length ${pixels.length}>>\nstream\n`
+      ),
+      pixels,
+      Buffer.from('\nendstream'),
+    ]),
+  ];
+  if (extra.pageCm) {
+    const page = `q ${extra.pageCm} cm /Im1 Do Q`;
+    objs.push(Buffer.from(`<</Length ${page.length}>>\nstream\n${page}\nendstream`));
+  }
+  const parts = [Buffer.from('%PDF-1.5\n')];
+  let size = parts[0].length;
+  const offsets = objs.map((o, i) => {
+    const part = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), o, Buffer.from('\nendobj\n')]);
+    parts.push(part);
+    size += part.length;
+    return size - part.length;
+  });
+  parts.push(
+    Buffer.from(
+      `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` +
+        offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('') +
+        `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${size}\n%%EOF\n`
+    )
+  );
+  return Buffer.concat(parts);
+}
+
 // pdfjs starts its worker with a dynamic import(), which Jest cannot run without
 // --experimental-vm-modules, so this runs in a plain Node child under tsx (as metaValidator's
 // real-PDF tests do). The rendered page's centre pixel tells a drawn image from a blank page.
@@ -120,6 +216,38 @@ if (page) {
   centre = Array.from(ctx.getImageData(img.width >> 1, img.height >> 1, 1, 1).data);
 }
 console.log(JSON.stringify({ size: sizes?.get(1) ?? null, stats, centre }));
+`;
+
+const BOX_CHILD = `
+const files = process.argv.slice(1);
+const { largestImageWidthPerPage } = await import(process.env.TARGET_URL);
+const out = [];
+for (const f of files) out.push((await largestImageWidthPerPage(f, [1]))?.get(1) ?? null);
+console.log(JSON.stringify(out));
+process.exit(0);
+`;
+
+// A black picture fills the top-left quarter of a 200x200 pt page. Red channel per sampled pixel:
+// 0 is the picture, 255 the white page.
+const CLIP_CHILD = `
+const [, file] = process.argv;
+const { rasterizePdf } = await import(process.env.TARGET_URL);
+const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+const look = async (pg, points) => {
+  const img = await loadImage(pg.png);
+  const ctx = createCanvas(img.width, img.height).getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  return { size: [pg.width, pg.height, img.width, img.height], red: points.map(([x, y]) => ctx.getImageData(x, y, 1, 1).data[0]) };
+};
+const [clip] = await rasterizePdf(file, 1, 2, [1], { clip: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 } });
+const [capped] = await rasterizePdf(file, 1, 2, [1], { maxLongSidePx: 100 });
+const [cappedClip] = await rasterizePdf(file, 1, 4, [1], { clip: { x: 0.5, y: 0, w: 0.5, h: 0.25 }, maxLongSidePx: 100 });
+console.log(JSON.stringify({
+  clip: await look(clip, [[50, 50], [150, 50], [50, 150], [150, 150]]),
+  capped: await look(capped, [[25, 25], [75, 25], [75, 75]]),
+  cappedClip: await look(cappedClip, [[10, 25], [90, 25]]),
+}));
+process.exit(0);
 `;
 
 // Two claims validate at once, so another claim can open and close a PDF while this one is
@@ -161,6 +289,13 @@ console.log(JSON.stringify({ empty, after: await m.pdfPageTextStats(good) }));
 process.exit(0);
 `;
 
+const STATS_CHILD = `
+const [, file] = process.argv;
+const { pdfPageTextStats } = await import(process.env.TARGET_URL);
+console.log(JSON.stringify(await pdfPageTextStats(file)));
+process.exit(0);
+`;
+
 /** Runs `script` in a Node child under tsx with pdfExtractor at TARGET_URL; returns its last stdout line, parsed. */
 function runPdfChild(script: string, args: string[]): unknown {
   const src = path.join(__dirname, '..', '..');
@@ -184,11 +319,99 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
       const file = path.join(dir, 'scan.pdf');
       fs.writeFileSync(file, jpxScanPdf());
       expect(runPdfChild(JPX_CHILD, [file])).toEqual({
-        size: { width: 32, height: 32 },
-        stats: [{ image: true, visibleText: false }],
+        size: { width: 32, height: 32, box: { x: 0, y: 0, w: 1, h: 1 }, drawnWidthPt: 100 },
+        stats: [{ image: true, visibleText: false, hiddenText: false }],
         // Opaque black: a page whose image was dropped renders white.
         centre: [0, 0, 0, 255],
       });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=the OCR of a picture is aimed at where the page draws it; fails_when=the box ignores cm, a form XObject matrix or /Rotate; why_new=nothing measured the drawn position; seam=none; no_claim=images with a non-axis-aligned transform
+  it('says where the widest picture is drawn, as the page renders', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'box-pdf-'));
+    try {
+      const specs = [
+        imagePdf({ cm: '160 0 0 100 20 60' }),
+        imagePdf({ cm: '60 0 0 80 20 100', rotate: 90 }),
+        imagePdf({ cm: '160 0 0 100 20 60', form: { cm: '1 0 0 1 30 40', matrix: '0.5 0 0 0.5 0 0' } }),
+      ];
+      const files = specs.map((b, i) => {
+        const f = path.join(dir, `p${i}.pdf`);
+        fs.writeFileSync(f, b);
+        return f;
+      });
+      const got = runPdfChild(BOX_CHILD, files) as { width: number; height: number; box: Record<string, number>; drawnWidthPt: number }[];
+      const want = [
+        { x: 0.1, y: 0.2, w: 0.8, h: 0.5, pt: 160 },
+        { x: 0.5, y: 0.1, w: 0.4, h: 0.3, pt: 80 },
+        { x: 0.2, y: 0.4, w: 0.4, h: 0.25, pt: 80 },
+      ];
+      want.forEach((w, i) => {
+        expect(got[i].width).toBe(4);
+        expect(got[i].height).toBe(4);
+        expect(got[i].box.x).toBeCloseTo(w.x, 6);
+        expect(got[i].box.y).toBeCloseTo(w.y, 6);
+        expect(got[i].box.w).toBeCloseTo(w.w, 6);
+        expect(got[i].box.h).toBeCloseTo(w.h, 6);
+        expect(got[i].drawnWidthPt).toBeCloseTo(w.pt, 6);
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A pasted image stamp or signature: pdf.js draws an annotation's appearance at its Rect, not
+  // at the page origin, so the crop read and the flag's highlight must aim there too.
+  // Value: protects=a picture inside an annotation's appearance gets the box where the page shows it; fails_when=the walk ignores beginAnnotation's rect transform or appearance matrix, or applies them in the wrong order; why_new=the box landed in the bottom-left corner (P4 review M2); seam=none; no_claim=annotations drawn on their own canvas in a browser, hidden annotations
+  it('places a picture drawn by an annotation appearance at the annotation', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'stamp-pdf-'));
+    try {
+      const files = [stampPdf(), stampPdf('0 1 -1 0 0 0')].map((b, i) => {
+        const f = path.join(dir, `s${i}.pdf`);
+        fs.writeFileSync(f, b);
+        return f;
+      });
+      const got = runPdfChild(BOX_CHILD, files) as { width: number; box: Record<string, number>; drawnWidthPt: number }[];
+      // Rect [300 500 500 650] on a 595.28x841.89 pt page, top-left origin: the review's
+      // { x: 0.504, y: 0.228, w: 0.336, h: 0.178 } to three places. A quarter-turned /Matrix
+      // still fits the appearance to the Rect.
+      for (const g of got) {
+        expect(g.width).toBe(700);
+        expect(g.box.x).toBeCloseTo(300 / 595.28, 6);
+        expect(g.box.y).toBeCloseTo((841.89 - 650) / 841.89, 6);
+        expect(g.box.w).toBeCloseTo(200 / 595.28, 6);
+        expect(g.box.h).toBeCloseTo(150 / 841.89, 6);
+        expect(g.drawnWidthPt).toBeCloseTo(200, 6);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=an annotation picture on a turned page, and next to a page picture, is boxed where the page shows it, a pixel-width tie keeping the first; fails_when=the annotation walk ignores /Rotate, or its box replaces or merges with a page picture's; why_new=P4 review m3 (probed correct, unpinned); seam=none; no_claim=other rotations
+  it('boxes an annotation picture on a /Rotate 90 page and beside a page picture', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'stamp-more-'));
+    try {
+      const specs = [
+        stampPdf('1 0 0 1 0 0', { rotate: 90 }),
+        // Both pictures are 700 px wide, so the page image, drawn first, keeps the tie: its box
+        // alone, not the annotation's and not their union.
+        stampPdf('1 0 0 1 0 0', { pageCm: '150 0 0 60 50 50' }),
+      ];
+      const files = specs.map((b, i) => {
+        const f = path.join(dir, `m${i}.pdf`);
+        fs.writeFileSync(f, b);
+        return f;
+      });
+      const got = runPdfChild(BOX_CHILD, files) as { box: Record<string, number>; drawnWidthPt: number }[];
+      const near = (g: Record<string, number>, w: number[]) =>
+        ['x', 'y', 'w', 'h'].forEach((k, i) => expect(g[k]).toBeCloseTo(w[i], 3));
+      near(got[0].box, [0.594, 0.504, 0.178, 0.336]);
+      near(got[1].box, [50 / 595.28, (841.89 - 110) / 841.89, 150 / 595.28, 60 / 841.89]);
+      expect(got[1].drawnWidthPt).toBeCloseTo(150, 6);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -220,7 +443,152 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
       fs.writeFileSync(good, jpxScanPdf());
       expect(runPdfChild(UNOPENABLE_CHILD, [bad, good])).toEqual({
         empty: [null, {}, [], null, []],
-        after: [{ image: true, visibleText: false }],
+        after: [{ image: true, visibleText: false, hiddenText: false }],
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('pdfPageTextStats text visibility', () => {
+  // Value: protects=a page holding an invisible (mode 3) text op next to a visible one reports both, so the Aadhaar check-digit rule can tell a scanner's OCR layer from a visible one; fails_when=hiddenText is not set for render mode 3 or 7, or visibleText stops ignoring mode 3; why_new=no test ran pdfPageTextStats on text; seam=none; no_claim=images, white text
+  it('reports a hidden text op separately from a visible one', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'pdf-hidden-'));
+    try {
+      const file = path.join(dir, 'text.pdf');
+      fs.writeFileSync(
+        file,
+        textPagesPdf([
+          'BT /F1 12 Tf 3 Tr 20 100 Td (ocr layer) Tj 0 Tr 0 -20 Td (Scanned with app) Tj ET',
+          'BT /F1 12 Tf 20 100 Td (typed) Tj ET',
+          'BT /F1 12 Tf 7 Tr 20 100 Td (clip) Tj ET',
+        ])
+      );
+      expect(runPdfChild(STATS_CHILD, [file])).toEqual([
+        { image: false, visibleText: true, hiddenText: true },
+        { image: false, visibleText: true, hiddenText: false },
+        { image: false, visibleText: true, hiddenText: true }, // mode 7: visibleText is unchanged
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Per page: the reading turn of its text-layer words, and where the rendered dark pixels fall
+// against those words' boxes (counted at pixel centres; alpha checked, as the canvas starts clear).
+const TURNED_TEXT_CHILD = `
+const [, file] = process.argv;
+const { extractPdf, rasterizePdf } = await import(process.env.TARGET_URL);
+const { readingTurn } = await import(new URL('../validators/signatureBox.ts', process.env.TARGET_URL).href);
+const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+const { words } = await extractPdf(file);
+const out = [];
+for (const pg of await rasterizePdf(file, 10, 2)) {
+  const img = await loadImage(pg.png);
+  const ctx = createCanvas(img.width, img.height).getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const { data } = ctx.getImageData(0, 0, img.width, img.height);
+  const onPage = words.filter((w) => w.page === pg.page);
+  const ink = onPage.map(() => 0);
+  let outside = 0;
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      const i = (y * img.width + x) * 4;
+      if (data[i + 3] < 128 || data[i] >= 128) continue;
+      const k = onPage.findIndex(({ bbox: b }) =>
+        x + 0.5 >= b.x * img.width && x + 0.5 <= (b.x + b.w) * img.width &&
+        y + 0.5 >= b.y * img.height && y + 0.5 <= (b.y + b.h) * img.height);
+      if (k < 0) outside++;
+      else ink[k]++;
+    }
+  }
+  out.push({ turn: readingTurn(onPage), words: onPage.map((w) => w.text), ink, outside });
+}
+console.log(JSON.stringify(out));
+process.exit(0);
+`;
+
+const WORDS_CHILD = `
+const [, file] = process.argv;
+const { extractPdf } = await import(process.env.TARGET_URL);
+console.log(JSON.stringify((await extractPdf(file)).words));
+process.exit(0);
+`;
+
+describe('extractPdf word boxes of turned text', () => {
+  // Value: protects=word boxes (signature area, finding highlights) of text the page shows sideways or upside down land on the words; fails_when=runToWords lays a quarter-turned run out along +x again; why_new=P6 review M5 (the box landed beside the label and readingTurn read 0); seam=none; no_claim=skewed runs (kept as before), mirrored text, vertical-writing fonts
+  it('boxes text on a /Rotate 90, 180 or 270 page, and a turned text matrix, over the words as rendered', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'pdf-turned-'));
+    try {
+      const file = path.join(dir, 'turned.pdf');
+      // Courier: every glyph advances the same, so a word's share of the run is its share of letters.
+      const upright = 'BT /F1 20 Tf 40 120 Td (MMMM WWWW) Tj ET';
+      fs.writeFileSync(
+        file,
+        textPagesPdf(
+          // The last page draws the run downwards (a scanner's turned OCR layer) on an unturned page.
+          [upright, upright, upright, upright, 'BT /F1 20 Tf 0 -1 1 0 120 170 Tm (MMMM WWWW) Tj ET'],
+          { font: 'Courier', mediaBox: '0 0 300 200', pageExtra: ['', '/Rotate 90', '/Rotate 180', '/Rotate 270'] }
+        )
+      );
+      type Page = { turn: number; words: string[]; ink: number[]; outside: number };
+      const got = runPdfChild(TURNED_TEXT_CHILD, [file]) as Page[];
+      expect(got.map((g) => g.turn)).toEqual([0, 90, 180, 270, 90]);
+      for (const g of got) {
+        expect(g.words).toEqual(['MMMM', 'WWWW']);
+        // Both words' glyphs are inside their own boxes. The upright page leaves 16 of about 1570
+        // dark pixels outside (glyph edges past the advance), so the bound is 2%, not 0.
+        for (const n of g.ink) expect(n).toBeGreaterThan(500);
+        expect(g.outside).toBeLessThan(0.02 * (g.outside + g.ink[0] + g.ink[1]));
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=a mirrored run (a -1 0 0 1 text matrix) keeps the +x boxes it had before P6X, so it does not vote 180 against an upright PAN card; fails_when=runTurn takes a mirrored transform for a quarter turn; why_new=P6X review I1 (mirrored lines below an upright card turned its page to 180 and blank paper was measured); seam=none; no_claim=that the boxes cover a mirrored run's glyphs (the glyphs lie left of its start and the boxes right, as before P6X)
+  it('lays a mirrored run out along +x, as before P6X', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'pdf-mirrored-'));
+    try {
+      const file = path.join(dir, 'mirrored.pdf');
+      // The review's ten lines (baselines y = 520 - 30k) on an A4 page.
+      const baseline = (k: number): number => 520 - 30 * k;
+      const lines = Array.from({ length: 10 }, (_, k) =>
+        `BT /F1 12 Tf -1 0 0 1 540 ${baseline(k)} Tm (the quick brown fox jumps over the lazy dog) Tj ET`
+      );
+      fs.writeFileSync(file, textPagesPdf([lines.join('\n')], { mediaBox: '0 0 595 842' }));
+      const words = runPdfChild(WORDS_CHILD, [file]) as { bbox: Record<string, number> }[];
+      expect(words).toHaveLength(90);
+      for (let k = 0; k < 10; k++) {
+        const run = words.slice(9 * k, 9 * k + 9).map((w) => w.bbox);
+        // Turn 0: from the run's start along +x, one font height above the baseline. Laid out at
+        // 180 they ran leftwards from x 540 and hung below the baseline.
+        expect(run[0].x).toBeCloseTo(540 / 595, 9);
+        for (let i = 1; i < run.length; i++) expect(run[i].x).toBeGreaterThanOrEqual(run[i - 1].x);
+        for (const b of run) expect(b.y).toBeCloseTo((842 - baseline(k) - 12) / 842, 9);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('rasterizePdf regions', () => {
+  // Value: protects=a region read renders only its box, at a bounded size, with the async encode; fails_when=the clip offset, canvas size or cap is wrong, so OCR reads the wrong area or a page-sized image; why_new=region reads rendered the whole page and cropped it on the main thread; seam=none; no_claim=OCR of the region
+  it('renders only the clipped area, and caps its long side', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'clip-pdf-'));
+    try {
+      const file = path.join(dir, 'quarter.pdf');
+      fs.writeFileSync(file, imagePdf({ cm: '100 0 0 100 0 100' }));
+      expect(runPdfChild(CLIP_CHILD, [file])).toEqual({
+        // The middle of the page at scale 2: the picture shows only in its top-left quarter.
+        clip: { size: [200, 200, 200, 200], red: [0, 255, 255, 255] },
+        // The whole page at scale 2 would be 400 px; the cap brings it down to 100.
+        capped: { size: [100, 100, 100, 100], red: [0, 255, 255] },
+        // A 100x50 pt top-right band at scale 4 would be 400x200 px; capped to 100x50.
+        cappedClip: { size: [100, 50, 100, 50], red: [255, 255] },
       });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

@@ -8,6 +8,7 @@
  * of birth, which no rule needed until now.
  */
 import { classifyPage } from './segment.js';
+import { GST_CERT_RE } from './logic.js';
 import {
   classifyDocType,
   dropHonorific,
@@ -35,8 +36,6 @@ export type FieldDocType = 'PAN' | 'AADHAR' | 'INVOICE' | 'INSURANCE' | 'GST';
  * marker is left untouched for FULL's required-document check, which only asks "is a GST
  * document present at all".
  */
-const GST_CERT_RE = /gst\s*reg-?\s*0?6|registration\s+certificate|legal\s+name|type\s+of\s+registrat/i;
-
 export function fieldDocType(text: string): FieldDocType | null {
   const govt = classifyPage(text);
   if (govt === 'PAN' || govt === 'AADHAR') return govt;
@@ -114,7 +113,7 @@ const CARD_LABEL: Record<'HOLDER' | 'FATHER' | 'MOTHER', RegExp> = {
 };
 // A value of two or more ALL-CAPS words. Stops at the next label, which is mixed case
 // ("Father's name") or Devanagari, and never runs across a line break.
-const CAPS_NAME_RE = /([A-Z]{2,}(?:[ \t]+[A-Z]{2,})*)/;
+export const CAPS_NAME_RE = /([A-Z]{2,}(?:[ \t]+[A-Z]{2,})*)/;
 // ALL-CAPS words printed on the card itself. Without this the masthead wins: the first
 // caps run after a stray "नाम" in the Hindi footer is "GOVT", and that is what the holder
 // name showed.
@@ -200,12 +199,13 @@ function nameOnLine(line: string): string | null {
 }
 
 /** The nearest name-carrying line ABOVE the first line matching `anchor`. */
-function nameAboveLine(text: string, anchor: RegExp): string | null {
+export function nameAboveLine(text: string, anchor: RegExp, skip?: (rawLine: string) => boolean): string | null {
   const lines = text.split(/\r?\n/);
   const at = lines.findIndex((l) => anchor.test(l));
   if (at < 1) return null;
   // Two lines of look-back: the row directly above is sometimes pure debris.
   for (let i = at - 1; i >= Math.max(0, at - 2); i--) {
+    if (skip?.(lines[i])) continue;
     const v = nameOnLine(lines[i]);
     if (v) return v;
   }
@@ -305,9 +305,9 @@ function modelFromRow(text: string): string | null {
 // A vehicle invoice never labels the buyer "Name" — it says "Bill To" or "Sold To", so the
 // shared name extractor (which anchors on "…Name:") read nothing and Customer Name showed
 // as absent on an invoice that plainly carries it.
-const BILL_TO_RE = /\b(?:bill(?:ed)?\s*to|sold\s*to|buyer)\b\s*[:\-]?\s*/i;
+export const BILL_TO_RE = /\b(?:bill(?:ed)?\s*to|sold\s*to|buyer)\b\s*[:\-]?\s*/i;
 
-function billToName(text: string): string | null {
+export function billToName(text: string): string | null {
   const m = BILL_TO_RE.exec(text);
   if (!m) return null;
   const at = m.index + m[0].length;

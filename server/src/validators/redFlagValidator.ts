@@ -11,19 +11,27 @@
  * I/O (readPdfInfo for the Producer/Creator watermark check) lives HERE; redFlagLogic
  * and segment stay pure so their unit tests run under jest (spec decision 2).
  */
-import { Validator, ValidatorContext, FindingInput, WordBox } from './types.js';
+import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox } from './types.js';
 import { BBox, unionBBox } from '../lib/bbox.js';
 import { segment, DocInstance } from './segment.js';
-import { readPdfInfo, pdfPageTextStats } from '../lib/pdfExtractor.js';
+import { readPdfInfo, pdfPageTextStats, rasterizePdf, clipToPage, MAX_PDF_PAGES } from '../lib/pdfExtractor.js';
+import { Jimp } from 'jimp';
+import { signatureArea, signatureExpected, inkFraction, BLANK_INK_MAX } from './signatureBox.js';
 import {
   checkPan,
+  panRead,
+  checkCustomerPanType,
   checkGst,
   checkDl,
   checkUdyam,
   checkPassportNumber,
   checkPassportFileNo,
   checkPassportPages,
+  checkPassportMrz,
   checkAadhaar,
+  checkAadhaarChecksum,
+  cleanRead,
+  AadhaarRead,
   aadhaarNumbers,
   checkAadhaarFormat,
   checkVid,
@@ -34,11 +42,16 @@ import {
   checkTimestamps,
   checkDates,
   checkNominee,
+  checkInternetImage,
+  checkSpecimenCard,
   checkEditableText,
   ADVISORY_CODES,
   RedFlagFinding,
 } from './redFlagLogic.js';
 import { classifyDocType } from './crossDocLogic.js';
+import { PASSPORT_MRZ } from './logic.js';
+import { IDENTIFIER_LABEL } from './dupIdentifiers.js';
+import { layerImageMismatches, smallPictureUnread } from './secondReads.js';
 
 /** Per-page format rule per classified type. */
 const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlagFinding[])[]> = {
@@ -151,12 +164,20 @@ const makeToFinding =
     };
   };
 
+/** govtCodes of identity cards, where a DEMO/SPECIMEN/SAMPLE stamp means a non-issued card. */
+const ID_CARD_CODES = new Set(['PAN', 'AADHAR', 'DL', 'VOTER_ID', 'PASSPORT']);
+
 /** Reviewer-facing rule names for the per-rule counts in the card summary. */
 const RULE_LABEL: Record<string, string> = {
+  REDFLAG_INTERNET_IMAGE: 'Internet image',
+  REDFLAG_SPECIMEN_CARD: 'Specimen card',
   REDFLAG_PAN_FORMAT: 'PAN format',
   REDFLAG_PAN_CATEGORY: 'PAN category',
+  REDFLAG_PAN_HOLDER_TYPE: 'PAN holder type',
+  REDFLAG_PAN_NAME_LETTER: 'PAN 5th letter',
   REDFLAG_AADHAAR_FORMAT: 'Aadhaar format',
   REDFLAG_AADHAAR_MISMATCH: 'Aadhaar front/back',
+  REDFLAG_AADHAAR_CHECKSUM: 'Aadhaar check digit',
   REDFLAG_VID_FORMAT: 'VID format',
   REDFLAG_GST_FORMAT: 'GST format',
   REDFLAG_DL_FORMAT: 'DL format',
@@ -164,6 +185,9 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_PASSPORT_FORMAT: 'Passport format',
   REDFLAG_PASSPORT_FILENO: 'Passport file no.',
   REDFLAG_PASSPORT_MISMATCH: 'Passport page mismatch',
+  REDFLAG_PASSPORT_MRZ: 'Passport MRZ check digit',
+  REDFLAG_PASSPORT_MRZ_UNSURE: 'Passport MRZ to confirm',
+  REDFLAG_PASSPORT_EXPIRED: 'Passport expired',
   REDFLAG_VOTER_MISMATCH: 'Voter ID front/back',
   REDFLAG_SIGNATORY_TYPO: 'Signatory misspelt',
   REDFLAG_AI_WATERMARK: 'AI watermark',
@@ -177,7 +201,97 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_GST_UNREADABLE: 'GSTIN unreadable',
   REDFLAG_DL_UNREADABLE: 'DL unreadable',
   REDFLAG_PASSPORT_UNREADABLE: 'Passport no. unreadable',
+  REDFLAG_LAYER_IMAGE_MISMATCH: 'Picture vs text layer',
+  REDFLAG_SMALL_IMAGE_UNREAD: 'Small picture, no ID read',
+  REDFLAG_PAN_UNSIGNED: 'PAN not signed',
 };
+
+const SIGNATURE_RENDER_SCALE = 2;
+/** Long-side bound of the clipped render: a large OCR box on a "fit to image" page is otherwise
+ *  a multi-megapixel PNG for Jimp to decode synchronously. */
+const SIGNATURE_MAX_LONG_SIDE_PX = 2400;
+
+const WHOLE: BBox = { x: 0, y: 0, w: 1, h: 1 };
+
+/** Ink share of `area` in a decoded bitmap. */
+function inkOf(img: { bitmap: { width: number; height: number; data: ArrayLike<number> } }, area: BBox): number | null {
+  const { width, height, data } = img.bitmap;
+  const luma = new Uint8Array(width * height);
+  for (let i = 0; i < luma.length; i++) {
+    luma[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+  }
+  return inkFraction(luma, width, height, area);
+}
+
+/** Share of a picture's signature area that may be transparent (alpha under 128) and still be
+ *  measured. Transparency is neither paper nor ink, and canvas returns it black: a cut-out card's
+ *  clear strip read as ink at its edge, and a wholly clear picture as blank paper, an ERROR. */
+const TRANSPARENT_MAX = 0.05;
+
+/** Ink share of `area` in a picture file. @napi-rs/canvas decodes it off the main thread
+ *  (Jimp.read held the event loop about 0.5-0.9 s on a 12 MP photo) and only the area is copied
+ *  out: the pixels inkFraction takes from the whole picture, by its own rounding.
+ *  Canvas turns a photo by a standard (SHORT) EXIF Orientation tag as Jimp does, and OCR's boxes
+ *  are in Jimp's frame (probed on jimp 1.6.1 and @napi-rs/canvas 1.0.11: orientations 3, 5, 6
+ *  and 8, both byte orders). A malformed LONG tag is applied by Jimp only, so such a photo is
+ *  measured in the wrong frame.
+ *  Canvas cannot decode TIFF, so a picture it cannot open goes to Jimp as before.
+ *  Canvas decodes a truncated file and fills the missing part with one colour, which reads as
+ *  blank paper. Such a file cannot reach here today: OCR gives a picture word boxes only after
+ *  Jimp decodes it (`upscaleSmallImage` in ocr.ts), and Jimp rejects truncation. If OCR's decode
+ *  moves to canvas, add a guard against a partial decode here. */
+async function pictureInk(file: string, area: BBox): Promise<number | null> {
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+  const img = await loadImage(file).catch(() => null);
+  if (!img) return inkOf(await Jimp.read(file), area);
+  const x0 = Math.max(0, Math.round(area.x * img.width));
+  const y0 = Math.max(0, Math.round(area.y * img.height));
+  const w = Math.min(img.width, Math.round((area.x + area.w) * img.width)) - x0;
+  const h = Math.min(img.height, Math.round((area.y + area.h) * img.height)) - y0;
+  if (w < 1 || h < 1) return null;
+  const ctx = createCanvas(w, h).getContext('2d');
+  ctx.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let clear = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] < 128) clear++;
+  if (clear > TRANSPARENT_MAX * w * h) return null;
+  return inkOf({ bitmap: { width: w, height: h, data } }, WHOLE);
+}
+
+/** Ink share in the customer's signature area of a PAN page, and that area clamped to
+ *  the page; null when there is no anchor, no part of the area is on the page, or the page cannot
+ *  be opened.
+ *  A PDF renders only the area, so Jimp never decodes a full-page PNG on the main thread (a
+ *  "fit to image" page at scale 2 is tens of megapixels). pdf.js still decodes the page's
+ *  embedded picture to draw it, as every OCR render does. Under the size bound the clipped
+ *  render matches the same pixels of a full render, so the ink share is unchanged. */
+export async function signatureInk(
+  doc: ValidatorDoc,
+  page: number,
+  words: WordBox[]
+): Promise<{ ink: number; bbox: BBox } | null> {
+  // A clip past the page edge renders as white paper, so only the on-page part is measured,
+  // and an area with no on-page part is not checked.
+  const area = signatureArea(words, page);
+  const bbox = area ? clipToPage(area.bbox) : undefined;
+  if (!bbox) return null;
+  try {
+    const mime = doc.mimeType ?? '';
+    if (mime === 'application/pdf') {
+      const [r] = await rasterizePdf(doc.readablePath, MAX_PDF_PAGES, SIGNATURE_RENDER_SCALE, [page], {
+        clip: bbox,
+        maxLongSidePx: SIGNATURE_MAX_LONG_SIDE_PX,
+      });
+      const ink = r ? inkOf(await Jimp.read(r.png), WHOLE) : null;
+      return ink === null ? null : { ink, bbox };
+    }
+    if (!mime.startsWith('image/') || page !== 1) return null;
+    const ink = await pictureInk(doc.readablePath, bbox);
+    return ink === null ? null : { ink, bbox };
+  } catch {
+    return null;
+  }
+}
 
 export const redFlagValidator: Validator = {
   key: 'REDFLAG',
@@ -185,7 +299,9 @@ export const redFlagValidator: Validator = {
   async run(ctx) {
     const toFinding = makeToFinding(ctx);
     const instances = segment(ctx);
-    if (instances.length === 0) {
+    // A document whose main read gave META too little text to store has no pages here, but its
+    // pictures and second reads still answer the two picture rules.
+    if (instances.length === 0 && !ctx.pageImages?.size && !ctx.secondReads?.size) {
       return { status: 'PASSED', summary: 'No document pages to check.' };
     }
 
@@ -198,19 +314,99 @@ export const redFlagValidator: Validator = {
     }
 
     const findings: FindingInput[] = [];
+    const pans: { documentId: string; page: number; pan: string }[] = [];
+    const aadhaarReads: AadhaarRead[] = [];
+
+    /** The picture rules, which read META's picture scan and second reads, not classified pages. */
+    const pictureRules = (doc: ValidatorDoc) => {
+      // A page's picture read against its text layer: one of the two was edited.
+      for (const read of ctx.secondReads?.get(doc.id) ?? []) {
+        if (read.kind !== 'IMAGE') continue;
+        const layerText = ctx.pageTexts.get(doc.id)?.[read.page - 1] ?? '';
+        for (const m of layerImageMismatches(layerText, read.text)) {
+          findings.push({
+            documentId: doc.id,
+            code: 'REDFLAG_LAYER_IMAGE_MISMATCH',
+            severity: 'ERROR',
+            message: `${IDENTIFIER_LABEL[m.field]} on page ${read.page} of ${doc.fileName} reads "${m.image}" in the picture but "${m.layer}" in the text layer. One of the two was edited; check the page visually.`,
+            page: read.page,
+            bbox: ctx.pageImages?.get(doc.id)?.get(read.page)?.box ?? null,
+            data: { field: m.field, image: m.image, layer: m.layer },
+          });
+        }
+      }
+
+      // A small ID picture the OCR could not read a number from, even after the second reads.
+      // Not on a page OCR never read: that is our failure, and FULL already reports it. Nor on
+      // one a cap or the deadline kept from its second read: the message claims a sharper read.
+      const unread = ctx.unreadPages?.get(doc.id);
+      const skipped = ctx.secondReadsSkipped?.get(doc.id);
+      for (const [page, img] of ctx.pageImages?.get(doc.id) ?? []) {
+        if (unread === 'all' || unread?.includes(page) || skipped?.includes(page)) continue;
+        const texts = [
+          ctx.pageTexts.get(doc.id)?.[page - 1] ?? '',
+          ...(ctx.secondReads?.get(doc.id) ?? []).filter((r) => r.page === page).map((r) => r.text),
+        ];
+        if (!smallPictureUnread(img, texts)) continue;
+        findings.push({
+          documentId: doc.id,
+          code: 'REDFLAG_SMALL_IMAGE_UNREAD',
+          severity: 'ERROR',
+          message: `Page ${page} of ${doc.fileName} is a small picture (${img.width}x${img.height} pixels) and no ID number could be read from it. Check it visually or ask for a clearer copy.`,
+          page,
+          bbox: img.box ?? null,
+          data: { width: img.width, height: img.height },
+        });
+      }
+    };
+
     for (const doc of ctx.documents) {
       const pages = byDoc.get(doc.id) ?? [];
-      if (pages.length === 0) continue;
+      if (pages.length === 0) {
+        pictureRules(doc);
+        continue;
+      }
       const codes = new Set(pages.map((p) => p.govtCode));
+      const pdf = (doc.mimeType ?? '') === 'application/pdf';
+      const stats = pdf ? await pdfPageTextStats(doc.readablePath) : [];
 
       // Per-page format rules, only on pages classified to that type.
       for (const inst of pages) {
         // Nominee rows sit on insurance pages, which carry no govt code — check every page.
         for (const f of checkNominee(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
+        for (const f of checkInternetImage(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
+        if (inst.govtCode && ID_CARD_CODES.has(inst.govtCode)) {
+          for (const f of checkSpecimenCard(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
+        }
         const rules = inst.govtCode ? PAGE_RULES[inst.govtCode] : undefined;
+        if (inst.govtCode === 'PAN' || inst.govtCode === 'AADHAR') {
+          // Every PAN-shaped token counts (a page can hold a firm's and a partner's card, and an
+          // Aadhaar-classified page can carry a PAN scanned beside it); other page types do not
+          // (an invoice prints the dealer's PAN). A PAN page with no shaped token keeps panRead's read.
+          const shaped = new Set(inst.text.toUpperCase().match(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/g));
+          for (const pan of shaped) pans.push({ documentId: doc.id, page: inst.page ?? 1, pan });
+          const read = shaped.size === 0 && inst.govtCode === 'PAN' ? panRead(inst.text) : undefined;
+          if (read) pans.push({ documentId: doc.id, page: inst.page ?? 1, pan: read.pan });
+        }
+        if (inst.govtCode === 'PAN' && inst.page && signatureExpected(inst.text, inst.page)) {
+          const m = await signatureInk(doc, inst.page, ctx.wordBoxes.get(doc.id) ?? []);
+          if (m && m.ink < BLANK_INK_MAX) {
+            findings.push({
+              documentId: doc.id,
+              code: 'REDFLAG_PAN_UNSIGNED',
+              severity: 'ERROR',
+              message: `Customer signature box on the PAN card (page ${inst.page}) is blank`,
+              page: inst.page,
+              bbox: m.bbox,
+              data: { inkPct: Math.round(m.ink * 10000) / 100 },
+            });
+          }
+        }
         if (!rules) continue;
         for (const rule of rules) for (const f of rule(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
       }
+
+      pictureRules(doc);
 
       // Cross-page rules over ALL of this document's pages (a back side may be unclassified).
       const asPages = pages.map((p) => ({ page: p.page ?? 1, text: p.text }));
@@ -230,6 +426,14 @@ export const redFlagValidator: Validator = {
               !['PAYSLIP', 'INVOICE', 'INSURANCE', 'RC'].includes(classifyDocType(p.text) ?? ''))
         );
         for (const f of checkAadhaar(aadhaarPages)) findings.push(toFinding(doc.id, f));
+        for (const p of aadhaarPages) {
+          aadhaarReads.push({
+            documentId: doc.id,
+            page: p.page,
+            text: p.text,
+            clean: cleanRead(ctx.textLayerPages?.get(doc.id)?.has(p.page) ?? false, stats[p.page - 1]),
+          });
+        }
       }
       if (codes.has('VOTER_ID')) {
         // Only the Voter ID's own sides: the bundle's RC or engine-number pages carry
@@ -251,7 +455,21 @@ export const redFlagValidator: Validator = {
         );
         for (const f of checkVoterId(voterPages)) findings.push(toFinding(doc.id, f));
       }
-      if (codes.has('PASSPORT')) for (const f of checkPassportPages(asPages)) findings.push(toFinding(doc.id, f));
+      // Passport pages only: an invoice, visa or policy number is passport-shaped too.
+      if (codes.has('PASSPORT')) {
+        // A visa page prints "Passport No" and "Nationality", so it classifies PASSPORT and its
+        // number joins the comparison. The drop lives here, not in GOVT_TYPE_MARKERS.PASSPORT:
+        // Missing Docs' typePresent reuses the marker on whole-document text, and a passport PDF
+        // holds visa pages, so excluding "visa" there would call a passport missing when its MRZ
+        // is unread. A visa's own MRZ starts "V<", so the MRZ test keeps real passport pages.
+        const passportPages = asPages.filter(
+          (p, i) => pages[i].govtCode === 'PASSPORT' && (!/\bvisa\b/i.test(p.text) || PASSPORT_MRZ.test(p.text))
+        );
+        for (const f of checkPassportPages(passportPages)) findings.push(toFinding(doc.id, f));
+        // Expiry is judged on the invoice date, not today: a re-validation months later must not turn a
+        // passport that was valid at the sale into a red (Decision 11). No invoice date, no expiry check.
+        for (const f of checkPassportMrz(passportPages, ctx.claim.invoiceDate)) findings.push(toFinding(doc.id, f));
+      }
 
       // File-level "Every Doc" rules (spec decision 3): whole-document text.
       const fileText = pages.map((p) => p.text).join('\n');
@@ -270,15 +488,19 @@ export const redFlagValidator: Validator = {
       }
 
       // Editor/AI watermark — read the PDF Producer/Creator (I/O; PDFs only).
-      if ((doc.mimeType ?? '') === 'application/pdf') {
+      if (pdf) {
         const info = await readPdfInfo(doc.readablePath);
         for (const f of checkEditorWatermark(info.Producer, info.Creator)) findings.push(toFinding(doc.id, f));
         // Created vs Modified: the same Info dictionary, so no extra read.
         for (const f of checkTimestamps(info.Created, info.Modified)) findings.push(toFinding(doc.id, f));
-        const stats = await pdfPageTextStats(doc.readablePath);
         for (const f of checkEditableText(stats, doc.fileName)) findings.push(toFinding(doc.id, f));
       }
     }
+
+    for (const r of checkAadhaarChecksum(aadhaarReads)) findings.push(toFinding(r.documentId, r.finding));
+
+    const holder = checkCustomerPanType(ctx.claim.customerName, pans);
+    if (holder) findings.push(toFinding(holder.documentId, holder.finding));
 
     // Cross-document field consistency lives in Data Compare. Red Flags is the format rules —
     // a malformed PAN, a short VID, an editor watermark.
@@ -304,6 +526,9 @@ export const redFlagValidator: Validator = {
         findings,
         details: { counts },
       };
+    }
+    if (instances.length === 0 && findings.length === 0) {
+      return { status: 'PASSED', summary: 'No document pages to check.' };
     }
     return {
       status: 'PASSED',

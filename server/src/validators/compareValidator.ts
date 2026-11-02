@@ -1,7 +1,8 @@
 import { Validator, FindingInput } from './types.js';
 import { segment } from './segment.js';
 import { locate } from './redFlagValidator.js';
-import { crossDocFieldFindings, dmsNameFindings, invoiceRcNameResult, oldCarPaperFindings } from './crossDocLogic.js';
+import { crossDocFieldFindings, gstCertFindings, dmsNameFindings, invoiceRcNameResult, newCarPolicyFindings, oldCarPaperFindings } from './crossDocLogic.js';
+import { holderNameFindings, oldCarNameFindings } from './holderNames.js';
 
 /**
  * Data Compare — the client sheet's "Data Compare" tab: a value that disagrees BETWEEN the
@@ -30,12 +31,28 @@ export const compareValidator: Validator = {
       const pair = [d?.expectedType, d?.actualType].sort().join('/');
       return f.code === 'CROSS_NAME_MISMATCH' && pair === 'INVOICE/RC';
     };
+    const keysOf = (fs: FindingInput[]) => new Set(fs.map((f) => `${f.documentId}:${f.page}`));
+    const holder = holderNameFindings(ctx.claim.customerName, pages, ctx.claim.claimId);
+    const oldCarPaper = oldCarPaperFindings(pages, ctx.claim.claimId);
+    const newCarPolicy = newCarPolicyFindings(pages, ctx.claim.claimId, keysOf(oldCarPaper));
+    // One red line per page per defect: a holder finding already says the page's name is
+    // wrong, and a policy or old-car chassis finding already says the page is another car's.
+    const holderPages = keysOf(holder);
+    const otherCarPages = keysOf([...newCarPolicy, ...oldCarPaper, ...holder.filter((f) => (f.data as { actualType?: string } | undefined)?.actualType === 'INSURANCE')]);
+    const dropDuplicate = (f: FindingInput) => {
+      const key = `${f.documentId}:${f.page}`;
+      return (f.code === 'CROSS_NAME_MISMATCH' && holderPages.has(key)) || ((f.code === 'CROSS_OTHER_VEHICLE' || f.code === 'CROSS_CHASSIS_MISMATCH') && otherCarPages.has(key));
+    };
     const findings = [
       // Sheet row 1, "1st Chk to apply" — first in the list too.
       ...dmsNameFindings(ctx.claim.customerName, pages),
-      ...crossDocFieldFindings(pages, ctx.claim.claimId).filter((f) => !(rcDiff && isInvoiceRcName(f))),
+      ...holder,
+      ...crossDocFieldFindings(pages, ctx.claim.claimId).filter((f) => !(rcDiff && isInvoiceRcName(f)) && !dropDuplicate(f)),
+      ...gstCertFindings(pages),
       ...rcResult,
-      ...oldCarPaperFindings(pages, ctx.claim.claimId),
+      ...oldCarPaper,
+      ...newCarPolicy,
+      ...oldCarNameFindings(pages, ctx.claim.claimId),
     ];
     // Box the value each finding names, so its row zooms to it on the document the way Red
     // Flags and Duplicate rows do. Null (page-jump only) when the page has no word

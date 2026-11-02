@@ -2,25 +2,12 @@ import os from 'os';
 import path from 'path';
 import { Jimp } from 'jimp';
 import { createWorker, Worker } from 'tesseract.js';
-import { OcrPort, WordBox } from '../validators/types.js';
-import { rasterizePdf, MAX_PDF_PAGES, queuedMs } from './pdfExtractor.js';
+import { OcrPort, PdfRegion, WordBox } from '../validators/types.js';
+import { rasterizePdf, MAX_PDF_PAGES, activeNow } from './pdfExtractor.js';
 import { estimateSkewDegrees } from './deskew.js';
-import { clamp01 } from './bbox.js';
+import { clamp01, unrotateBox } from './bbox.js';
 import { scheduleOcr } from './ocrSchedule.js';
 import { getSpell, isRealWord, type Spell } from '../validators/dictionary.js';
-
-/**
- * Map a normalized box from an image rotated counter-clockwise by `deg` back onto the page
- * as the reviewer sees it. Without this, a card read at 270° highlights the wrong region —
- * the box would be drawn in the rotated frame nobody is looking at.
- */
-function unrotateBox(b: WordBox['bbox'], deg: number): WordBox['bbox'] {
-  const { x, y, w, h } = b;
-  if (deg === 90) return { x: 1 - y - h, y: x, w: h, h: w };
-  if (deg === 180) return { x: 1 - x - w, y: 1 - y - h, w, h };
-  if (deg === 270) return { x: y, y: 1 - x - w, w: h, h: w };
-  return b;
-}
 
 /** Walk Tesseract's block hierarchy (v5) — or the flat `words` fallback — into WordBoxes.
  *  `width`/`height` are the ORIGINAL page's; `deg` is the rotation the winning OCR pass
@@ -235,6 +222,37 @@ export const MIN_OCR_PAGE_LONG_SIDE = 1400;
 /** The scale META renders a PDF page at for its first look (SPELL works out what that showed). */
 export const OCR_RENDER_SCALE = 2;
 
+/**
+ * The long side, in pixels, a region read renders at most. A4 at the certificate re-read's
+ * scale 4 is 3368 px, so it is unchanged; a "fit to image" 300 dpi page at scale 4 would be
+ * 9920x14032 (3.7 GB to render, and a 139 MP image for Tesseract's wasm heap).
+ */
+export const MAX_REGION_LONG_SIDE_PX = 3400;
+
+/**
+ * The long side, in pixels, of the copy a region read's fallback passes (contrast, quarter
+ * turns, deskew, Sauvola) run on; the plain pass still reads the full render. Jimp decodes,
+ * turns and re-encodes each pass's image on the main thread, which the HTTP server shares: on
+ * an A4 region at scale 4 (2380x3368) one pass blocked the event loop for ~0.9 s locally,
+ * about 2.3 s on live; on the copy, ~0.45 s. The main read's passes are unchanged.
+ */
+export const MAX_REGION_FALLBACK_LONG_SIDE_PX = 2400;
+
+/**
+ * `png` shrunk to `maxLongSide` px on its long side, by @napi-rs/canvas: it decodes and encodes
+ * off the main thread (about 10 ms of block for an A4 region at scale 4). A Jimp resize would
+ * decode the full render on the main thread, and a second pdf.js render decodes the page's
+ * scan there again (up to 0.7 s measured).
+ */
+async function shrinkPng(png: Buffer, maxLongSide: number): Promise<Buffer> {
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+  const img = await loadImage(png);
+  const k = maxLongSide / Math.max(img.width, img.height);
+  const canvas = createCanvas(Math.max(1, Math.round(img.width * k)), Math.max(1, Math.round(img.height * k)));
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.encode('png');
+}
+
 /** The image as OCR should see it: small photos enlarged, everything else untouched. */
 async function upscaleSmallImage(
   absolutePath: string
@@ -332,8 +350,17 @@ async function recognizeWith(
  * Recognize `image`, falling back to contrast-boosted and rotated copies when the plain
  * upright pass reads as noise. Returns the winning rotation so word boxes can be mapped
  * back to the page as the reviewer sees it.
+ *
+ * `smaller`, when given, supplies the image the fallback passes work on instead; a region read
+ * passes one (see MAX_REGION_FALLBACK_LONG_SIDE_PX). Their boxes would then be measured against
+ * another size, so only a caller that keeps text alone may pass it. If it fails, the fallbacks
+ * read `image`. Exported for tests.
  */
-async function recognize(worker: Worker, image: Buffer | string) {
+export async function recognize(
+  worker: Worker,
+  image: Buffer | string,
+  smaller?: () => Promise<Buffer>
+) {
   const spell = await getSpell();
   const score = (text?: string) => readScore(text ?? '', spell);
   const readable = (b: { data: { text?: string }; score: number }) =>
@@ -351,10 +378,11 @@ async function recognize(worker: Worker, image: Buffer | string) {
     score: score(plain.data.text),
   };
   if (readable(best)) return best;
+  const fallback = (await smaller?.().catch(() => undefined)) ?? image;
   // Upright-boosted first, so a tie keeps the page the way it was scanned.
   let upright = best.score;
   for (const deg of [0, ...ROTATIONS]) {
-    const prepped = await prepare(image, deg);
+    const prepped = await prepare(fallback, deg);
     if (!prepped) continue;
     const r = await worker.recognize(prepped, {}, { blocks: true });
     const s = score(r.data.text);
@@ -375,7 +403,7 @@ async function recognize(worker: Worker, image: Buffer | string) {
   // Still poor at every quarter turn? The page may be a few degrees off square, which
   // Tesseract barely tolerates. One more pass, squared up at whichever turn read best.
   if (!readable(best)) {
-    const straightened = await prepareDeskewed(image, best.rotation);
+    const straightened = await prepareDeskewed(fallback, best.rotation);
     if (straightened) {
       const r = await worker.recognize(straightened.png, {}, { blocks: true });
       const s = score(r.data.text);
@@ -388,7 +416,7 @@ async function recognize(worker: Worker, image: Buffer | string) {
   // Still poor? The ink may not separate from a patterned ground at any one grey level. One
   // more pass, thresholded locally, at whichever turn read best — see recognizeSauvola.
   if (!readable(best)) {
-    const turned = await prepare(image, best.rotation, false);
+    const turned = await prepare(fallback, best.rotation, false);
     if (turned) {
       const r = await recognizeSauvola(worker, turned);
       const s = score(r.data.text);
@@ -542,7 +570,7 @@ export class TesseractOcrPort implements OcrPort {
         deadline: opts?.deadline ?? Infinity,
         // META's PDF budget leaves out time queued for a pdf.js turn behind another claim
         // (withActiveTimeout), so the deadline inside it runs on the same clock.
-        now: () => Date.now() - queuedMs(),
+        now: activeNow,
         retryBudget: MAX_HIGHRES_RETRY_PAGES,
         first: async (pg, lane) => {
           const recognizeStartedAt = Date.now();
@@ -624,6 +652,55 @@ export class TesseractOcrPort implements OcrPort {
       };
     } catch {
       return { text: '', words: [] };
+    }
+  }
+
+  async extractPdfRegions(
+    absolutePath: string,
+    regions: PdfRegion[],
+    opts?: { deadline?: number }
+  ): Promise<(string | null)[]> {
+    if (regions.length === 0) return [];
+    try {
+      const startedAt = Date.now();
+      const lanes = Math.min(ocrWorkers(), regions.length);
+      const pool = await this.getPool(lanes);
+      const results = await scheduleOcr<PdfRegion, string | null>({
+        items: regions,
+        lanes,
+        deadline: opts?.deadline ?? Infinity,
+        now: activeNow,
+        retryBudget: 0,
+        wantsRetry: () => false,
+        retry: async (_, r) => r,
+        first: async (region, lane) => {
+          try {
+            // Only the box is rendered, already at the size OCR wants (region.scale), and encoded
+            // off the main thread: validation shares the process with the HTTP server.
+            const [pg] = await rasterizePdf(absolutePath, MAX_PDF_PAGES, region.scale, [region.page], {
+              clip: region.box,
+              maxLongSidePx: MAX_REGION_LONG_SIDE_PX,
+            });
+            // null, not '': a render or read that failed is not a sharper read that found nothing.
+            if (!pg) return null;
+            const smaller =
+              Math.max(pg.width, pg.height) > MAX_REGION_FALLBACK_LONG_SIDE_PX
+                ? () => shrinkPng(pg.png, MAX_REGION_FALLBACK_LONG_SIDE_PX)
+                : undefined;
+            const { data } = await recognize(pool[lane], pg.png, smaller);
+            return (data.text ?? '').trim();
+          } catch {
+            return null;
+          }
+        },
+      });
+      console.log(
+        `[ocr] regions ${path.basename(absolutePath).replace(/[\p{C}]/gu, '?')} ${regions.length} ` +
+          `in ${Date.now() - startedAt}ms, unread ${results.filter((r) => r === null).length}`
+      );
+      return results;
+    } catch {
+      return regions.map(() => null);
     }
   }
 
