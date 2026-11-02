@@ -40,6 +40,8 @@ export interface OcrPort {
   /**
    * OCR a scanned (image-only) PDF by rasterizing its pages. Optional — when absent,
    * a PDF with no text layer yields no text. Returns text + per-word normalized boxes.
+   * `opts.deadline` is on activeNow()'s clock (lib/pdfExtractor.ts): set it from
+   * performance.now(), never Date.now().
    */
   extractPdf?(
     absolutePath: string,
@@ -62,7 +64,8 @@ export interface OcrPort {
   /** Release any underlying resources (e.g. a reused OCR worker). Optional. */
   close?(): Promise<void>;
   /** OCR one box of each listed page, rendering only that box at the region's scale (its long
-   *  side capped). Results by region index; null = not started before the deadline.
+   *  side capped). Results by region index; null = not started before the deadline (on the
+   *  same clock as extractPdf's).
    *  A region that fails reads ''. */
   extractPdfRegions?(absolutePath: string, regions: PdfRegion[], opts?: { deadline?: number }): Promise<(string | null)[]>;
 }

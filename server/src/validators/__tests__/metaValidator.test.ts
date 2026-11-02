@@ -101,7 +101,7 @@ const META_CHILD = `
 const [, file] = process.argv;
 const { metaValidator } = await import(process.env.TARGET_URL);
 let ocrCalls = 0;
-let onlyPages, deadline;
+let onlyPages, deadlineLeft;
 const c = {
   claim: { id: 'c', claimId: 'C1', subCategoryId: 's' },
   documents: [{ id: 'd1', fileName: 'f.pdf', storagePath: file, readablePath: file,
@@ -112,7 +112,8 @@ const c = {
     extractPdf: async (_path, only, opts) => {
       ocrCalls++;
       onlyPages = only;
-      deadline = opts?.deadline;
+      // The OCR deadline runs on performance.now, the clock of META's own timeout.
+      deadlineLeft = opts?.deadline - performance.now();
       if (process.env.NO_FIRST_LOOK) {
         return { text: '', words: [], pages: [], totalPages: 2, unreadPages: [2] };
       }
@@ -132,7 +133,7 @@ console.log(JSON.stringify({
   words: c.wordBoxes.get('d1')?.length ?? 0,
   pages: out.details?.extracted?.[0]?.properties?.Pages,
   onlyPages,
-  deadline,
+  deadlineLeft,
   unread: c.unreadPages?.get('d1'),
   findings: (out.findings ?? []).map((f) => ({ code: f.code, severity: f.severity })),
   textLayerPages: [...(c.textLayerPages?.get('d1') ?? [])],
@@ -159,16 +160,22 @@ const c = {
       if (process.env.NO_UNREAD_FIELD) {
         return { text: 'PICTURE TEXT', words: [], pages: only.map((p) => ({ page: p, text: 'PICTURE TEXT' })), totalPages: 1 };
       }
+      // The OCR deadline runs on performance.now (META's timeout clock), so time passing is faked there.
       if (process.env.LEFT_MS && pdfCalls.length === 1) {
         // Leave the second reads LEFT_MS of the OCR deadline, as a long main read would.
-        const real = Date.now;
+        const real = performance.now.bind(performance);
         const shift = opts.deadline - real() - Number(process.env.LEFT_MS);
-        Date.now = () => real() + shift;
+        performance.now = () => real() + shift;
       }
       if (process.env.LATE) {
-        // Jump the clock past the OCR deadline, as a main read that used all its time would.
+        // Move the clock past the OCR deadline, as a main read that used all its time would.
+        const real = performance.now.bind(performance);
+        performance.now = () => real() + 1_000_000;
+      }
+      if (process.env.WALL_JUMP_MS && pdfCalls.length === 1) {
+        // A wall-clock step mid-read (w32time, a VM resume): no deadline may move with it.
         const real = Date.now;
-        Date.now = () => real() + 1_000_000;
+        Date.now = () => real() + Number(process.env.WALL_JUMP_MS);
       }
       const mainText = process.env.MAIN_TEXT ?? 'PICTURE TEXT';
       return {
@@ -260,7 +267,7 @@ describe('metaValidator on a real PDF', () => {
       words: number;
       pages?: string;
       onlyPages?: number[];
-      deadline?: number;
+      deadlineLeft?: number;
       unread?: number[] | 'all';
       findings: { code: string; severity?: string }[];
       textLayerPages: number[];
@@ -288,13 +295,13 @@ describe('metaValidator on a real PDF', () => {
   });
 
   it('gives OCR a deadline inside the PDF budget and records the pages it could not reach', () => {
-    const before = Date.now();
     const r = runMeta('unread.pdf', onePagePdf(), { UNREAD: '1' });
-    const after = Date.now();
     // Fully scanned path passes its textless page list, so the blind page cap does not apply.
     expect(r.onlyPages).toEqual([1]);
-    expect(r.deadline).toBeGreaterThanOrEqual(before + 300_000 - 20_000);
-    expect(r.deadline).toBeLessThanOrEqual(after + 300_000 - 20_000);
+    // Left on the child's monotonic clock when OCR starts: at most the 300 s budget less the
+    // 20 s margin, and the child (60 s timeout) cannot have used more than 60 s of it.
+    expect(r.deadlineLeft).toBeLessThanOrEqual(300_000 - 20_000);
+    expect(r.deadlineLeft).toBeGreaterThan(300_000 - 20_000 - 60_000);
     expect(r.unread).toEqual([2, 3]);
     expect(r.findings).toContainEqual({ code: 'META_PAGES_UNREAD', severity: 'WARNING' });
     expect(r.text).toBe('RC page text');
@@ -439,6 +446,24 @@ describe('metaValidator second OCR reads', () => {
     expect(r.secondReads).toBeUndefined();
     // The picture scan still ran: only the reads were skipped.
     expect(Object.keys(r.pageImages ?? {})).toEqual(['1', '2']);
+  });
+
+  // Value: protects=the OCR deadline and the second-read budget checks run on the monotonic clock of META's own timeout, so a wall-clock step mid-read moves none of them; fails_when=any of them reads Date.now (a forward step skips every second read; a backward one starts reads past the outer timeout, whose fallback drops the main text); why_new=F1 made the outer timeout monotonic while the OCR deadline stayed on Date.now; seam=Date.now and performance.now overrides in the child; no_claim=TesseractOcrPort's clock (ocrExtractPdf.test.ts)
+  it('keeps its second-read decisions when the wall clock steps mid-read', () => {
+    const ahead = runSecond('jump-ahead.pdf', mixed(PAN, '160 0 0 100 20 60'), { WALL_JUMP_MS: '3600000' });
+    expect(ahead.pdfCalls.map(([pages]) => pages)).toEqual([[2], [1]]); // main read, then the picture
+    expect(ahead.pdfCalls[1][1].deadline).toBe(ahead.pdfCalls[0][1].deadline);
+    expect(ahead.regionCalls).toHaveLength(1);
+    expect(ahead.secondReads?.map((s) => s.kind)).toEqual(['IMAGE', 'UPSCALE']);
+
+    // 10 s left on the monotonic clock: an hour's step back on the wall clock must not buy more.
+    const back = runSecond('jump-back.pdf', mixed(PAN, '160 0 0 100 20 60'), {
+      WALL_JUMP_MS: '-3600000',
+      LEFT_MS: '10000',
+    });
+    expect(back.pdfCalls).toHaveLength(1);
+    expect(back.regionCalls).toHaveLength(0);
+    expect(back.secondReads).toBeUndefined();
   });
 
   it('files each region read under its own kind and page', () => {

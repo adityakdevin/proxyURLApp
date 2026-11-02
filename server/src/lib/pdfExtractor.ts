@@ -66,6 +66,13 @@ export function queuedMs(): number {
   return queueWait.getStore()?.ms() ?? 0;
 }
 
+/** Now on the innermost withActiveTimeout's clock: monotonic, less its queue time. A deadline
+ *  set from performance.now() as that timeout starts, and read only on this clock, cannot be
+ *  moved by a wall-clock step while the timeout around it holds still. */
+export function activeNow(): number {
+  return performance.now() - queuedMs();
+}
+
 /**
  * Run `fn`, settling with `onTimeout()` (or its throw) once `fn` has used `ms` of its own
  * time. Time spent waiting for a pdf.js turn does not count. The work itself is not

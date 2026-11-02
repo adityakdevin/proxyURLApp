@@ -9,7 +9,7 @@ import {
   largestImageWidthPerPage,
   MAX_PDF_PAGES,
   withActiveTimeout,
-  queuedMs,
+  activeNow,
   PageImage,
 } from '../lib/pdfExtractor.js';
 import { readFileMeta } from '../lib/fileMeta.js';
@@ -90,7 +90,7 @@ async function secondReadsFor(
 ): Promise<Pick<ExtractResult, 'pageImages' | 'secondReads'>> {
   if (!layer) return {};
   // Same clock as TesseractOcrPort.extractPdf: queue time behind other PDFs is not charged.
-  const left = () => deadline - (Date.now() - queuedMs());
+  const left = () => deadline - activeNow();
   if (left() <= 0) return {};
   const reads: SecondRead[] = [];
   let images = new Map<number, PageImage>();
@@ -286,7 +286,9 @@ export const metaValidator: Validator = {
       // OCR deadline inside it, which TesseractOcrPort.extractPdf reads on the same clock.
       let timedOut = false;
       const empty = (): Awaited<ReturnType<typeof extract>> => ({ text: '', words: [], pageTexts: [] });
-      const deadline = Date.now() + timeoutMs - OCR_DEADLINE_MARGIN_MS;
+      // performance.now, as withActiveTimeout starts its own: inside it, activeNow() reads this
+      // deadline, and a wall-clock step moves neither.
+      const deadline = performance.now() + timeoutMs - OCR_DEADLINE_MARGIN_MS;
       const extractedDoc = await withActiveTimeout(
         () => extract(ctx, doc, deadline).catch(empty),
         timeoutMs,

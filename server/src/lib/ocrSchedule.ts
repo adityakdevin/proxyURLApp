@@ -1,11 +1,10 @@
-/** Longest delay setTimeout honours; Node fires a longer one after 1 ms. */
-const MAX_TIMER_MS = 2 ** 31 - 1;
+import { MAX_TIMER_MS } from './pdfExtractor.js';
 
 export interface OcrScheduleOptions<P, R> {
   items: readonly P[];
   lanes: number;
   /**
-   * Epoch ms, read on `now`. No first look and no retry starts at or after it, and the
+   * Ms on the `now` clock. No first look and no retry starts at or after it, and the
    * schedule returns there with what it has: an item whose first look is still running is
    * null, an item whose retry is still running keeps its first look. Infinity = no deadline.
    */
@@ -16,7 +15,8 @@ export interface OcrScheduleOptions<P, R> {
   wantsRetry: (result: R) => boolean;
   /** Second look; resolves to whichever result should be kept. */
   retry: (item: P, firstResult: R, lane: number) => Promise<R>;
-  /** The clock `deadline` is read on. Defaults to Date.now. */
+  /** The clock `deadline` is read on. Defaults to performance.now: monotonic, so a wall-clock
+   *  step cannot move the deadline. */
   now?: () => number;
 }
 
@@ -33,7 +33,7 @@ export interface OcrScheduleOptions<P, R> {
  * code reads page order. null = the item never finished a first look.
  */
 export async function scheduleOcr<P, R>(o: OcrScheduleOptions<P, R>): Promise<(R | null)[]> {
-  const now = o.now ?? Date.now;
+  const now = o.now ?? (() => performance.now());
   const results: (R | null)[] = new Array(o.items.length).fill(null);
   const lanes = Array.from({ length: Math.max(1, o.lanes) }, (_, n) => n);
 
@@ -68,7 +68,7 @@ export async function scheduleOcr<P, R>(o: OcrScheduleOptions<P, R>): Promise<(R
   let timer: ReturnType<typeof setTimeout> | undefined;
   const stopped = new Promise<(R | null)[]>((resolve) => {
     if (o.deadline === Infinity) return;
-    // `now` may run behind the wall clock (the caller leaves out time queued for pdf.js), so a
+    // `now` may run behind real time (the caller leaves out time queued for pdf.js), so a
     // timer that fires before `now` reaches the deadline waits again for what is left.
     const check = () => {
       const left = o.deadline - now();

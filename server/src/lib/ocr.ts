@@ -3,7 +3,7 @@ import path from 'path';
 import { Jimp } from 'jimp';
 import { createWorker, Worker } from 'tesseract.js';
 import { OcrPort, PdfRegion, WordBox } from '../validators/types.js';
-import { rasterizePdf, MAX_PDF_PAGES, queuedMs } from './pdfExtractor.js';
+import { rasterizePdf, MAX_PDF_PAGES, activeNow } from './pdfExtractor.js';
 import { estimateSkewDegrees } from './deskew.js';
 import { clamp01 } from './bbox.js';
 import { scheduleOcr } from './ocrSchedule.js';
@@ -549,7 +549,7 @@ export class TesseractOcrPort implements OcrPort {
         deadline: opts?.deadline ?? Infinity,
         // META's PDF budget leaves out time queued for a pdf.js turn behind another claim
         // (withActiveTimeout), so the deadline inside it runs on the same clock.
-        now: () => Date.now() - queuedMs(),
+        now: activeNow,
         retryBudget: MAX_HIGHRES_RETRY_PAGES,
         first: async (pg, lane) => {
           const recognizeStartedAt = Date.now();
@@ -648,7 +648,7 @@ export class TesseractOcrPort implements OcrPort {
         items: regions,
         lanes,
         deadline: opts?.deadline ?? Infinity,
-        now: () => Date.now() - queuedMs(),
+        now: activeNow,
         retryBudget: 0,
         wantsRetry: () => false,
         retry: async (_, r) => r,

@@ -32,4 +32,23 @@ describe('TesseractOcrPort.extractPdf', () => {
       await port.close();
     }
   });
+
+  // Value: protects=both OCR reads compare META's deadline with the monotonic clock it was set on; fails_when=extractPdf or extractPdfRegions read Date.now (every page past the deadline, or a backward wall-clock step starting reads past META's timeout); why_new=META's deadline moved to performance.now; seam=Date.now spy; no_claim=queue time (pdfExtractor.test.ts)
+  it('reads the deadline on the monotonic clock, whatever the wall clock does', async () => {
+    const raster = rasterizePdf as jest.MockedFunction<typeof rasterizePdf>;
+    raster.mockResolvedValue([{ page: 1, png: Buffer.from('page'), width: 100, height: 100, totalPages: 1 }]);
+    jest.spyOn(Date, 'now').mockReturnValue(Date.now() - 3_600_000);
+    const port = new TesseractOcrPort();
+    try {
+      const ahead = performance.now() + 60_000;
+      const region = { page: 1, box: { x: 0, y: 0, w: 1, h: 1 }, scale: 2 };
+      expect(await port.extractPdf('/claims/scan.pdf', [1], { deadline: ahead })).toMatchObject({ unreadPages: [] });
+      expect(await port.extractPdfRegions('/claims/scan.pdf', [region], { deadline: ahead })).not.toContain(null);
+      const passed = performance.now() - 1;
+      expect(await port.extractPdf('/claims/scan.pdf', [1], { deadline: passed })).toMatchObject({ unreadPages: [1] });
+      expect(await port.extractPdfRegions('/claims/scan.pdf', [region], { deadline: passed })).toEqual([null]);
+    } finally {
+      await port.close();
+    }
+  });
 });
