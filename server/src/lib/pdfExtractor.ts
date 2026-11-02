@@ -33,7 +33,7 @@ let pdfjsTail: Promise<void> = Promise.resolve();
 const PDFJS_TURN_MAX_MS = 600_000;
 
 /**
- * Wall time a timed caller has spent queued for a pdf.js turn, so its timeout can leave it
+ * Time a timed caller has spent queued for a pdf.js turn, so its timeout can leave it
  * out. Without this, one claim's quick read waited behind the other claim's QR raster pass
  * and timed out having done nothing (META then read the document as empty). Nested timers
  * (META's per-document budget inside the per-check one) each see the wait via `parent`.
@@ -44,18 +44,21 @@ class QueueWait {
   private total = 0;
   constructor(private readonly parent?: QueueWait) {}
   start(): void {
-    if (this.queued++ === 0) this.since = Date.now();
+    if (this.queued++ === 0) this.since = performance.now();
     this.parent?.start();
   }
   end(): void {
-    if (--this.queued === 0) this.total += Date.now() - this.since;
+    if (--this.queued === 0) this.total += performance.now() - this.since;
     this.parent?.end();
   }
   ms(): number {
-    return this.total + (this.queued > 0 ? Date.now() - this.since : 0);
+    return this.total + (this.queued > 0 ? performance.now() - this.since : 0);
   }
 }
 const queueWait = new AsyncLocalStorage<QueueWait>();
+
+/** Longest delay setTimeout honours; Node fires a longer one after 1 ms. */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /** Queue time of the innermost withActiveTimeout around the caller (0 outside one), so work
  *  inside it can keep a deadline on the same clock as that timeout. */
@@ -71,13 +74,14 @@ export function queuedMs(): number {
 export function withActiveTimeout<T>(fn: () => Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
   const wait = new QueueWait(queueWait.getStore());
   const work = queueWait.run(wait, fn);
-  const startedAt = Date.now();
+  // Monotonic: a wall-clock step (w32time, a VM resume) must not move the deadline.
+  const startedAt = performance.now();
   let timer: NodeJS.Timeout | undefined;
   const expired = new Promise<T>((resolve, reject) => {
     const check = () => {
-      const left = ms - (Date.now() - startedAt - wait.ms());
+      const left = ms - (performance.now() - startedAt - wait.ms());
       if (left > 0) {
-        timer = setTimeout(check, left);
+        timer = setTimeout(check, Math.min(left, MAX_TIMER_MS));
         return;
       }
       try {
@@ -86,7 +90,8 @@ export function withActiveTimeout<T>(fn: () => Promise<T>, ms: number, onTimeout
         reject(e);
       }
     };
-    timer = setTimeout(check, ms);
+    // A longer budget re-checks every MAX_TIMER_MS instead of spinning every 1 ms.
+    timer = setTimeout(check, Math.min(ms, MAX_TIMER_MS));
   });
   return Promise.race([work, expired]).finally(() => clearTimeout(timer));
 }
