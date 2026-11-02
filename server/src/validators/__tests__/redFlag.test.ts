@@ -305,4 +305,114 @@ describe('redFlagValidator compares a card only with its own pages (client QA 20
     // The reviewer reads the rule's label, not its code.
     expect(out.summary).toMatch(/GSTIN unreadable ×1/);
   });
+
+  it("raises the company-customer PAN flag from the claim's DMS name", async () => {
+    const out = await redFlagValidator.run(
+      ctx({
+        claim: { id: 'c', claimId: 'CLM1', subCategoryId: 's', customerName: 'ABC GLOBAL SERVICES LLP' },
+        pageTexts: new Map([['d1', ['INCOME TAX DEPARTMENT Permanent Account Number Card ABCPY1234F']]]),
+      })
+    );
+    expect(out.status).toBe('FAILED');
+    expect(out.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'REDFLAG_PAN_HOLDER_TYPE', documentId: 'd1', page: 1 })])
+    );
+  });
+
+  it('counts every PAN card the claim holds for the company-customer check', async () => {
+    const claim = { id: 'c', claimId: 'CLM1', subCategoryId: 's', customerName: 'ABC GLOBAL SERVICES LLP' };
+    const indiv = 'INCOME TAX DEPARTMENT Permanent Account Number Card ABCPY1234F';
+    const runs = [
+      { documents: [doc()], pageTexts: new Map([['d1', [`${indiv} Name SURESH KAPOOR Father's Name RAM KAPOOR INCOME TAX DEPARTMENT Permanent Account Number AAMFA1234Q`]]]) },
+      { documents: [doc(), doc({ id: 'd2' })], pageTexts: new Map([['d1', [indiv]], ['d2', ['INCOME TAX DEPARTMENT Permanent Account Number AAMFA1234Q']]]) },
+      {
+        documents: [doc(), doc({ id: 'd2' })],
+        pageTexts: new Map([['d1', [indiv]], ['d2', ['Unique Identification Authority of India Government of India INCOME TAX DEPARTMENT Permanent Account Number AAMFA1234Q']]]),
+      },
+    ];
+    for (const r of runs) {
+      const out = await redFlagValidator.run(ctx({ claim, ...r }));
+      expect((out.findings ?? []).map((f) => f.code)).not.toContain('REDFLAG_PAN_HOLDER_TYPE');
+    }
+  });
+});
+
+describe('passport number comparison', () => {
+  it('compares passport numbers across passport pages only', async () => {
+    const out = await redFlagValidator.run(
+      ctx({
+        pageTexts: new Map([
+          ['d1', ['Republic of India Passport No R1234567 Nationality INDIAN', 'Tax Invoice No K1234567 Ex-showroom']],
+        ]),
+      })
+    );
+    expect((out.findings ?? []).map((f) => f.code)).not.toContain('REDFLAG_PASSPORT_MISMATCH');
+  });
+
+  it('leaves a visa page out of the passport comparison', async () => {
+    const out = await redFlagValidator.run(
+      ctx({
+        pageTexts: new Map([
+          [
+            'd1',
+            [
+              'Republic of India Passport No R1234567 Nationality INDIAN',
+              'VISA Passport No K7654321 Nationality INDIAN Place of Birth DELHI',
+            ],
+          ],
+        ]),
+      })
+    );
+    expect((out.findings ?? []).map((f) => f.code)).not.toContain('REDFLAG_PASSPORT_MISMATCH');
+  });
+});
+
+describe('passport MRZ expiry', () => {
+  const MRZ =
+    '= R1234567\nSHARMA A\nNationality INDIAN\nP<INDSHARMA<<ANIL<<<<<<<<<<<<<<<<<<<<<<<<<<<\nR1234567<5IND8105141M3104013<<<<<<<<<<<<<<<2';
+
+  it('judges passport expiry on the invoice date, not the run date', async () => {
+    const pageTexts = new Map([['d1', [MRZ]]]);
+    const late = await redFlagValidator.run(
+      ctx({ claim: { id: 'c', claimId: 'CLM1', subCategoryId: 's', invoiceDate: new Date('2031-05-01') }, pageTexts })
+    );
+    expect(late.status).toBe('FAILED');
+    expect(late.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'REDFLAG_PASSPORT_EXPIRED', documentId: 'd1', page: 1 })])
+    );
+
+    const none = await redFlagValidator.run(ctx({ pageTexts }));
+    const codes = (none.findings ?? []).map((f) => f.code);
+    expect(none.status).toBe('PASSED');
+    expect(codes).toContain('REDFLAG_PASSPORT_OK');
+    expect(codes).not.toContain('REDFLAG_PASSPORT_EXPIRED');
+  });
+});
+
+describe('Aadhaar check digit in a run', () => {
+  const FRONT = 'Unique Identification Authority of India\nDOB: 01/01/1980\nMALE\n2341 2341 2347';
+  const BACK = 'Address: 1 MAIN ROAD\n1947 help@uidai.gov.in\n2341 2341 2347';
+
+  it('raises the check-digit flag when two reads agree, and only a note for one OCR read', async () => {
+    const two = await redFlagValidator.run(ctx({ pageTexts: new Map([['d1', [FRONT, BACK]]]) }));
+    expect(two.status).toBe('FAILED');
+    expect(two.findings).toContainEqual(
+      expect.objectContaining({ code: 'REDFLAG_AADHAAR_CHECKSUM', documentId: 'd1', page: 1 })
+    );
+    const one = await redFlagValidator.run(ctx({ pageTexts: new Map([['d1', [FRONT]]]) }));
+    expect(one.status).toBe('PASSED');
+    expect(one.findings).toContainEqual(
+      expect.objectContaining({ code: 'REDFLAG_AADHAAR_CHECKSUM_UNSURE', severity: 'INFO' })
+    );
+    expect(one.summary).toContain('2 note(s) to look at');
+  });
+
+  it('needs the page in the text layer AND visible text for a clean read', async () => {
+    // An image has no text-op stats, so it is never clean even when META listed the page.
+    const out = await redFlagValidator.run(
+      ctx({ pageTexts: new Map([['d1', [FRONT]]]), textLayerPages: new Map([['d1', new Set([1])]]) })
+    );
+    expect(out.status).toBe('PASSED');
+    expect(out.findings).toContainEqual(expect.objectContaining({ code: 'REDFLAG_AADHAAR_CHECKSUM_UNSURE' }));
+  });
 });

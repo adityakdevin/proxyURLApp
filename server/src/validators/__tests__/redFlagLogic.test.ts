@@ -126,8 +126,9 @@ describe('Udyam', () => {
 });
 
 describe('Passport', () => {
-  it('passes a valid passport number (1 letter + 7 digits)', () => {
-    expect(checkPassportNumber('Passport No: A1234567')).toEqual([]);
+  it('passes a valid passport number (1 letter + 7 digits) with an INFO note', () => {
+    expect(codes(checkPassportNumber('Passport No: A1234567'))).toEqual(['REDFLAG_PASSPORT_OK']);
+    expect(checkPassportNumber('Passport No: A1234567')[0].severity).toBe('INFO');
   });
   it('flags a genuinely malformed passport number (too short)', () => {
     // 1 letter + 5 digits, not OCR-adjacent to the 1+7 shape → a real red flag.

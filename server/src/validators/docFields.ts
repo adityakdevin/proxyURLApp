@@ -8,6 +8,7 @@
  * of birth, which no rule needed until now.
  */
 import { classifyPage } from './segment.js';
+import { GST_CERT_RE } from './logic.js';
 import {
   classifyDocType,
   dropHonorific,
@@ -35,8 +36,6 @@ export type FieldDocType = 'PAN' | 'AADHAR' | 'INVOICE' | 'INSURANCE' | 'GST';
  * marker is left untouched for FULL's required-document check, which only asks "is a GST
  * document present at all".
  */
-const GST_CERT_RE = /gst\s*reg-?\s*0?6|registration\s+certificate|legal\s+name|type\s+of\s+registrat/i;
-
 export function fieldDocType(text: string): FieldDocType | null {
   const govt = classifyPage(text);
   if (govt === 'PAN' || govt === 'AADHAR') return govt;

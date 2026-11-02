@@ -50,7 +50,14 @@ async function extract(
   ctx: ValidatorContext,
   doc: ValidatorDoc,
   deadline: number
-): Promise<{ text: string; words: WordBox[]; pageTexts: string[]; totalPages?: number; unreadPages?: number[] }> {
+): Promise<{
+  text: string;
+  words: WordBox[];
+  pageTexts: string[];
+  totalPages?: number;
+  unreadPages?: number[];
+  textLayerPages?: number[];
+}> {
   const mime = doc.mimeType ?? '';
   if (mime.startsWith('image/')) {
     // A single image is one "page".
@@ -66,6 +73,8 @@ async function extract(
     const withCoords = await extractPdf(doc.readablePath);
     if (withCoords && withCoords.text) {
       const pageTexts = [...withCoords.pageTexts];
+      const textless = new Set(withCoords.textlessPages);
+      const textLayerPages = pageTexts.map((_, i) => i + 1).filter((p) => !textless.has(p));
       // Mixed PDF: digital pages have a text layer, but scanned pages (bundled
       // ID cards, stamps) don't — OCR just those pages and merge, otherwise
       // they're invisible to every text-based check.
@@ -89,6 +98,7 @@ async function extract(
             pageTexts,
             totalPages: withCoords.totalPages,
             unreadPages,
+            textLayerPages,
           };
         }
       }
@@ -100,6 +110,7 @@ async function extract(
         pageTexts,
         totalPages: withCoords.totalPages,
         unreadPages,
+        textLayerPages,
       };
     }
     // No text layer → scanned PDF. Rasterize the pages and OCR them.
@@ -204,6 +215,7 @@ export const metaValidator: Validator = {
         }
       );
       const { text, words, totalPages } = extractedDoc;
+      if (extractedDoc.textLayerPages?.length) (ctx.textLayerPages ??= new Map()).set(doc.id, new Set(extractedDoc.textLayerPages));
       // OCR leaves a page that read nothing OUT of its per-page list, and extract() writes
       // pages back by index — so a blank or unreadable page leaves a HOLE. Every reader of
       // these pages iterates them (cappedPages below, DUP, segment, QR) and crashed on the

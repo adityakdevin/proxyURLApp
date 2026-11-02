@@ -50,4 +50,22 @@ describe('compareValidator findings', () => {
     expect(outcome.status).toBe('FAILED');
     expect(outcome.findings!.some((f) => f.code === 'CROSS_OLD_CAR_CHASSIS_MISMATCH')).toBe(true);
   });
+
+  it('compares the GST certificate with the invoice GSTIN', async () => {
+    const inv = 'TAX INVOICE\nInvoice No: INV-1\nDealer GSTIN: 27PQRSX5678K1ZY\nBuyer GSTIN: 23ABCDE1234F1Z8';
+    const cert = 'Form GST REG-06\nRegistration Certificate\nRegistration Number : 23ABCDE1234F1Z\nLegal Name : ABC TRADERS';
+    const outcome = await compareValidator.run({
+      claim: { id: 'c1', claimId: 'CLM1', subCategoryId: 's1' },
+      documents: [doc('d1')],
+      prisma: {} as never,
+      ocr: {} as never,
+      shared: new Map([['d1', `${inv}\n${cert}`]]),
+      pageTexts: new Map([['d1', [inv, cert]]]),
+      wordBoxes: new Map(),
+    });
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'CROSS_GSTIN_MISMATCH', documentId: 'd1', page: 2 })])
+    );
+  });
 });

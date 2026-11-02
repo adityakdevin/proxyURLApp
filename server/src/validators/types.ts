@@ -70,6 +70,8 @@ export interface ValidatorContext {
     subCategoryId: string;
     /** Customer name from the DMS upload (the observation sheet), if imported. */
     customerName?: string | null;
+    /** Invoice date from the DMS upload (the observation sheet), if imported. */
+    invoiceDate?: Date | null;
   };
   documents: ValidatorDoc[];
   prisma: PrismaClient;
@@ -85,6 +87,9 @@ export interface ValidatorContext {
   /** documentId to 1-based pages OCR did not finish reading before its deadline, or 'all' when the
    *  whole document timed out unread (META fills; FULL reports it as a red flag). */
   unreadPages?: Map<string, number[] | 'all'>;
+  /** documentId -> 1-based pages whose text is wholly the PDF's own text layer (META did not
+   *  OCR them). A number read there is exact, not an OCR guess, when the layer is visible. */
+  textLayerPages?: Map<string, Set<number>>;
 }
 
 /**

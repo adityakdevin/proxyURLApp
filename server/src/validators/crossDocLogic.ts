@@ -16,7 +16,8 @@
  * Invoice page and an RC page inside the same file must still be compared.
  */
 import type { FindingInput } from './types.js';
-import { editDistanceCapped } from './logic.js';
+import { editDistanceCapped, GST_CERT_RE } from './logic.js';
+import { certGstin, verifiedGstin } from './redFlagLogic.js';
 
 export type DocTypeCode = 'INVOICE' | 'RC' | 'INSURANCE' | 'KYC' | 'PAYSLIP' | 'STAFF_ID' | 'DMS';
 /** Relation names are compared PER RELATION — a mother's name and a father's name are
@@ -1073,6 +1074,41 @@ export function oldCarPaperFindings(pages: CrossPage[], claimVin: string): Findi
       message: `Insurance on page ${p.page} is for chassis "${actual}", which is neither this claim's vehicle nor the old car on the RC (page ${rcPage}, chassis "${expected}").`,
       page: p.page,
       data: { field: 'CHASSIS', actual, expected, actualType: 'INSURANCE', expectedType: 'RC', rcPage },
+    });
+  }
+  return out;
+}
+
+/** A GST certificate whose number is the claim's GSTIN minus its check character. Only that
+ *  14-character case is flagged: a different registration of the same PAN is legitimate, and a
+ *  15-character number is the GST format rule's business. Compared with idNorm, not gstFold:
+ *  gstFold leaves the check character as read, so an OCR misread there would split two equal
+ *  numbers. */
+export function gstCertFindings(pages: CrossPage[]): FindingInput[] {
+  const isCert = (p: CrossPage) => p.govtCode === 'GST' && GST_CERT_RE.test(p.text);
+  const claimGstins: { gstin: string; type: string; page: number | null }[] = [];
+  for (const p of pages) {
+    if (isCert(p)) continue;
+    for (const g of p.text.toUpperCase().match(/\b[0-9]{2}[A-Z0-9]{13}\b/g) ?? []) {
+      if (verifiedGstin(g)) claimGstins.push({ gstin: g, type: pageType(p), page: p.page });
+    }
+  }
+  const out: FindingInput[] = [];
+  for (const p of pages.filter(isCert)) {
+    const c = certGstin(p.text);
+    if (!c) continue;
+    const n = idNorm(c);
+    if (claimGstins.some((g) => idNorm(g.gstin) === n)) continue;
+    if (c.length !== 14) continue;
+    const g = claimGstins.find((x) => idNorm(x.gstin.slice(0, 14)) === n);
+    if (!g) continue;
+    out.push({
+      documentId: p.documentId,
+      page: p.page,
+      code: 'CROSS_GSTIN_MISMATCH',
+      severity: 'ERROR',
+      message: `GSTIN "${c}" on the GST certificate has 14 characters; "${g.gstin}" (${g.type}, page ${g.page}) has 15: the certificate is missing the check character.`,
+      data: { field: 'GSTIN', expected: g.gstin, actual: c, expectedType: g.type, actualType: 'KYC' },
     });
   }
   return out;

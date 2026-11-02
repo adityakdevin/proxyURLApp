@@ -598,8 +598,8 @@ export const pdfPageTextStats = oneDocumentAtATime(pdfPageTextStatsUnqueued);
 async function pdfPageTextStatsUnqueued(
   absolutePath: string,
   maxPages = MAX_PDF_PAGES
-): Promise<{ image: boolean; visibleText: boolean }[]> {
-  const out: { image: boolean; visibleText: boolean }[] = [];
+): Promise<{ image: boolean; visibleText: boolean; hiddenText: boolean }[]> {
+  const out: { image: boolean; visibleText: boolean; hiddenText: boolean }[] = [];
   try {
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
@@ -632,14 +632,18 @@ async function pdfPageTextStatsUnqueued(
         // visible again after the Q, so track it on the same save/restore stack.
         let mode = 0;
         const saved: number[] = [];
-        const stat = { image: false, visibleText: false };
+        const stat = { image: false, visibleText: false, hiddenText: false };
         for (let i = 0; i < ops.fnArray.length; i++) {
           const fn = ops.fnArray[i];
           if (fn === OPS.save) saved.push(mode);
           else if (fn === OPS.restore) mode = saved.pop() ?? 0;
           else if (fn === OPS.setTextRenderingMode) mode = ops.argsArray[i][0];
           else if (IMAGE_OPS.has(fn)) stat.image = true;
-          else if (TEXT_OPS.has(fn) && mode !== 3) stat.visibleText = true;
+          else if (TEXT_OPS.has(fn)) {
+            // Mode 3 is invisible and 7 only clips: someone's OCR layer, not text a reader sees.
+            if (mode === 3 || mode === 7) stat.hiddenText = true;
+            if (mode !== 3) stat.visibleText = true;
+          }
         }
         out.push(stat);
       }

@@ -17,13 +17,19 @@ import { segment, DocInstance } from './segment.js';
 import { readPdfInfo, pdfPageTextStats } from '../lib/pdfExtractor.js';
 import {
   checkPan,
+  panRead,
+  checkCustomerPanType,
   checkGst,
   checkDl,
   checkUdyam,
   checkPassportNumber,
   checkPassportFileNo,
   checkPassportPages,
+  checkPassportMrz,
   checkAadhaar,
+  checkAadhaarChecksum,
+  cleanRead,
+  AadhaarRead,
   aadhaarNumbers,
   checkAadhaarFormat,
   checkVid,
@@ -39,6 +45,7 @@ import {
   RedFlagFinding,
 } from './redFlagLogic.js';
 import { classifyDocType } from './crossDocLogic.js';
+import { PASSPORT_MRZ } from './logic.js';
 
 /** Per-page format rule per classified type. */
 const PAGE_RULES: Record<string, ((text: string, page: number | null) => RedFlagFinding[])[]> = {
@@ -155,8 +162,11 @@ const makeToFinding =
 const RULE_LABEL: Record<string, string> = {
   REDFLAG_PAN_FORMAT: 'PAN format',
   REDFLAG_PAN_CATEGORY: 'PAN category',
+  REDFLAG_PAN_HOLDER_TYPE: 'PAN holder type',
+  REDFLAG_PAN_NAME_LETTER: 'PAN 5th letter',
   REDFLAG_AADHAAR_FORMAT: 'Aadhaar format',
   REDFLAG_AADHAAR_MISMATCH: 'Aadhaar front/back',
+  REDFLAG_AADHAAR_CHECKSUM: 'Aadhaar check digit',
   REDFLAG_VID_FORMAT: 'VID format',
   REDFLAG_GST_FORMAT: 'GST format',
   REDFLAG_DL_FORMAT: 'DL format',
@@ -164,6 +174,9 @@ const RULE_LABEL: Record<string, string> = {
   REDFLAG_PASSPORT_FORMAT: 'Passport format',
   REDFLAG_PASSPORT_FILENO: 'Passport file no.',
   REDFLAG_PASSPORT_MISMATCH: 'Passport page mismatch',
+  REDFLAG_PASSPORT_MRZ: 'Passport MRZ check digit',
+  REDFLAG_PASSPORT_MRZ_UNSURE: 'Passport MRZ to confirm',
+  REDFLAG_PASSPORT_EXPIRED: 'Passport expired',
   REDFLAG_VOTER_MISMATCH: 'Voter ID front/back',
   REDFLAG_SIGNATORY_TYPO: 'Signatory misspelt',
   REDFLAG_AI_WATERMARK: 'AI watermark',
@@ -198,16 +211,29 @@ export const redFlagValidator: Validator = {
     }
 
     const findings: FindingInput[] = [];
+    const pans: { documentId: string; page: number; pan: string }[] = [];
+    const aadhaarReads: AadhaarRead[] = [];
     for (const doc of ctx.documents) {
       const pages = byDoc.get(doc.id) ?? [];
       if (pages.length === 0) continue;
       const codes = new Set(pages.map((p) => p.govtCode));
+      const pdf = (doc.mimeType ?? '') === 'application/pdf';
+      const stats = pdf ? await pdfPageTextStats(doc.readablePath) : [];
 
       // Per-page format rules, only on pages classified to that type.
       for (const inst of pages) {
         // Nominee rows sit on insurance pages, which carry no govt code — check every page.
         for (const f of checkNominee(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
         const rules = inst.govtCode ? PAGE_RULES[inst.govtCode] : undefined;
+        if (inst.govtCode === 'PAN' || inst.govtCode === 'AADHAR') {
+          // Every PAN-shaped token counts (a page can hold a firm's and a partner's card, and an
+          // Aadhaar-classified page can carry a PAN scanned beside it); other page types do not
+          // (an invoice prints the dealer's PAN). A PAN page with no shaped token keeps panRead's read.
+          const shaped = new Set(inst.text.toUpperCase().match(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/g));
+          for (const pan of shaped) pans.push({ documentId: doc.id, page: inst.page ?? 1, pan });
+          const read = shaped.size === 0 && inst.govtCode === 'PAN' ? panRead(inst.text) : undefined;
+          if (read) pans.push({ documentId: doc.id, page: inst.page ?? 1, pan: read.pan });
+        }
         if (!rules) continue;
         for (const rule of rules) for (const f of rule(inst.text, inst.page)) findings.push(toFinding(doc.id, f));
       }
@@ -230,6 +256,14 @@ export const redFlagValidator: Validator = {
               !['PAYSLIP', 'INVOICE', 'INSURANCE', 'RC'].includes(classifyDocType(p.text) ?? ''))
         );
         for (const f of checkAadhaar(aadhaarPages)) findings.push(toFinding(doc.id, f));
+        for (const p of aadhaarPages) {
+          aadhaarReads.push({
+            documentId: doc.id,
+            page: p.page,
+            text: p.text,
+            clean: cleanRead(ctx.textLayerPages?.get(doc.id)?.has(p.page) ?? false, stats[p.page - 1]),
+          });
+        }
       }
       if (codes.has('VOTER_ID')) {
         // Only the Voter ID's own sides: the bundle's RC or engine-number pages carry
@@ -251,7 +285,21 @@ export const redFlagValidator: Validator = {
         );
         for (const f of checkVoterId(voterPages)) findings.push(toFinding(doc.id, f));
       }
-      if (codes.has('PASSPORT')) for (const f of checkPassportPages(asPages)) findings.push(toFinding(doc.id, f));
+      // Passport pages only: an invoice, visa or policy number is passport-shaped too.
+      if (codes.has('PASSPORT')) {
+        // A visa page prints "Passport No" and "Nationality", so it classifies PASSPORT and its
+        // number joins the comparison. The drop lives here, not in GOVT_TYPE_MARKERS.PASSPORT:
+        // Missing Docs' typePresent reuses the marker on whole-document text, and a passport PDF
+        // holds visa pages, so excluding "visa" there would call a passport missing when its MRZ
+        // is unread. A visa's own MRZ starts "V<", so the MRZ test keeps real passport pages.
+        const passportPages = asPages.filter(
+          (p, i) => pages[i].govtCode === 'PASSPORT' && (!/\bvisa\b/i.test(p.text) || PASSPORT_MRZ.test(p.text))
+        );
+        for (const f of checkPassportPages(passportPages)) findings.push(toFinding(doc.id, f));
+        // Expiry is judged on the invoice date, not today: a re-validation months later must not turn a
+        // passport that was valid at the sale into a red (Decision 11). No invoice date, no expiry check.
+        for (const f of checkPassportMrz(passportPages, ctx.claim.invoiceDate)) findings.push(toFinding(doc.id, f));
+      }
 
       // File-level "Every Doc" rules (spec decision 3): whole-document text.
       const fileText = pages.map((p) => p.text).join('\n');
@@ -270,15 +318,19 @@ export const redFlagValidator: Validator = {
       }
 
       // Editor/AI watermark — read the PDF Producer/Creator (I/O; PDFs only).
-      if ((doc.mimeType ?? '') === 'application/pdf') {
+      if (pdf) {
         const info = await readPdfInfo(doc.readablePath);
         for (const f of checkEditorWatermark(info.Producer, info.Creator)) findings.push(toFinding(doc.id, f));
         // Created vs Modified: the same Info dictionary, so no extra read.
         for (const f of checkTimestamps(info.Created, info.Modified)) findings.push(toFinding(doc.id, f));
-        const stats = await pdfPageTextStats(doc.readablePath);
         for (const f of checkEditableText(stats, doc.fileName)) findings.push(toFinding(doc.id, f));
       }
     }
+
+    for (const r of checkAadhaarChecksum(aadhaarReads)) findings.push(toFinding(r.documentId, r.finding));
+
+    const holder = checkCustomerPanType(ctx.claim.customerName, pans);
+    if (holder) findings.push(toFinding(holder.documentId, holder.finding));
 
     // Cross-document field consistency lives in Data Compare. Red Flags is the format rules —
     // a malformed PAN, a short VID, an editor watermark.

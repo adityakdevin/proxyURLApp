@@ -1,7 +1,7 @@
 import { Validator, FindingInput } from './types.js';
 import { segment } from './segment.js';
 import { locate } from './redFlagValidator.js';
-import { crossDocFieldFindings, dmsNameFindings, invoiceRcNameResult, oldCarPaperFindings } from './crossDocLogic.js';
+import { crossDocFieldFindings, gstCertFindings, dmsNameFindings, invoiceRcNameResult, oldCarPaperFindings } from './crossDocLogic.js';
 
 /**
  * Data Compare — the client sheet's "Data Compare" tab: a value that disagrees BETWEEN the
@@ -34,6 +34,7 @@ export const compareValidator: Validator = {
       // Sheet row 1, "1st Chk to apply" — first in the list too.
       ...dmsNameFindings(ctx.claim.customerName, pages),
       ...crossDocFieldFindings(pages, ctx.claim.claimId).filter((f) => !(rcDiff && isInvoiceRcName(f))),
+      ...gstCertFindings(pages),
       ...rcResult,
       ...oldCarPaperFindings(pages, ctx.claim.claimId),
     ];

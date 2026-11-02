@@ -161,6 +161,13 @@ console.log(JSON.stringify({ empty, after: await m.pdfPageTextStats(good) }));
 process.exit(0);
 `;
 
+const STATS_CHILD = `
+const [, file] = process.argv;
+const { pdfPageTextStats } = await import(process.env.TARGET_URL);
+console.log(JSON.stringify(await pdfPageTextStats(file)));
+process.exit(0);
+`;
+
 /** Runs `script` in a Node child under tsx with pdfExtractor at TARGET_URL; returns its last stdout line, parsed. */
 function runPdfChild(script: string, args: string[]): unknown {
   const src = path.join(__dirname, '..', '..');
@@ -185,7 +192,7 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
       fs.writeFileSync(file, jpxScanPdf());
       expect(runPdfChild(JPX_CHILD, [file])).toEqual({
         size: { width: 32, height: 32 },
-        stats: [{ image: true, visibleText: false }],
+        stats: [{ image: true, visibleText: false, hiddenText: false }],
         // Opaque black: a page whose image was dropped renders white.
         centre: [0, 0, 0, 255],
       });
@@ -220,8 +227,58 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
       fs.writeFileSync(good, jpxScanPdf());
       expect(runPdfChild(UNOPENABLE_CHILD, [bad, good])).toEqual({
         empty: [null, {}, [], null, []],
-        after: [{ image: true, visibleText: false }],
+        after: [{ image: true, visibleText: false, hiddenText: false }],
       });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** A PDF with one Helvetica text page per content stream. */
+function textPagesPdf(contents: string[]): Buffer {
+  const n = contents.length;
+  const objs = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    `<</Type/Pages/Kids[${contents.map((_, i) => `${4 + 2 * i} 0 R`).join(' ')}]/Count ${n}>>`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+  ];
+  contents.forEach((c, i) => {
+    objs.push(`<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<</Font<</F1 3 0 R>>>>/Contents ${5 + 2 * i} 0 R>>`);
+    objs.push(`<</Length ${c.length}>>\nstream\n${c}\nendstream`);
+  });
+  let out = '%PDF-1.4\n';
+  const offsets = objs.map((o, i) => {
+    const at = out.length;
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    return at;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  out += offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  out += `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+describe('pdfPageTextStats text visibility', () => {
+  // Value: protects=a page holding an invisible (mode 3) text op next to a visible one reports both, so the Aadhaar check-digit rule can tell a scanner's OCR layer from a visible one; fails_when=hiddenText is not set for render mode 3 or 7, or visibleText stops ignoring mode 3; why_new=no test ran pdfPageTextStats on text; seam=none; no_claim=images, white text
+  it('reports a hidden text op separately from a visible one', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'pdf-hidden-'));
+    try {
+      const file = path.join(dir, 'text.pdf');
+      fs.writeFileSync(
+        file,
+        textPagesPdf([
+          'BT /F1 12 Tf 3 Tr 20 100 Td (ocr layer) Tj 0 Tr 0 -20 Td (Scanned with app) Tj ET',
+          'BT /F1 12 Tf 20 100 Td (typed) Tj ET',
+          'BT /F1 12 Tf 7 Tr 20 100 Td (clip) Tj ET',
+        ])
+      );
+      expect(runPdfChild(STATS_CHILD, [file])).toEqual([
+        { image: false, visibleText: true, hiddenText: true },
+        { image: false, visibleText: true, hiddenText: false },
+        { image: false, visibleText: true, hiddenText: true }, // mode 7: visibleText is unchanged
+      ]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

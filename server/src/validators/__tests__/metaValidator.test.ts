@@ -134,6 +134,7 @@ console.log(JSON.stringify({
   deadline,
   unread: c.unreadPages?.get('d1'),
   findings: (out.findings ?? []).map((f) => ({ code: f.code, severity: f.severity })),
+  textLayerPages: [...(c.textLayerPages?.get('d1') ?? [])],
 }));
 `;
 
@@ -202,6 +203,7 @@ describe('metaValidator on a real PDF', () => {
       deadline?: number;
       unread?: number[] | 'all';
       findings: { code: string; severity?: string }[];
+      textLayerPages: number[];
     }>(
       META_CHILD,
       'validators/metaValidator.ts',
@@ -244,5 +246,14 @@ describe('metaValidator on a real PDF', () => {
     expect(r.unread).toEqual([2]);
     expect(r.findings).toContainEqual({ code: 'META_PAGES_UNREAD', severity: 'WARNING' });
     expect(r.text).toBe(WORDS.join(' '));
+  });
+
+  it('records the text-layer pages of a digital PDF and none of a scan', () => {
+    expect(runMeta('digital2.pdf', textPdf()).textLayerPages).toEqual([1]);
+    expect(runMeta('scan2.pdf', onePagePdf()).textLayerPages).toEqual([]);
+  });
+
+  it('leaves a page with no text layer out of textLayerPages', () => {
+    expect(runMeta('mixed.pdf', textThenBlankPdf()).textLayerPages).toEqual([1]);
   });
 });
