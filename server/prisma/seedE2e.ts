@@ -2,7 +2,8 @@ import { createPrisma } from '../src/lib/prisma.js';
 import bcrypt from 'bcrypt';
 
 /**
- * Seed (idempotently) a dedicated admin for the Playwright UI E2E suite.
+ * Seed (idempotently) a dedicated admin, and a default claim status, for the Playwright
+ * UI E2E suite.
  *
  * The normal `db:seed` admin is created with `forcePasswordChange: true`, which
  * makes ProtectedRoute bounce every login to /change-password — so it can never
@@ -46,6 +47,17 @@ async function main(): Promise<void> {
         forcePasswordChange: false,
       },
     });
+    // Creating a claim needs an active default status; a fresh CI database has none.
+    const hasDefault = await prisma.statusMaster.findFirst({
+      where: { isDefault: true, status: 'ACTIVE' },
+    });
+    if (!hasDefault) {
+      await prisma.statusMaster.upsert({
+        where: { name: 'New' },
+        update: { isDefault: true, status: 'ACTIVE' },
+        create: { name: 'New', displayOrder: 1, isDefault: true, createdBy: admin.id, updatedBy: admin.id },
+      });
+    }
     const dbName = DB_URL.split('/').pop();
     console.log(`[seedE2e] admin "${admin.username}" ready (forcePasswordChange=false) on ${dbName}`);
   } finally {

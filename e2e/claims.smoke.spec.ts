@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { imagePdf } from '../server/src/__tests__/helpers/imagePdf';
 
 /**
  * Browser-level smoke journeys. Deep behavior (RBAC, validation, import/export)
@@ -69,6 +70,49 @@ test('serves the pdf.js image decoders the document viewer loads', async ({ requ
     expect(res.status(), file).toBe(200);
     // Every wasm module starts with "\0asm".
     expect((await res.body()).subarray(0, 4).toString('latin1'), file).toBe('\0asm');
+  }
+});
+
+/**
+ * The viewer is the screen reviewers work in, and nothing else opens it: the API suite
+ * proves the server sends the bytes, not that the client paints them. A claim needs a
+ * project, category and sub-category, none of which a fresh CI database has. Cleanup
+ * removes the uploaded file; the hierarchy and the soft-deleted claim stay, as claims
+ * cannot be hard-deleted through the API and a sub-category with a claim cannot be deleted.
+ */
+// Value: protects=a claim PDF opened in the document viewer paints its pages; fails_when=the viewer loads the PDF but renders no page (react-pdf 11 reported the page count in the same commit the viewer's reset effect zeroed it, 2026-11-02); why_new=no test opened the viewer; seam=none; no_claim=highlight boxes, image documents, scanned-image decoding
+test('the document viewer renders the pages of a claim PDF', async ({ page }) => {
+  const api = page.request;
+  const stamp = Date.now();
+  const created = async (url: string, data: object) => {
+    const res = await api.post(url, { data });
+    expect(res.status(), `${url}: ${await res.text()}`).toBe(201);
+    return res.json();
+  };
+  const project = await created('/api/admin/projects', { name: `E2E viewer ${stamp}` });
+  const category = await created('/api/admin/categories', { name: `E2E viewer ${stamp}`, projectId: project.id });
+  const subCategory = await created('/api/admin/sub-categories', {
+    name: `E2E viewer ${stamp}`,
+    categoryId: category.id,
+  });
+  const claim = (await created('/api/claims', { subCategoryId: subCategory.id, claimId: `E2E-VIEWER-${stamp}` })).data;
+
+  const upload = await api.post(`/api/claims/${claim.id}/documents`, {
+    multipart: {
+      files: { name: 'viewer.pdf', mimeType: 'application/pdf', buffer: imagePdf({ cm: '100 0 0 100 50 50' }) },
+      // One cheap check, so the validation the upload starts stays small.
+      checks: 'SPELL',
+    },
+  });
+  expect(upload.status()).toBe(201);
+  const [doc] = (await upload.json()).data;
+  try {
+    await page.goto(`/claims/${claim.id}/documents/${doc.id}`);
+    await expect(page.locator('.react-pdf__Page canvas')).toBeVisible();
+    await expect(page.getByText('1 page', { exact: true })).toBeVisible();
+  } finally {
+    await api.delete(`/api/claims/${claim.id}/documents/${doc.id}`);
+    await api.delete(`/api/admin/claims/${claim.id}`);
   }
 });
 
