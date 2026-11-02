@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { WordBox } from '../validators/types.js';
-import { clamp01 } from './bbox.js';
+import { BBox, clamp01 } from './bbox.js';
 
 /**
  * Cap pages scanned per PDF so a giant document can't dominate a run.
@@ -381,11 +381,17 @@ export interface RasterPage {
   totalPages: number;
 }
 
-/** The scale to render a `width`x`height`pt page at: `scale`, or more if that would leave its
- *  long side under `minLongSide` px. */
-export function rasterScale(width: number, height: number, scale: number, minLongSide: number): number {
+/** The scale to render a `width`x`height`pt area at: `scale`, or more if that would leave its
+ *  long side under `minLongSide` px, but never so much that it passes `maxLongSide` px. */
+export function rasterScale(
+  width: number,
+  height: number,
+  scale: number,
+  minLongSide: number,
+  maxLongSide = Infinity
+): number {
   const long = Math.max(width, height);
-  return long ? Math.max(scale, minLongSide / long) : scale;
+  return long ? Math.min(maxLongSide / long, Math.max(scale, minLongSide / long)) : scale;
 }
 
 /** A directory inside the server's pdfjs-dist, for the asset URLs pdf.js needs in Node.
@@ -418,6 +424,12 @@ const pdfjsWasmUrl = () => pdfjsAssetDir('wasm/');
  *
  * `minLongSide` raises the scale for a page that would otherwise come out shorter than that
  * on its long side — a card saved as its own small page. See MIN_OCR_PAGE_LONG_SIDE in ocr.ts.
+ * `maxLongSidePx` lowers it for one that would come out longer.
+ *
+ * `clip` (normalized, top-left origin, the frame of PageImage.box) renders only that box of the
+ * page, and the two long-side bounds then apply to the box. A region read used to render the
+ * whole page and crop it with Jimp, whose PNG decode and encode are synchronous: up to 6.9 s of
+ * frozen server per region on a large page.
  *
  * Waits for any PDF this process already has open; see oneDocumentAtATime.
  */
@@ -427,7 +439,12 @@ async function rasterizePdfUnqueued(
   maxPages = MAX_PDF_PAGES,
   scale = 2,
   onlyPages?: number[],
-  { smooth = true, minLongSide = 0 }: { smooth?: boolean; minLongSide?: number } = {}
+  {
+    smooth = true,
+    minLongSide = 0,
+    maxLongSidePx = Infinity,
+    clip,
+  }: { smooth?: boolean; minLongSide?: number; maxLongSidePx?: number; clip?: BBox } = {}
 ): Promise<RasterPage[]> {
   try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -458,8 +475,16 @@ async function rasterizePdfUnqueued(
         if (onlyPages && !onlyPages.includes(p)) continue;
         const page = await doc.getPage(p);
         const { width, height } = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: rasterScale(width, height, scale, minLongSide) });
-        const canvas = createCanvas(viewport.width, viewport.height);
+        const s = rasterScale(width * (clip?.w ?? 1), height * (clip?.h ?? 1), scale, minLongSide, maxLongSidePx);
+        // The offsets move the clip's top-left corner to the canvas origin.
+        const viewport = page.getViewport({
+          scale: s,
+          offsetX: -(clip?.x ?? 0) * width * s,
+          offsetY: -(clip?.y ?? 0) * height * s,
+        });
+        const canvasW = clip ? Math.max(1, Math.round(clip.w * width * s)) : viewport.width;
+        const canvasH = clip ? Math.max(1, Math.round(clip.h * height * s)) : viewport.height;
+        const canvas = createCanvas(canvasW, canvasH);
         // @napi-rs/canvas's 2D context is API-compatible with what pdfjs renders into;
         // cast through unknown since the DOM lib isn't in this project's tsconfig.
         const canvasContext = canvas.getContext('2d') as unknown;
@@ -480,8 +505,8 @@ async function rasterizePdfUnqueued(
           // box, which is why the claims list crawled during validation. encode() does the
           // same work on the libuv threadpool.
           png: await canvas.encode('png'),
-          width: Math.round(viewport.width),
-          height: Math.round(viewport.height),
+          width: Math.round(canvasW),
+          height: Math.round(canvasH),
           totalPages: doc.numPages,
         });
       }
@@ -517,6 +542,47 @@ async function rasterizePdfUnqueued(
   }
 }
 
+export interface PageImage {
+  /** Native pixels of the page's widest image. */
+  width: number;
+  height: number;
+  /** Where that image is drawn: normalized [0..1], top-left origin, as the page renders (rotation
+   *  applied), clipped to the page. Absent when the page shows only a sliver of it. */
+  box?: BBox;
+  /** box.w in PDF points at scale 1 (the rendered width). */
+  drawnWidthPt?: number;
+}
+
+/** Under this share of the page on either side, a clipped picture box is a sliver, not a picture. */
+const MIN_BOX_SIDE = 0.02;
+
+/**
+ * The part of a normalized picture box the page shows. A picture can be drawn partly off the
+ * page (an editor-cropped scan: CropBox narrower than the MediaBox), and the unclipped box sent
+ * the crop read to a 60x1200 px sliver upscaled to 1600x32000. Undefined when what is left is
+ * a sliver.
+ */
+export function clipToPage(box: BBox): BBox | undefined {
+  const x = Math.max(0, box.x);
+  const y = Math.max(0, box.y);
+  // From w and h, not the far edges, so a box inside the page comes back bit for bit.
+  const w = Math.min(box.w + Math.min(0, box.x), 1 - x);
+  const h = Math.min(box.h + Math.min(0, box.y), 1 - y);
+  return w < MIN_BOX_SIDE || h < MIN_BOX_SIDE ? undefined : { x, y, w, h };
+}
+
+/** Applies `m` first, then `n` (PDF `cm` order: the new matrix is applied before the current CTM). */
+function concatCtm(m: number[], n: number[]): Matrix {
+  return [
+    m[0] * n[0] + m[1] * n[2],
+    m[0] * n[1] + m[1] * n[3],
+    m[2] * n[0] + m[3] * n[2],
+    m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4],
+    m[4] * n[1] + m[5] * n[3] + n[5],
+  ];
+}
+
 /**
  * The NATIVE pixel width of the largest image embedded on each of the given pages.
  *
@@ -547,8 +613,8 @@ export const largestImageWidthPerPage = oneDocumentAtATime(largestImageWidthPerP
 async function largestImageWidthPerPageUnqueued(
   absolutePath: string,
   pages: number[]
-): Promise<Map<number, { width: number; height: number }> | null> {
-  const out = new Map<number, { width: number; height: number }>();
+): Promise<Map<number, PageImage> | null> {
+  const out = new Map<number, PageImage>();
   try {
     const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(await fs.readFile(absolutePath));
@@ -559,10 +625,20 @@ async function largestImageWidthPerPageUnqueued(
         if (n < 1 || n > doc.numPages) continue;
         const page = await doc.getPage(n);
         const ops = await page.getOperatorList();
-        let best: { width: number; height: number } | undefined;
+        const viewport = page.getViewport({ scale: 1 });
+        let ctm: Matrix = [1, 0, 0, 1, 0, 0];
+        const stack: Matrix[] = [];
+        let best: PageImage | undefined;
         for (let i = 0; i < ops.fnArray.length; i++) {
           const fn = ops.fnArray[i];
           const args = ops.argsArray[i];
+          if (fn === OPS.save) stack.push(ctm);
+          else if (fn === OPS.restore) ctm = stack.pop() ?? ctm;
+          else if (fn === OPS.transform) ctm = concatCtm(args, ctm);
+          else if (fn === OPS.paintFormXObjectBegin) {
+            stack.push(ctm);
+            if (args?.[0]) ctm = concatCtm(args[0], ctm);
+          } else if (fn === OPS.paintFormXObjectEnd) ctm = stack.pop() ?? ctm;
           const [width, height] =
             fn === OPS.paintImageXObject
               ? [args?.[1], args?.[2]]
@@ -570,7 +646,21 @@ async function largestImageWidthPerPageUnqueued(
                 ? [args?.[0]?.width, args?.[0]?.height]
                 : [undefined, undefined];
           if (typeof width === 'number' && typeof height === 'number' && width > 0 && (!best || width > best.width)) {
-            best = { width, height };
+            // The image fills the unit square under the CTM; convertToViewportPoint applies
+            // /Rotate and the y flip. pdfjs 6 has no convertToViewportRectangle.
+            const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) =>
+              viewport.convertToViewportPoint(ctm[0] * u + ctm[2] * v + ctm[4], ctm[1] * u + ctm[3] * v + ctm[5])
+            );
+            const xs = pts.map((q) => q[0]);
+            const ys = pts.map((q) => q[1]);
+            const box = clipToPage({
+              x: Math.min(...xs) / viewport.width,
+              y: Math.min(...ys) / viewport.height,
+              w: (Math.max(...xs) - Math.min(...xs)) / viewport.width,
+              h: (Math.max(...ys) - Math.min(...ys)) / viewport.height,
+            });
+            // Still the widest picture without a box: SPELL and QR read only its size.
+            best = box ? { width, height, box, drawnWidthPt: box.w * viewport.width } : { width, height };
           }
         }
         if (best) out.set(n, best);

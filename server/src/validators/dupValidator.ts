@@ -7,6 +7,7 @@ import {
   IDENTIFIER_LABEL,
   IdentifierField,
 } from './dupIdentifiers.js';
+import { LAYER_COMPARE_FIELDS } from './secondReads.js';
 
 type DupField = CrossField | IdentifierField;
 const isIdentifier = (f: DupField): f is IdentifierField =>
@@ -108,13 +109,23 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
   for (const [documentId, text] of ctx.shared) {
     // Per-page where we have it, so a finding can point at a page the way red flags do.
     const pages = ctx.pageTexts.get(documentId);
-    const units: { text: string; page: number | null }[] =
-      pages && pages.length > 0
+    const units: { text: string; page: number | null; idsOnly?: boolean }[] = [
+      ...(pages && pages.length > 0
         ? pages.map((t, i) => ({ text: t, page: i + 1 }))
-        : [{ text, page: null }];
+        : [{ text, page: null }]),
+      // Second reads are noisier than the main read: only ID numbers, which are checksummed
+      // or pattern-bound, are trusted from them. Not POLICY_NO, UAN or PF_NO: free-form
+      // labelled numbers a misread turns into false pairs. Listed last so the main read's row wins.
+      ...(ctx.secondReads?.get(documentId) ?? []).map((r) => ({
+        text: r.text,
+        page: r.page,
+        idsOnly: true,
+      })),
+    ];
     for (const unit of units) {
       const ids = extractIdentifiers(unit.text);
       for (const { field } of DUP_FIELDS) {
+        if (unit.idsOnly && !(LAYER_COMPARE_FIELDS as string[]).includes(field)) continue;
         const values = isIdentifier(field)
           ? ids.filter((i) => i.field === field).map((i) => i.value)
           : extractField(field, unit.text);

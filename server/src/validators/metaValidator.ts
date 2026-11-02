@@ -1,7 +1,17 @@
 import { promises as fs } from 'fs';
-import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox } from './types.js';
+import { basename } from 'path';
+import { Validator, ValidatorContext, ValidatorDoc, FindingInput, WordBox, SecondRead } from './types.js';
+import { pickImageCheckPages, pickUpscaleRegions, pickCertRescalePages, certRescaleRegion } from './secondReads.js';
 import { metaOutcome } from './logic.js';
-import { extractPdf, readPdfInfo, MAX_PDF_PAGES, withActiveTimeout } from '../lib/pdfExtractor.js';
+import {
+  extractPdf,
+  readPdfInfo,
+  largestImageWidthPerPage,
+  MAX_PDF_PAGES,
+  withActiveTimeout,
+  queuedMs,
+  PageImage,
+} from '../lib/pdfExtractor.js';
 import { readFileMeta } from '../lib/fileMeta.js';
 
 /** Document properties (created/modified/author/…), NOT body text. PDFs read the Info
@@ -46,18 +56,82 @@ function pageTextsFromWords(words: WordBox[]): string[] {
   return out;
 }
 
-async function extract(
-  ctx: ValidatorContext,
-  doc: ValidatorDoc,
-  deadline: number
-): Promise<{
+type ExtractResult = {
   text: string;
   words: WordBox[];
   pageTexts: string[];
   totalPages?: number;
   unreadPages?: number[];
   textLayerPages?: number[];
-}> {
+  pageImages?: Map<number, PageImage>;
+  secondReads?: SecondRead[];
+};
+
+/** A second-read step starts only with this much of the OCR deadline left. Its rasterizing and
+ *  worker start-up run before OCR looks at the deadline (6 IMAGE pages measured 5-11 s on live),
+ *  and a read still in flight at the deadline keeps the shared workers busy into the next
+ *  document's budget. */
+const SECOND_READ_MIN_BUDGET_MS = 30_000;
+
+/** Extra OCR reads, run after the main read and inside the same deadline: the picture under a
+ *  text-layer ID or certificate page, then a cropped, upscaled read of a small picture on a
+ *  scanned page, and a scale-4 re-read of a scanned civil certificate with no registration
+ *  number. They stay out of the page text so no other validator's input changes. A read the
+ *  deadline cut is dropped silently: it is not an unread page. The picture scan costs time
+ *  before OCR looks at the deadline, so it runs only before the deadline, and each read step
+ *  only with SECOND_READ_MIN_BUDGET_MS left: running past it would trip META's overall timeout
+ *  and lose the main text. */
+async function secondReadsFor(
+  ctx: ValidatorContext,
+  path: string,
+  layer: { pageTexts: string[]; textlessPages: number[] } | null,
+  deadline: number,
+  mainPages: { page: number; text: string }[] = []
+): Promise<Pick<ExtractResult, 'pageImages' | 'secondReads'>> {
+  if (!layer) return {};
+  // Same clock as TesseractOcrPort.extractPdf: queue time behind other PDFs is not charged.
+  const left = () => deadline - (Date.now() - queuedMs());
+  if (left() <= 0) return {};
+  const reads: SecondRead[] = [];
+  let images = new Map<number, PageImage>();
+  try {
+    const pages = Array.from({ length: layer.pageTexts.length }, (_, i) => i + 1);
+    images = (await largestImageWidthPerPage(path, pages)) ?? images;
+    const checks = pickImageCheckPages(layer.pageTexts, layer.textlessPages, images);
+    if (checks.length > 0 && ctx.ocr.extractPdf && left() >= SECOND_READ_MIN_BUDGET_MS) {
+      const r = await ctx.ocr.extractPdf(path, checks, { deadline });
+      for (const p of r.pages ?? []) if (p.text) reads.push({ page: p.page, text: p.text, kind: 'IMAGE' });
+    }
+    // Crops of small pictures come first, then certificate re-reads: the deadline cuts the latest first.
+    const tagged = [
+      ...pickUpscaleRegions(layer.textlessPages, images).map((region) => ({ region, kind: 'UPSCALE' as const })),
+      ...pickCertRescalePages(mainPages, images).map((page) => ({
+        region: certRescaleRegion(page),
+        kind: 'RESCALE' as const,
+      })),
+    ];
+    if (tagged.length > 0 && ctx.ocr.extractPdfRegions && left() >= SECOND_READ_MIN_BUDGET_MS) {
+      const texts = await ctx.ocr.extractPdfRegions(path, tagged.map((t) => t.region), { deadline });
+      tagged.forEach((t, i) => {
+        const text = texts[i];
+        if (text) reads.push({ page: t.region.page, text, kind: t.kind });
+      });
+    }
+  } catch (err) {
+    // A failed extra read must never cost the document its main text.
+    console.error('[meta] second reads failed', basename(path), err);
+  }
+  return {
+    ...(images.size > 0 ? { pageImages: images } : {}),
+    ...(reads.length > 0 ? { secondReads: reads } : {}),
+  };
+}
+
+async function extract(
+  ctx: ValidatorContext,
+  doc: ValidatorDoc,
+  deadline: number
+): Promise<ExtractResult> {
   const mime = doc.mimeType ?? '';
   if (mime.startsWith('image/')) {
     // A single image is one "page".
@@ -81,7 +155,11 @@ async function extract(
       let unreadPages: number[] | undefined;
       if (withCoords.textlessPages.length > 0 && ctx.ocr.extractPdf) {
         const ocrd = await ctx.ocr.extractPdf(doc.readablePath, withCoords.textlessPages, { deadline });
-        unreadPages = ocrd.unreadPages;
+        // No list AND no text is the port's failure shape ({ text: '', words: [] }, e.g. a
+        // Tesseract malloc failure): none of the pages was read, and they must be reported, not
+        // judged. A read that returned text without a list did read them.
+        unreadPages =
+          ocrd.unreadPages ?? (ocrd.text?.trim() ? undefined : withCoords.textlessPages);
         if (ocrd.text) {
           // Merge the OCR'd pages back into their page slots so classification sees them.
           // Prefer the OCR's own per-page text: it keeps the line breaks that the ID-card
@@ -99,6 +177,7 @@ async function extract(
             totalPages: withCoords.totalPages,
             unreadPages,
             textLayerPages,
+            ...(await secondReadsFor(ctx, doc.readablePath, withCoords, deadline, ocrd.pages)),
           };
         }
       }
@@ -111,6 +190,7 @@ async function extract(
         totalPages: withCoords.totalPages,
         unreadPages,
         textLayerPages,
+        ...(await secondReadsFor(ctx, doc.readablePath, withCoords, deadline)),
       };
     }
     // No text layer → scanned PDF. Rasterize the pages and OCR them.
@@ -127,6 +207,7 @@ async function extract(
         pageTexts: r.pages ? pageTexts : pageTextsFromWords(r.words),
         totalPages: r.totalPages,
         unreadPages: r.unreadPages,
+        ...(await secondReadsFor(ctx, doc.readablePath, withCoords, deadline, r.pages)),
       };
     }
     return { text: '', words: [], pageTexts: [] };
@@ -255,6 +336,8 @@ export const metaValidator: Validator = {
           data: { unreadPages },
         });
       }
+      if (extractedDoc.pageImages) (ctx.pageImages ??= new Map()).set(doc.id, extractedDoc.pageImages);
+      if (extractedDoc.secondReads) (ctx.secondReads ??= new Map()).set(doc.id, extractedDoc.secondReads);
       if (text && text.replace(/\s/g, '').length >= 3) {
         ctx.shared.set(doc.id, text);
         if (words.length > 0) ctx.wordBoxes.set(doc.id, words);

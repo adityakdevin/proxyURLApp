@@ -2,7 +2,7 @@ import os from 'os';
 import path from 'path';
 import { Jimp } from 'jimp';
 import { createWorker, Worker } from 'tesseract.js';
-import { OcrPort, WordBox } from '../validators/types.js';
+import { OcrPort, PdfRegion, WordBox } from '../validators/types.js';
 import { rasterizePdf, MAX_PDF_PAGES, queuedMs } from './pdfExtractor.js';
 import { estimateSkewDegrees } from './deskew.js';
 import { clamp01 } from './bbox.js';
@@ -234,6 +234,13 @@ const MIN_OCR_IMAGE_WIDTH = 1600;
 export const MIN_OCR_PAGE_LONG_SIDE = 1400;
 /** The scale META renders a PDF page at for its first look (SPELL works out what that showed). */
 export const OCR_RENDER_SCALE = 2;
+
+/**
+ * The long side, in pixels, a region read renders at most. A4 at the certificate re-read's
+ * scale 4 is 3368 px, so it is unchanged; a "fit to image" 300 dpi page at scale 4 would be
+ * 9920x14032 (3.7 GB to render, and a 139 MP image for Tesseract's wasm heap).
+ */
+export const MAX_REGION_LONG_SIDE_PX = 3400;
 
 /** The image as OCR should see it: small photos enlarged, everything else untouched. */
 async function upscaleSmallImage(
@@ -624,6 +631,50 @@ export class TesseractOcrPort implements OcrPort {
       };
     } catch {
       return { text: '', words: [] };
+    }
+  }
+
+  async extractPdfRegions(
+    absolutePath: string,
+    regions: PdfRegion[],
+    opts?: { deadline?: number }
+  ): Promise<(string | null)[]> {
+    if (regions.length === 0) return [];
+    try {
+      const startedAt = Date.now();
+      const lanes = Math.min(ocrWorkers(), regions.length);
+      const pool = await this.getPool(lanes);
+      const results = await scheduleOcr<PdfRegion, string>({
+        items: regions,
+        lanes,
+        deadline: opts?.deadline ?? Infinity,
+        now: () => Date.now() - queuedMs(),
+        retryBudget: 0,
+        wantsRetry: () => false,
+        retry: async (_, r) => r,
+        first: async (region, lane) => {
+          try {
+            // Only the box is rendered, already at the size OCR wants (region.scale), and encoded
+            // off the main thread: validation shares the process with the HTTP server.
+            const [pg] = await rasterizePdf(absolutePath, MAX_PDF_PAGES, region.scale, [region.page], {
+              clip: region.box,
+              maxLongSidePx: MAX_REGION_LONG_SIDE_PX,
+            });
+            if (!pg) return '';
+            const { data } = await recognize(pool[lane], pg.png);
+            return (data.text ?? '').trim();
+          } catch {
+            return '';
+          }
+        },
+      });
+      console.log(
+        `[ocr] regions ${path.basename(absolutePath).replace(/[\p{C}]/gu, '?')} ${regions.length} ` +
+          `in ${Date.now() - startedAt}ms, unread ${results.filter((r) => r === null).length}`
+      );
+      return results;
+    } catch {
+      return regions.map(() => null);
     }
   }
 

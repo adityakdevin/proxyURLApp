@@ -416,3 +416,88 @@ describe('Aadhaar check digit in a run', () => {
     expect(out.findings).toContainEqual(expect.objectContaining({ code: 'REDFLAG_AADHAAR_CHECKSUM_UNSURE' }));
   });
 });
+
+describe('redFlagValidator picture reads', () => {
+  const H = 'INCOME TAX DEPARTMENT\nGOVT. OF INDIA\nPermanent Account Number Card\n';
+  const AF = 'Government of India\nDOB: 01/01/1990\nMALE';
+  const img = { width: 900, height: 600, box: { x: 0.1, y: 0.2, w: 0.8, h: 0.5 }, drawnWidthPt: 160 };
+  const small = { width: 244, height: 544, box: { x: 0.3, y: 0.2, w: 0.3, h: 0.5 }, drawnWidthPt: 183 };
+  const mismatch = (kind: 'IMAGE' | 'UPSCALE') =>
+    ctx({
+      pageTexts: new Map([['d1', [H + 'PQRPT5678K']]]),
+      secondReads: new Map([['d1', [{ page: 1, text: H + 'ABCPE1234F', kind }]]]),
+      pageImages: new Map([['d1', new Map([[1, img]])]]),
+    });
+
+  it('red-flags a PAN that reads differently in the picture than in the text layer', async () => {
+    const out = await redFlagValidator.run(mismatch('IMAGE'));
+    expect(out.status).toBe('FAILED');
+    const fs = out.findings!.filter((f) => f.code === 'REDFLAG_LAYER_IMAGE_MISMATCH');
+    expect(fs).toHaveLength(1);
+    expect(fs[0]).toMatchObject({
+      severity: 'ERROR',
+      page: 1,
+      bbox: img.box,
+      message:
+        'PAN on page 1 of bundle.pdf reads "ABCPE1234F" in the picture but "PQRPT5678K" in the text layer. One of the two was edited; check the page visually.',
+    });
+  });
+
+  it('compares only picture reads of a text-layer page', async () => {
+    const out = await redFlagValidator.run(mismatch('UPSCALE'));
+    expect(out.findings!.some((f) => f.code === 'REDFLAG_LAYER_IMAGE_MISMATCH')).toBe(false);
+  });
+
+  it('red-flags a small picture from which no ID number was read', async () => {
+    const out = await redFlagValidator.run(
+      ctx({ pageTexts: new Map([['d1', [AF]]]), pageImages: new Map([['d1', new Map([[1, small]])]]) })
+    );
+    const f = out.findings!.find((x) => x.code === 'REDFLAG_SMALL_IMAGE_UNREAD');
+    expect(f).toMatchObject({
+      severity: 'ERROR',
+      page: 1,
+      bbox: small.box,
+      data: { width: 244, height: 544 },
+      message:
+        'Page 1 of bundle.pdf is a small picture (244x544 pixels) and no ID number could be read from it. Check it visually or ask for a clearer copy.',
+    });
+  });
+
+  it('does not flag a small picture of a staff ID card', async () => {
+    const staffId = 'ABC MOTORS PVT LTD\nEMPLOYEE ID CARD\nName: RAVI KUMAR\nEmp Code: E1234\nDesignation: Sales Executive';
+    const out = await redFlagValidator.run(
+      ctx({ pageTexts: new Map([['d1', [staffId]]]), pageImages: new Map([['d1', new Map([[1, small]])]]) })
+    );
+    expect(out.findings ?? []).not.toContainEqual(expect.objectContaining({ code: 'REDFLAG_SMALL_IMAGE_UNREAD' }));
+  });
+
+  // Value: protects=each page is judged on its own page text and its own second reads; fails_when=the page index or the second-read page filter is off by one or dropped; why_new=every picture-read test was single-page; seam=none; no_claim=pages past the caps
+  it('judges each page of a document on its own reads', async () => {
+    const flagged = async (over: Partial<ValidatorContext>) =>
+      ((await redFlagValidator.run(
+        ctx({ pageImages: new Map([['d1', new Map([[1, small], [2, small]])]]), ...over })
+      )).findings ?? [])
+        .filter((f) => f.code === 'REDFLAG_SMALL_IMAGE_UNREAD')
+        .map((f) => f.page);
+    // Page 2's number sits only in its own page text.
+    expect(await flagged({ pageTexts: new Map([['d1', [AF, AF + '\n2345 6789 0123']]]) })).toEqual([1]);
+    // A second read of page 1 does not silence page 2.
+    expect(
+      await flagged({
+        pageTexts: new Map([['d1', [AF, AF]]]),
+        secondReads: new Map([['d1', [{ page: 1, text: AF + '\n2345 6789 0123', kind: 'UPSCALE' as const }]]]),
+      })
+    ).toEqual([2]);
+  });
+
+  it('takes the second reads into account', async () => {
+    const out = await redFlagValidator.run(
+      ctx({
+        pageTexts: new Map([['d1', [AF]]]),
+        pageImages: new Map([['d1', new Map([[1, small]])]]),
+        secondReads: new Map([['d1', [{ page: 1, text: AF + '\n2345 6789 0123', kind: 'UPSCALE' }]]]),
+      })
+    );
+    expect(out.findings!.some((f) => f.code === 'REDFLAG_SMALL_IMAGE_UNREAD')).toBe(false);
+  });
+});

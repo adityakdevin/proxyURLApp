@@ -57,6 +57,75 @@ describe('dupValidator findings', () => {
     // Around the number only — not the "Account No:" label beside it.
     expect(f.bbox).toEqual({ x: 0.3, y: 0.5, w: expect.closeTo(0.25, 5), h: expect.closeTo(0.02, 5) });
   });
+
+  const H = 'INCOME TAX DEPARTMENT\nGOVT. OF INDIA\nPermanent Account Number Card\n';
+  const runWithSecond = (
+    layer: string,
+    second: { page: number; text: string; kind: 'IMAGE' | 'UPSCALE' | 'RESCALE' }[],
+    match: string,
+  ) =>
+    dupValidator.run({
+      claim: { id: 'c1', claimId: 'THIS-CLAIM', subCategoryId: 's1' },
+      documents: [],
+      prisma: {
+        claimFieldValue: {
+          deleteMany: async () => ({}),
+          createMany: async () => ({}),
+          findMany: async ({ where }: { where: { norm: { in: string[] } } }) =>
+            where.norm.in.includes(match) ? [{ norm: match, claim: { claimId: 'OTHER-CLAIM' } }] : [],
+        },
+      } as never,
+      ocr: {} as never,
+      shared: new Map([['d1', layer]]),
+      pageTexts: new Map([['d1', [layer]]]),
+      wordBoxes: new Map(),
+      secondReads: new Map([['d1', second]]),
+    });
+
+  it('matches an ID number read only from the picture under a text layer', async () => {
+    const outcome = await runWithSecond(
+      H + 'Signature',
+      [{ page: 1, text: H + 'ABCPE1234F', kind: 'IMAGE' }],
+      'ABCPE1234F',
+    );
+    expect(outcome.status).toBe('FAILED');
+    const f = outcome.findings!.find((x) => x.code === 'DUP_PAN')!;
+    expect(f.page).toBe(1);
+    expect(f.severity).toBe('ERROR');
+  });
+
+  it('matches a registration number from a certificate re-read', async () => {
+    const c0 = 'Birth Certificate\nRegistration of Births and Deaths Act, 1969\nDate of Registration: 01/01/2020';
+    const outcome = await runWithSecond(
+      c0,
+      [{ page: 1, text: 'Birth Certificate\nRegistration No: 4321/2023', kind: 'RESCALE' }],
+      normValue('CERT_REG_NO', '4321/2023'),
+    );
+    expect(outcome.status).toBe('FAILED');
+    const f = outcome.findings!.find((x) => x.code === 'DUP_CERT_REG_NO')!;
+    expect(f.page).toBe(1);
+    expect(f.severity).toBe('ERROR');
+  });
+
+  it('takes only ID numbers from a second read', async () => {
+    const outcome = await runWithSecond(
+      'Statement',
+      [{ page: 1, text: 'Account No: 5012 3456 7890', kind: 'UPSCALE' }],
+      '501234567890',
+    );
+    expect(outcome.findings?.some((x) => x.code === 'DUP_ACCOUNT_NO')).toBeFalsy();
+  });
+
+  // A policy number is a free-form labelled number, not a checksummed ID: a misread insurer
+  // prefix in a picture read would match unrelated claims.
+  it('takes no policy number from a second read', async () => {
+    const outcome = await runWithSecond(
+      'Statement',
+      [{ page: 1, text: 'Policy No: 3001/12345678/00/000', kind: 'IMAGE' }],
+      normValue('POLICY_NO', '3001/12345678/00/000'),
+    );
+    expect(outcome.findings?.some((x) => x.code === 'DUP_POLICY_NO')).toBeFalsy();
+  });
 });
 
 describe('dupValidator — Duplicacy sheet numbers', () => {

@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { BBox } from '../lib/bbox.js';
+import type { PageImage } from '../lib/pdfExtractor.js';
 
 export type ValidatorKey = 'META' | 'SPELL' | 'QR' | 'INTRA' | 'FULL' | 'REDFLAG' | 'DUP' | 'COMPARE';
 export type ClaimColumn =
@@ -19,6 +20,14 @@ export interface WordBox {
   bbox: BBox;
   conf?: number;
 }
+
+/** One box of one PDF page to OCR, with the scale to render that page at. */
+export interface PdfRegion { page: number; box: BBox; scale: number }
+
+/** An extra OCR read of one page. IMAGE: the picture of a page that has a text layer.
+ *  UPSCALE: a small picture on a scanned page, cropped and upscaled.
+ *  RESCALE: a scanned civil certificate with no registration number parsed, read again at scale 4. */
+export interface SecondRead { page: number; text: string; kind: 'IMAGE' | 'UPSCALE' | 'RESCALE' }
 
 export interface OcrPort {
   /** Extract text from an image file. Returns '' on failure. */
@@ -46,11 +55,16 @@ export interface OcrPort {
     pages?: { page: number; text: string }[];
     /** Pages in the source PDF, so the caller can report a scan the page cap truncated. */
     totalPages?: number;
-    /** 1-based pages whose first look did not finish before the deadline. */
+    /** 1-based pages whose first look did not finish before the deadline. Absent only when the
+     *  read failed as a whole: META then counts every page it asked for as unread. */
     unreadPages?: number[];
   }>;
   /** Release any underlying resources (e.g. a reused OCR worker). Optional. */
   close?(): Promise<void>;
+  /** OCR one box of each listed page, rendering only that box at the region's scale (its long
+   *  side capped). Results by region index; null = not started before the deadline.
+   *  A region that fails reads ''. */
+  extractPdfRegions?(absolutePath: string, regions: PdfRegion[], opts?: { deadline?: number }): Promise<(string | null)[]>;
 }
 
 export interface ValidatorDoc {
@@ -90,6 +104,10 @@ export interface ValidatorContext {
   /** documentId -> 1-based pages whose text is wholly the PDF's own text layer (META did not
    *  OCR them). A number read there is exact, not an OCR guess, when the layer is visible. */
   textLayerPages?: Map<string, Set<number>>;
+  /** documentId -> page -> its widest picture (META fills, PDFs only; REDFLAG reads). */
+  pageImages?: Map<string, Map<number, PageImage>>;
+  /** documentId -> extra OCR reads, kept out of shared/pageTexts (META fills; DUP, REDFLAG read). */
+  secondReads?: Map<string, SecondRead[]>;
 }
 
 /**

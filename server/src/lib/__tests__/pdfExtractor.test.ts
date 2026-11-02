@@ -3,7 +3,16 @@ import fs from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { mulTransform, oneDocumentAtATime, pdfjsAssetDir, queuedMs, runToWords, withActiveTimeout } from '../pdfExtractor.js';
+import { imagePdf } from '../../__tests__/helpers/imagePdf.js';
+import {
+  clipToPage,
+  mulTransform,
+  oneDocumentAtATime,
+  pdfjsAssetDir,
+  queuedMs,
+  runToWords,
+  withActiveTimeout,
+} from '../pdfExtractor.js';
 
 describe('pdfExtractor coordinate math', () => {
   it('mulTransform matches affine matrix composition', () => {
@@ -42,6 +51,30 @@ describe('pdfExtractor coordinate math', () => {
   it('returns nothing for blank or zero-size input', () => {
     expect(runToWords('   ', [1, 0, 0, 1, 0, 0], 10, 10, [1, 0, 0, 1, 0, 0], 100, 100, 1)).toHaveLength(0);
     expect(runToWords('x', [1, 0, 0, 1, 0, 0], 10, 10, [1, 0, 0, 1, 0, 0], 0, 0, 1)).toHaveLength(0);
+  });
+});
+
+describe('clipToPage', () => {
+  // An editor-cropped scan (CropBox narrower than the MediaBox) draws its picture mostly off the page.
+  it('keeps only the part of a picture box the page shows', () => {
+    const b = clipToPage({ x: 0.975, y: 0.2, w: 0.55, h: 0.24 })!;
+    expect(b.x).toBeCloseTo(0.975, 9);
+    expect(b.y).toBeCloseTo(0.2, 9);
+    expect(b.w).toBeCloseTo(0.025, 9);
+    expect(b.h).toBeCloseTo(0.24, 9);
+    const c = clipToPage({ x: -0.1, y: 0.5, w: 0.5, h: 0.7 })!;
+    expect(c.x).toBe(0);
+    expect(c.y).toBeCloseTo(0.5, 9);
+    expect(c.w).toBeCloseTo(0.4, 9);
+    expect(c.h).toBeCloseTo(0.5, 9);
+  });
+  it('leaves a box inside the page as it is', () => {
+    expect(clipToPage({ x: 0.1, y: 0.2, w: 0.8, h: 0.5 })).toEqual({ x: 0.1, y: 0.2, w: 0.8, h: 0.5 });
+  });
+  it('drops a box that leaves a sliver under 2% of the page', () => {
+    expect(clipToPage({ x: 0.995, y: 0.2, w: 0.55, h: 0.24 })).toBeUndefined();
+    expect(clipToPage({ x: 0.1, y: 0.99, w: 0.5, h: 0.3 })).toBeUndefined();
+    expect(clipToPage({ x: 1.2, y: 0.2, w: 0.5, h: 0.3 })).toBeUndefined();
   });
 });
 
@@ -122,6 +155,38 @@ if (page) {
 console.log(JSON.stringify({ size: sizes?.get(1) ?? null, stats, centre }));
 `;
 
+const BOX_CHILD = `
+const files = process.argv.slice(1);
+const { largestImageWidthPerPage } = await import(process.env.TARGET_URL);
+const out = [];
+for (const f of files) out.push((await largestImageWidthPerPage(f, [1]))?.get(1) ?? null);
+console.log(JSON.stringify(out));
+process.exit(0);
+`;
+
+// A black picture fills the top-left quarter of a 200x200 pt page. Red channel per sampled pixel:
+// 0 is the picture, 255 the white page.
+const CLIP_CHILD = `
+const [, file] = process.argv;
+const { rasterizePdf } = await import(process.env.TARGET_URL);
+const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+const look = async (pg, points) => {
+  const img = await loadImage(pg.png);
+  const ctx = createCanvas(img.width, img.height).getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  return { size: [pg.width, pg.height, img.width, img.height], red: points.map(([x, y]) => ctx.getImageData(x, y, 1, 1).data[0]) };
+};
+const [clip] = await rasterizePdf(file, 1, 2, [1], { clip: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 } });
+const [capped] = await rasterizePdf(file, 1, 2, [1], { maxLongSidePx: 100 });
+const [cappedClip] = await rasterizePdf(file, 1, 4, [1], { clip: { x: 0.5, y: 0, w: 0.5, h: 0.25 }, maxLongSidePx: 100 });
+console.log(JSON.stringify({
+  clip: await look(clip, [[50, 50], [150, 50], [50, 150], [150, 150]]),
+  capped: await look(capped, [[25, 25], [75, 25], [75, 75]]),
+  cappedClip: await look(cappedClip, [[10, 25], [90, 25]]),
+}));
+process.exit(0);
+`;
+
 // Two claims validate at once, so another claim can open and close a PDF while this one is
 // still rendering. The first wait loads pdf.js, so the 100 ms wait lands inside page 1's render.
 const OVERLAP_CHILD = `
@@ -191,10 +256,44 @@ describe('pdfExtractor on a JPEG 2000 scan', () => {
       const file = path.join(dir, 'scan.pdf');
       fs.writeFileSync(file, jpxScanPdf());
       expect(runPdfChild(JPX_CHILD, [file])).toEqual({
-        size: { width: 32, height: 32 },
+        size: { width: 32, height: 32, box: { x: 0, y: 0, w: 1, h: 1 }, drawnWidthPt: 100 },
         stats: [{ image: true, visibleText: false, hiddenText: false }],
         // Opaque black: a page whose image was dropped renders white.
         centre: [0, 0, 0, 255],
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=the OCR of a picture is aimed at where the page draws it; fails_when=the box ignores cm, a form XObject matrix or /Rotate; why_new=nothing measured the drawn position; seam=none; no_claim=images with a non-axis-aligned transform
+  it('says where the widest picture is drawn, as the page renders', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'box-pdf-'));
+    try {
+      const specs = [
+        imagePdf({ cm: '160 0 0 100 20 60' }),
+        imagePdf({ cm: '60 0 0 80 20 100', rotate: 90 }),
+        imagePdf({ cm: '160 0 0 100 20 60', form: { cm: '1 0 0 1 30 40', matrix: '0.5 0 0 0.5 0 0' } }),
+      ];
+      const files = specs.map((b, i) => {
+        const f = path.join(dir, `p${i}.pdf`);
+        fs.writeFileSync(f, b);
+        return f;
+      });
+      const got = runPdfChild(BOX_CHILD, files) as { width: number; height: number; box: Record<string, number>; drawnWidthPt: number }[];
+      const want = [
+        { x: 0.1, y: 0.2, w: 0.8, h: 0.5, pt: 160 },
+        { x: 0.5, y: 0.1, w: 0.4, h: 0.3, pt: 80 },
+        { x: 0.2, y: 0.4, w: 0.4, h: 0.25, pt: 80 },
+      ];
+      want.forEach((w, i) => {
+        expect(got[i].width).toBe(4);
+        expect(got[i].height).toBe(4);
+        expect(got[i].box.x).toBeCloseTo(w.x, 6);
+        expect(got[i].box.y).toBeCloseTo(w.y, 6);
+        expect(got[i].box.w).toBeCloseTo(w.w, 6);
+        expect(got[i].box.h).toBeCloseTo(w.h, 6);
+        expect(got[i].drawnWidthPt).toBeCloseTo(w.pt, 6);
       });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -279,6 +378,27 @@ describe('pdfPageTextStats text visibility', () => {
         { image: false, visibleText: true, hiddenText: false },
         { image: false, visibleText: true, hiddenText: true }, // mode 7: visibleText is unchanged
       ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('rasterizePdf regions', () => {
+  // Value: protects=a region read renders only its box, at a bounded size, with the async encode; fails_when=the clip offset, canvas size or cap is wrong, so OCR reads the wrong area or a page-sized image; why_new=region reads rendered the whole page and cropped it on the main thread; seam=none; no_claim=OCR of the region
+  it('renders only the clipped area, and caps its long side', () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'clip-pdf-'));
+    try {
+      const file = path.join(dir, 'quarter.pdf');
+      fs.writeFileSync(file, imagePdf({ cm: '100 0 0 100 0 100' }));
+      expect(runPdfChild(CLIP_CHILD, [file])).toEqual({
+        // The middle of the page at scale 2: the picture shows only in its top-left quarter.
+        clip: { size: [200, 200, 200, 200], red: [0, 255, 255, 255] },
+        // The whole page at scale 2 would be 400 px; the cap brings it down to 100.
+        capped: { size: [100, 100, 100, 100], red: [0, 255, 255] },
+        // A 100x50 pt top-right band at scale 4 would be 400x200 px; capped to 100x50.
+        cappedClip: { size: [100, 50, 100, 50], red: [255, 255] },
+      });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
