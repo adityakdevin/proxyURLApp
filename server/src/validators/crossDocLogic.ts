@@ -53,7 +53,8 @@ export interface CrossPage {
 // STRICT margin over the runner-up, else the page is UNKNOWN (spec: unclassifiable).
 const TYPE_MARKERS: Record<DocTypeCode, RegExp[]> = {
   INVOICE: [/\btax\s*invoice\b/i, /\binvoice\s*(?:no|number|date)\b/i, /\bproforma\b/i, /\bex[-\s]?showroom\b/i, /\binvoice\s+value\b/i],
-  RC: [/\bcertificate\s+of\s+registration\b/i, /\bregistration\s+certificate\b/i, /\bregn?\.?\s*(?:no|number)\b/i, /\bregistering\s+authority\b/i],
+  // Owner fields catch an OCR-mangled RC title (client sheet 2026-10-31 row 24).
+  RC: [/\bcertificate\s+of\s+registration\b/i, /\bregistration\s+certificate\b/i, /\bregn?\.?\s*(?:no|number)\b/i, /\bregistering\s+authority\b/i, /\bregistered\s+ow/i, /\bownership\s+type\b/i],
   INSURANCE: [/\bpolicy\s*(?:no|number)\b/i, /\binsured\b/i, /\bpremium\b/i, /\bsum\s+insured\b/i, /\bperiod\s+of\s+insurance\b/i, /(^|[^a-z])idv([^a-z]|$)/i],
   KYC: [/\bknow\s+your\s+customer\b/i, /(^|[^a-z])kyc([^a-z]|$)/i, /\bself[-\s]?attested\b/i],
   PAYSLIP: [/\bpay\s*slip\b/i, /\bsalary\s*slip\b/i, /\bnet\s+pay\b/i, /\bgross\s+(?:salary|pay)\b/i, /\bbasic\s+pay\b/i, /\bearnings\b/i],
@@ -973,4 +974,106 @@ export function invoiceRcNameResult(pages: CrossPage[]): FindingInput[] {
       data: { invoice: inv.value, rc: rc.value },
     },
   ];
+}
+
+const VIN_TOKEN = /\b[A-Z0-9]{16,18}\b/g;
+
+function looksLikeVin(t: string): boolean {
+  if (!/^[A-Z]/.test(t)) return false;
+  const digits = (t.match(/\d/g) ?? []).length;
+  const letters = (t.match(/[A-Z]/g) ?? []).length;
+  // PLC/PTC/LLP mark a company CIN, not a chassis.
+  return digits >= 5 && digits <= 12 && letters >= 4 && !/PLC|PTC|LLP/.test(t);
+}
+
+/** Chassis-number candidates on a vehicle paper: the value after a "Chassis" label (10-20
+ *  chars with a digit), plus 16-18 char VIN-shaped tokens on the line that says "chassis"
+ *  or the two lines below it (a policy table puts the value under its header). */
+export function chassisCandidates(text: string): string[] {
+  const out: string[] = [];
+  const add = (v: string) => {
+    if (!out.includes(v)) out.push(v);
+  };
+  // pdf.js joins a digital page's text with spaces, not newlines, so there the "chassis line
+  // plus two below" window is effectively the whole page; only OCR text keeps its lines.
+  const lines = text.toUpperCase().split(/\r?\n/);
+  lines.forEach((line, i) => {
+    if (!/CHASSIS/.test(line)) return;
+    const label = /CHASSIS\s*(?:NO\.?|NUMBER)?\s*[:.\-]?\s*([A-Z0-9]{10,20})\b/.exec(line);
+    if (label && /\d/.test(label[1])) add(label[1]);
+    for (const l of lines.slice(i, i + 3)) {
+      for (const t of l.match(VIN_TOKEN) ?? []) if (looksLikeVin(t)) add(t);
+    }
+  });
+  return out;
+}
+
+/** Bounded Levenshtein: true when the edit distance is at most `max`. Strings are short. */
+function withinEdits(a: string, b: string, max: number): boolean {
+  if (Math.abs(a.length - b.length) > max) return false;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length] <= max;
+}
+
+/** One vehicle despite OCR: idNorm plus T->7, then the same last six, or at most 2 edits. */
+export function sameVehicle(a: string, b: string): boolean {
+  const n = (s: string) => idNorm(s).replace(/T/g, '7');
+  const x = n(a);
+  const y = n(b);
+  if (x.length >= 6 && y.length >= 6 && x.slice(-6) === y.slice(-6)) return true;
+  return withinEdits(x, y, 2);
+}
+
+// XXXX marks a masked chassis (some RC copies print only the last digits), never a real VIN.
+const isFullChassis = (c: string) => c.length >= 16 && c.length <= 18 && looksLikeVin(c) && !/X{4}/.test(c);
+
+/** Full chassis compare with sameVehicle; a partial (split, masked or mis-captured) one only
+ *  matches when it equals, prefixes or suffixes the other, so it can suppress but never raise. */
+function chassisMatch(a: string, b: string): boolean {
+  if (isFullChassis(a) && isFullChassis(b)) return sameVehicle(a, b);
+  const n = (s: string) => idNorm(s).replace(/T/g, '7');
+  const [x, y] = [n(a), n(b)].sort((p, q) => p.length - q.length);
+  return x.length > 0 && (y.startsWith(x) || y.endsWith(x));
+}
+
+/** Rule #3: an insurance page for neither the claim's vehicle nor any permanent old-car RC
+ *  in the bundle. One ERROR per such page; nothing when there is no old-car RC. Only full
+ *  (VIN-shaped) chassis numbers can raise it; partial ones can only suppress it. */
+export function oldCarPaperFindings(pages: CrossPage[], claimVin: string): FindingInput[] {
+  const claim = claimVin.toUpperCase();
+  if (!isFullChassis(claim)) return [];
+  const isClaimCar = (c: string) => chassisMatch(c, claim);
+  // A temporary registration is a new vehicle, never the old car.
+  const rcs = pages
+    .filter((p) => classifyDocType(p.text) === 'RC' && !/temporary\s+(?:certificate\s+of\s+)?registration/i.test(p.text))
+    .map((p) => ({ p, ids: chassisCandidates(p.text) }))
+    .filter((r) => r.ids.length > 0 && !r.ids.some(isClaimCar));
+  const rcFull = rcs.find((r) => r.ids.some(isFullChassis));
+  if (!rcFull) return [];
+  const rcIds = rcs.flatMap((r) => r.ids);
+  const out: FindingInput[] = [];
+  for (const p of pages) {
+    if (classifyDocType(p.text) !== 'INSURANCE') continue;
+    const ids = chassisCandidates(p.text);
+    const actual = ids.find(isFullChassis);
+    if (!actual || ids.some(isClaimCar) || ids.some((c) => rcIds.some((r) => chassisMatch(c, r)))) continue;
+    const expected = rcFull.ids.find(isFullChassis)!;
+    const rcPage = rcFull.p.page;
+    out.push({
+      documentId: p.documentId,
+      code: 'CROSS_OLD_CAR_CHASSIS_MISMATCH',
+      severity: 'ERROR',
+      message: `Insurance on page ${p.page} is for chassis "${actual}", which is neither this claim's vehicle nor the old car on the RC (page ${rcPage}, chassis "${expected}").`,
+      page: p.page,
+      data: { field: 'CHASSIS', actual, expected, actualType: 'INSURANCE', expectedType: 'RC', rcPage },
+    });
+  }
+  return out;
 }

@@ -15,7 +15,7 @@ const ALLOWED: Record<string, number> = {
   'spellValidator.ts': 1, // SPELL_DOUBTFUL
   'dupValidator.ts': 1, // soft DUP_* fields
   'intraValidator.ts': 1, // INTRA_CLAIMID_MISREAD
-  'metaValidator.ts': 3, // OCR-stage notes; META is hidden
+  'metaValidator.ts': 4, // OCR-stage notes; META is hidden (FULL raises the red flag for unread pages)
   'crossDocLogic.ts': 1, // CROSS_ADDRESS_MISMATCH
 };
 

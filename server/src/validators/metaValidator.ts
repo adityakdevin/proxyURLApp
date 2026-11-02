@@ -48,8 +48,9 @@ function pageTextsFromWords(words: WordBox[]): string[] {
 
 async function extract(
   ctx: ValidatorContext,
-  doc: ValidatorDoc
-): Promise<{ text: string; words: WordBox[]; pageTexts: string[]; totalPages?: number }> {
+  doc: ValidatorDoc,
+  deadline: number
+): Promise<{ text: string; words: WordBox[]; pageTexts: string[]; totalPages?: number; unreadPages?: number[] }> {
   const mime = doc.mimeType ?? '';
   if (mime.startsWith('image/')) {
     // A single image is one "page".
@@ -68,8 +69,10 @@ async function extract(
       // Mixed PDF: digital pages have a text layer, but scanned pages (bundled
       // ID cards, stamps) don't — OCR just those pages and merge, otherwise
       // they're invisible to every text-based check.
+      let unreadPages: number[] | undefined;
       if (withCoords.textlessPages.length > 0 && ctx.ocr.extractPdf) {
-        const ocrd = await ctx.ocr.extractPdf(doc.readablePath, withCoords.textlessPages);
+        const ocrd = await ctx.ocr.extractPdf(doc.readablePath, withCoords.textlessPages, { deadline });
+        unreadPages = ocrd.unreadPages;
         if (ocrd.text) {
           // Merge the OCR'd pages back into their page slots so classification sees them.
           // Prefer the OCR's own per-page text: it keeps the line breaks that the ID-card
@@ -85,19 +88,25 @@ async function extract(
             words: [...withCoords.words, ...ocrd.words],
             pageTexts,
             totalPages: withCoords.totalPages,
+            unreadPages,
           };
         }
       }
+      // Also reached when OCR finished no page before its deadline (e.g. raster ran past it):
+      // the scanned pages are still unread and FULL must say so.
       return {
         text: withCoords.text,
         words: withCoords.words,
         pageTexts,
         totalPages: withCoords.totalPages,
+        unreadPages,
       };
     }
     // No text layer → scanned PDF. Rasterize the pages and OCR them.
     if (ctx.ocr.extractPdf) {
-      const r = await ctx.ocr.extractPdf(doc.readablePath);
+      // Pass the textless pages when pdfjs could open the file, so the blind page cap in
+      // the OCR only applies to a PDF pdfjs could not read at all.
+      const r = await ctx.ocr.extractPdf(doc.readablePath, withCoords?.textlessPages, { deadline });
       // Same reason as the mixed-PDF merge above: keep the OCR's line breaks when it
       // reports per-page text, and only rebuild from word boxes when it doesn't.
       const pageTexts: string[] = [];
@@ -106,6 +115,7 @@ async function extract(
         ...r,
         pageTexts: r.pages ? pageTexts : pageTextsFromWords(r.words),
         totalPages: r.totalPages,
+        unreadPages: r.unreadPages,
       };
     }
     return { text: '', words: [], pageTexts: [] };
@@ -116,13 +126,17 @@ async function extract(
 /** Hardening bounds so one huge/slow document can't stall a whole validation run. */
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // matches the 25 MB upload limit
 const EXTRACT_TIMEOUT_MS = 30_000;
-// Scanned PDFs are rasterized + OCR'd page-by-page on one worker — far slower than a
-// single image, so give them a wider budget before the run gives up on the document.
+// Scanned PDFs are rasterized and OCR'd page by page (a few lanes at once, see ocrWorkers in
+// lib/ocr.ts), far slower than a single image, so give them a wider budget before the run
+// gives up on the document.
 // 120s was not enough once sideways ID-card pages started being retried at other
 // rotations: a real 8-page claim bundle measured 111s here, i.e. it would have timed out
 // on any slower machine and produced NOTHING. Validation is a background run, so the cost
 // of a wider budget is only that a pathological document occupies the drainer longer.
 const PDF_EXTRACT_TIMEOUT_MS = 300_000;
+// OCR stops this long before the PDF budget runs out, so it returns the pages it read and
+// names the ones it did not, instead of being cut off with nothing.
+const OCR_DEADLINE_MARGIN_MS = 20_000;
 
 export const metaValidator: Validator = {
   key: 'META',
@@ -175,12 +189,14 @@ export const metaValidator: Validator = {
       }
       const timeoutMs =
         (doc.mimeType ?? '') === 'application/pdf' ? PDF_EXTRACT_TIMEOUT_MS : EXTRACT_TIMEOUT_MS;
-      // The budget counts only this document's own work: time queued for a pdf.js turn behind
-      // the other claim's PDF work is left out (see withActiveTimeout).
+      // Both budgets count only this document's own work: time queued for a pdf.js turn behind
+      // the other claim's PDF work is left out of this one (see withActiveTimeout) and of the
+      // OCR deadline inside it, which TesseractOcrPort.extractPdf reads on the same clock.
       let timedOut = false;
       const empty = (): Awaited<ReturnType<typeof extract>> => ({ text: '', words: [], pageTexts: [] });
+      const deadline = Date.now() + timeoutMs - OCR_DEADLINE_MARGIN_MS;
       const extractedDoc = await withActiveTimeout(
-        () => extract(ctx, doc).catch(empty),
+        () => extract(ctx, doc, deadline).catch(empty),
         timeoutMs,
         () => {
           timedOut = true;
@@ -213,6 +229,20 @@ export const metaValidator: Validator = {
           data: { scannedPages: scanned, totalPages },
         });
       }
+      const unreadPages = extractedDoc.unreadPages ?? [];
+      if (unreadPages.length > 0) {
+        (ctx.unreadPages ??= new Map()).set(doc.id, unreadPages);
+        truncated.push({
+          documentId: doc.id,
+          code: 'META_PAGES_UNREAD',
+          severity: 'WARNING',
+          message:
+            `Pages ${unreadPages.join(', ')} of ${doc.fileName} were not read in time. ` +
+            `They were not spell-checked, not searched for the claim ID, ` +
+            `and do not count towards the required-document check.`,
+          data: { unreadPages },
+        });
+      }
       if (text && text.replace(/\s/g, '').length >= 3) {
         ctx.shared.set(doc.id, text);
         if (words.length > 0) ctx.wordBoxes.set(doc.id, words);
@@ -229,8 +259,9 @@ export const metaValidator: Validator = {
       } else if (timedOut) {
         // A document that ran out of time was never read, which is not the same as a
         // document with no text in it.
-        // ponytail: WARNING only, like META_NO_TEXT; a visible FULL red flag needs FULL to
-        // report a whole unread document, not just pages past the cap.
+        // META is hidden from reviewers, so this stays a WARNING; FULL raises the visible
+        // red flag from ctx.unreadPages.
+        (ctx.unreadPages ??= new Map()).set(doc.id, 'all');
         noText.push({
           documentId: doc.id,
           code: 'META_EXTRACT_TIMEOUT',
