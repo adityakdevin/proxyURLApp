@@ -59,6 +59,7 @@ describe('metaValidator', () => {
       const codes = ((await run).findings ?? []).map((f) => f.code);
       expect(codes).toContain('META_EXTRACT_TIMEOUT');
       expect(codes).not.toContain('META_NO_TEXT');
+      expect(c.unreadPages?.get('d1')).toBe('all');
     } finally {
       jest.useRealTimers();
     }
@@ -99,6 +100,7 @@ const META_CHILD = `
 const [, file] = process.argv;
 const { metaValidator } = await import(process.env.TARGET_URL);
 let ocrCalls = 0;
+let onlyPages, deadline;
 const c = {
   claim: { id: 'c', claimId: 'C1', subCategoryId: 's' },
   documents: [{ id: 'd1', fileName: 'f.pdf', storagePath: file, readablePath: file,
@@ -106,8 +108,16 @@ const c = {
   prisma: {},
   ocr: {
     extractImageText: async () => '',
-    extractPdf: async () => {
+    extractPdf: async (_path, only, opts) => {
       ocrCalls++;
+      onlyPages = only;
+      deadline = opts?.deadline;
+      if (process.env.NO_FIRST_LOOK) {
+        return { text: '', words: [], pages: [], totalPages: 2, unreadPages: [2] };
+      }
+      if (process.env.UNREAD) {
+        return { text: 'RC page text', words: [], pages: [{ page: 1, text: 'RC page text' }], totalPages: 3, unreadPages: [2, 3] };
+      }
       return { text: 'scanned page text', words: [], pages: [{ page: 1, text: 'scanned page text' }], totalPages: 1 };
     },
   },
@@ -120,17 +130,21 @@ console.log(JSON.stringify({
   text: c.shared.get('d1'),
   words: c.wordBoxes.get('d1')?.length ?? 0,
   pages: out.details?.extracted?.[0]?.properties?.Pages,
+  onlyPages,
+  deadline,
+  unread: c.unreadPages?.get('d1'),
+  findings: (out.findings ?? []).map((f) => ({ code: f.code, severity: f.severity })),
 }));
 `;
 
 const SRC = path.join(__dirname, '..', '..');
 
-function runChild<T>(script: string, target: string, file: string): T {
+function runChild<T>(script: string, target: string, file: string, extraEnv: Record<string, string> = {}): T {
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script, file], {
     cwd: path.join(SRC, '..'),
     encoding: 'utf8',
     timeout: 60_000,
-    env: { ...process.env, TARGET_URL: pathToFileURL(path.join(SRC, target)).href },
+    env: { ...process.env, ...extraEnv, TARGET_URL: pathToFileURL(path.join(SRC, target)).href },
   });
   if (r.status !== 0) throw new Error(`child exited ${r.status}: ${r.stderr}`);
   return JSON.parse(r.stdout.trim().split('\n').pop()!) as T;
@@ -140,6 +154,30 @@ function runChild<T>(script: string, target: string, file: string): T {
 // sent to OCR as well (pdfExtractor's MIXED_PAGE_COVERAGE).
 const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo'];
 const textPdf = () => onePagePdf(`BT /F1 12 Tf 20 180 Td ${WORDS.map((w) => `(${w}) Tj 0 -40 Td`).join(' ')} ET`);
+
+/** Page 1 carries a text layer, page 2 is blank (a scan): the mixed-PDF case. */
+function textThenBlankPdf(): Buffer {
+  const content = `BT /F1 12 Tf 20 180 Td ${WORDS.map((w) => `(${w}) Tj 0 -40 Td`).join(' ')} ET`;
+  const objs = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R 4 0 R]/Count 2>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<</Font<</F1 6 0 R>>>>/Contents 5 0 R>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>',
+    `<</Length ${content.length}>>\nstream\n${content}\nendstream`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+  ];
+  let out = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objs.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  out += offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  out += `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
 
 describe('metaValidator on a real PDF', () => {
   let dir: string;
@@ -153,11 +191,22 @@ describe('metaValidator on a real PDF', () => {
     writeFileSync(file, pdf);
     return file;
   };
-  const runMeta = (name: string, pdf: Buffer) =>
-    runChild<{ status: string; ocrCalls: number; text?: string; words: number; pages?: string }>(
+  const runMeta = (name: string, pdf: Buffer, extraEnv: Record<string, string> = {}) =>
+    runChild<{
+      status: string;
+      ocrCalls: number;
+      text?: string;
+      words: number;
+      pages?: string;
+      onlyPages?: number[];
+      deadline?: number;
+      unread?: number[] | 'all';
+      findings: { code: string; severity?: string }[];
+    }>(
       META_CHILD,
       'validators/metaValidator.ts',
-      write(name, pdf)
+      write(name, pdf),
+      extraEnv
     );
 
   // Value: protects=a PDF with no text layer is OCR'd and its OCR text stored for the checks; fails_when=extractPdf reports text (whitespace, page markers) for a page with no text layer, so a scan skips OCR; why_new=no test fed metaValidator a real PDF; seam=none; no_claim=OCR quality, rasterizing, JBIG2/JPX scans
@@ -174,5 +223,26 @@ describe('metaValidator on a real PDF', () => {
     const r = runMeta('digital.pdf', textPdf());
     expect(r).toMatchObject({ status: 'PASSED', ocrCalls: 0, text: WORDS.join(' '), pages: '1' });
     expect(r.words).toBe(WORDS.length);
+  });
+
+  it('gives OCR a deadline inside the PDF budget and records the pages it could not reach', () => {
+    const before = Date.now();
+    const r = runMeta('unread.pdf', onePagePdf(), { UNREAD: '1' });
+    const after = Date.now();
+    // Fully scanned path passes its textless page list, so the blind page cap does not apply.
+    expect(r.onlyPages).toEqual([1]);
+    expect(r.deadline).toBeGreaterThanOrEqual(before + 300_000 - 20_000);
+    expect(r.deadline).toBeLessThanOrEqual(after + 300_000 - 20_000);
+    expect(r.unread).toEqual([2, 3]);
+    expect(r.findings).toContainEqual({ code: 'META_PAGES_UNREAD', severity: 'WARNING' });
+    expect(r.text).toBe('RC page text');
+  });
+
+  it('flags the scanned pages of a mixed PDF as unread when OCR never got a first look', () => {
+    const r = runMeta('mixed-no-look.pdf', textThenBlankPdf(), { NO_FIRST_LOOK: '1' });
+    expect(r.onlyPages).toEqual([2]);
+    expect(r.unread).toEqual([2]);
+    expect(r.findings).toContainEqual({ code: 'META_PAGES_UNREAD', severity: 'WARNING' });
+    expect(r.text).toBe(WORDS.join(' '));
   });
 });

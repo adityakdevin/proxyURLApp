@@ -34,4 +34,20 @@ describe('compareValidator findings', () => {
     const onDoc = f.documentId === 'd1' ? 0.3 : 0.6;
     expect(f.bbox).toEqual({ x: onDoc, y: 0.5, w: expect.closeTo(0.05, 5), h: expect.closeTo(0.02, 5) });
   });
+  it('fails Data Compare when an old car policy is for another vehicle', async () => {
+    const rc = 'CERTIFICATE GK ReGYTRALON 277\n2. Vehicle Class Motor Cab\n3. Registered Owner ACME\nOwnership Type CMPY\n12. Chassis Number MATBS53007RLH00222';
+    const policy =
+      "CERTIFICATE OF INSURANCE CUM POLICY SCHEDULE\nPolicy No. D000000001\nInsured's Name : MR. RAVI KUMAR\nChassis No.\nNew MEDCHAL MZBGBSI4LTNI0444 G4FLTV300001 1497";
+    const outcome = await compareValidator.run({
+      claim: { id: 'c1', claimId: 'MZBGD81AUTN000111', subCategoryId: 's1' },
+      documents: [doc('d1'), doc('d2')],
+      prisma: {} as never,
+      ocr: {} as never,
+      shared: new Map([['d1', rc], ['d2', policy]]),
+      pageTexts: new Map([['d1', [rc]], ['d2', [policy]]]),
+      wordBoxes: new Map(),
+    });
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.findings!.some((f) => f.code === 'CROSS_OLD_CAR_CHASSIS_MISMATCH')).toBe(true);
+  });
 });

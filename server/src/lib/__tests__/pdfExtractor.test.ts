@@ -3,7 +3,7 @@ import fs from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { mulTransform, oneDocumentAtATime, pdfjsAssetDir, runToWords, withActiveTimeout } from '../pdfExtractor.js';
+import { mulTransform, oneDocumentAtATime, pdfjsAssetDir, queuedMs, runToWords, withActiveTimeout } from '../pdfExtractor.js';
 
 describe('pdfExtractor coordinate math', () => {
   it('mulTransform matches affine matrix composition', () => {
@@ -258,6 +258,25 @@ describe('withActiveTimeout', () => {
     await jest.advanceTimersByTimeAsync(500);
     release();
     await expect(result).resolves.toBe('read');
+  });
+
+  it('tells the timed work how long it has queued, so OCR can stop on the same clock', async () => {
+    expect(queuedMs()).toBe(0);
+    const release = holdQueue();
+    let seen = -1;
+    const result = withActiveTimeout(
+      async () => {
+        const read = await quickRead();
+        seen = queuedMs();
+        return read;
+      },
+      50,
+      () => 'timed out'
+    );
+    await jest.advanceTimersByTimeAsync(500);
+    release();
+    await expect(result).resolves.toBe('read');
+    expect(seen).toBe(500);
   });
 
   it('still times out work that is slow on its own', async () => {

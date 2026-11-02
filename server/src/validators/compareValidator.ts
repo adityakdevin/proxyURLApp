@@ -1,7 +1,7 @@
 import { Validator, FindingInput } from './types.js';
 import { segment } from './segment.js';
 import { locate } from './redFlagValidator.js';
-import { crossDocFieldFindings, dmsNameFindings, invoiceRcNameResult } from './crossDocLogic.js';
+import { crossDocFieldFindings, dmsNameFindings, invoiceRcNameResult, oldCarPaperFindings } from './crossDocLogic.js';
 
 /**
  * Data Compare — the client sheet's "Data Compare" tab: a value that disagrees BETWEEN the
@@ -35,6 +35,7 @@ export const compareValidator: Validator = {
       ...dmsNameFindings(ctx.claim.customerName, pages),
       ...crossDocFieldFindings(pages, ctx.claim.claimId).filter((f) => !(rcDiff && isInvoiceRcName(f))),
       ...rcResult,
+      ...oldCarPaperFindings(pages, ctx.claim.claimId),
     ];
     // Box the value each finding names, so its row zooms to it on the document the way Red
     // Flags and Duplicate rows do. Null (page-jump only) when the page has no word

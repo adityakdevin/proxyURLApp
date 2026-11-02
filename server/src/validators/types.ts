@@ -34,7 +34,8 @@ export interface OcrPort {
    */
   extractPdf?(
     absolutePath: string,
-    onlyPages?: number[]
+    onlyPages?: number[],
+    opts?: { deadline?: number }
   ): Promise<{
     text: string;
     words: WordBox[];
@@ -45,6 +46,8 @@ export interface OcrPort {
     pages?: { page: number; text: string }[];
     /** Pages in the source PDF, so the caller can report a scan the page cap truncated. */
     totalPages?: number;
+    /** 1-based pages whose first look did not finish before the deadline. */
+    unreadPages?: number[];
   }>;
   /** Release any underlying resources (e.g. a reused OCR worker). Optional. */
   close?(): Promise<void>;
@@ -79,6 +82,9 @@ export interface ValidatorContext {
   /** documentId → pages read vs pages in the file, for a PDF the page cap cut short (META
    *  fills; FULL reports it, since META itself is hidden from reviewers). */
   truncatedPages?: Map<string, { scanned: number; total: number }>;
+  /** documentId to 1-based pages OCR did not finish reading before its deadline, or 'all' when the
+   *  whole document timed out unread (META fills; FULL reports it as a red flag). */
+  unreadPages?: Map<string, number[] | 'all'>;
 }
 
 /**

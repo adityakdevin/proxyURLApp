@@ -60,6 +60,12 @@ const queueWait = new AsyncLocalStorage<QueueWait>();
 /** Longest delay setTimeout honours; Node fires a longer one after 1 ms. */
 export const MAX_TIMER_MS = 2 ** 31 - 1;
 
+/** Queue time of the innermost withActiveTimeout around the caller (0 outside one), so work
+ *  inside it can keep a deadline on the same clock as that timeout. */
+export function queuedMs(): number {
+  return queueWait.getStore()?.ms() ?? 0;
+}
+
 /**
  * Run `fn`, settling with `onTimeout()` (or its throw) once `fn` has used `ms` of its own
  * time. Time spent waiting for a pdf.js turn does not count. The work itself is not

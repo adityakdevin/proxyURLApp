@@ -131,6 +131,24 @@ describe('FULL + INTRA validators', () => {
     expect(out.status).toBe('FAILED');
   });
 
+  it('raises a red flag naming the pages OCR could not reach in time', async () => {
+    const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
+    const docs = [
+      doc({ id: 'd1', fileName: 'f.pdf', documentTypeId: typeAId }),
+      doc({ id: 'd2', fileName: 'g.pdf', documentTypeId: typeBId }),
+    ];
+    const out = await fullValidator.run({
+      ...ctxFor(prisma, claim, docs, new Map()),
+      unreadPages: new Map<string, number[] | 'all'>([['d1', [15, 17]], ['d2', 'all']]),
+    });
+    const unread = out.findings!.filter((x) => x.code === 'FULL_PAGES_UNREAD');
+    expect(out.status).toBe('FAILED');
+    expect(unread.map((x) => [x.severity, x.message])).toEqual([
+      ['ERROR', 'Pages 15, 17 of f.pdf could not be read in time, so no check covered them. Please check them visually.'],
+      ['ERROR', 'No page of g.pdf could be read in time, so no check covered it. Please check it visually.'],
+    ]);
+  });
+
   it('Missing Docs no longer carries the cross-document comparison', async () => {
     const claim = { id: 'c', claimId: 'CLM1', subCategoryId };
     const docs = [doc({ id: 'd1', documentTypeId: typeAId }), doc({ id: 'd2', documentTypeId: typeBId })];

@@ -142,7 +142,21 @@ export const fullValidator: Validator = {
       });
       outcome.status = 'FAILED';
     }
-    if (ctx.truncatedPages?.size) outcome.summary = `${outcome.summary} Some pages were not read — see findings.`;
+    for (const [documentId, pages] of ctx.unreadPages ?? []) {
+      const fileName = ctx.documents.find((d) => d.id === documentId)?.fileName ?? 'A document';
+      outcome.findings.push({
+        documentId,
+        code: 'FULL_PAGES_UNREAD',
+        severity: 'ERROR',
+        message:
+          pages === 'all'
+            ? `No page of ${fileName} could be read in time, so no check covered it. Please check it visually.`
+            : `Pages ${pages.join(', ')} of ${fileName} could not be read in time, so no check covered them. Please check them visually.`,
+        data: { unreadPages: pages },
+      });
+      outcome.status = 'FAILED';
+    }
+    if (ctx.truncatedPages?.size || ctx.unreadPages?.size) outcome.summary = `${outcome.summary} Some pages were not read — see findings.`;
 
     return outcome;
   },
