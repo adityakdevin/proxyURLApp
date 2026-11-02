@@ -34,7 +34,7 @@ const TX = { timeout: 30_000, maxWait: 15_000 };
 const MAX_DUP_REQUEUE = 20;
 import { resolveScanRoot } from '../lib/directoryReader.js';
 import { TesseractOcrPort } from '../lib/ocr.js';
-import { withActiveTimeout } from '../lib/pdfExtractor.js';
+import { MAX_TIMER_MS, withActiveTimeout } from '../lib/pdfExtractor.js';
 
 /** One shared duplicate value as both sides' DUP findings record it: field plus the same
  *  255-character norm the index matches on — the untruncated form could differ for two long
@@ -54,7 +54,9 @@ const dupKey = (field: unknown, value: unknown) =>
  */
 function checkTimeoutMs(): number {
   const raw = Number(process.env.VALIDATION_CHECK_TIMEOUT_MS ?? 600_000);
-  return Number.isFinite(raw) && raw > 0 ? raw : 600_000;
+  // withActiveTimeout also caps each timer it arms; this keeps the configured value itself in
+  // the range Node's setTimeout honours, so the timeout message reports what actually applies.
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, MAX_TIMER_MS) : 600_000;
 }
 
 /**

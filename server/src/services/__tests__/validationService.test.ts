@@ -219,6 +219,39 @@ describe('ValidationService + drainer', () => {
     }
   });
 
+  it('never arms a check timer past the 32-bit limit', async () => {
+    // Node fires a setTimeout over 2^31-1 ms after 1 ms, so the timeout's re-check would spin,
+    // logging a TimeoutOverflowWarning per tick, for as long as the check ran.
+    const prev = process.env.VALIDATION_CHECK_TIMEOUT_MS;
+    process.env.VALIDATION_CHECK_TIMEOUT_MS = '3000000000';
+    const spy = jest.spyOn(global, 'setTimeout');
+    try {
+      const claim = await makeClaim('C-BIGTIMEOUT');
+      await prisma.document.create({
+        data: {
+          claimId: claim.id,
+          source: 'UPLOADED',
+          fileName: 'doc.pdf',
+          storagePath: `/tmp/${SUF}-C-BIGTIMEOUT.pdf`,
+          createdBy: adminId,
+        },
+      });
+      const run = await prisma.validationRun.create({
+        data: { claimId: claim.id, trigger: 'MANUAL', status: 'QUEUED' },
+      });
+
+      expect(await new ValidationService(prisma, fakes).runOne(run.id)).toBe(true);
+
+      const delays = spy.mock.calls.map((c) => Number(c[1] ?? 0));
+      expect(delays.length).toBeGreaterThan(0);
+      expect(Math.max(...delays)).toBeLessThanOrEqual(2 ** 31 - 1);
+    } finally {
+      spy.mockRestore();
+      if (prev === undefined) delete process.env.VALIDATION_CHECK_TIMEOUT_MS;
+      else process.env.VALIDATION_CHECK_TIMEOUT_MS = prev;
+    }
+  });
+
   it('runs only the ticked checks, and the rest report not-run rather than passing', async () => {
     const ran: string[] = [];
     const mk = (key: Validator['key'], column: Validator['column']): Validator => ({

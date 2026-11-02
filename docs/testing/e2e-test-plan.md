@@ -148,10 +148,17 @@ e2e/
 - ✅ zero-doc claim → `POST /validate` (202) → poll → run `COMPLETED`, all 5 columns `DOCS_NOT_AVAILABLE`
 - ⏭️ (E2E_HEAVY) upload PNG → 201 + listed → delete → 200; drain settles
 - `GET /claims/:id/documents/:docId/content` answers 404 `FILE_NOT_FOUND` JSON, with no
-  `Content-Disposition`, for a file that stats but cannot be read
+  `Content-Disposition` or `ETag` and `Cache-Control: no-store`, for a path that stats but
+  cannot be read (a directory)
+- a file that stats but cannot be opened (mode 000; skipped on Windows and as root) gets a
+  500 `FILE_READ_FAILED` JSON sized to its own body, with no `ETag` and `no-store`
+- a failed `If-Match` keeps send's 412 (`FILE_READ_FAILED`), with no `ETag` and `no-store`
+- a SCANNED document with a relative path and `CLAIMS_SCAN_ROOT` unset answers 404
+  `FILE_NOT_FOUND`, not a 500
 - an empty file is served as a 200 with `Content-Length: 0`
 - a PDF under a dot-segment path is served as a 200 with its bytes, `application/pdf`,
-  `inline; filename=...`, and no `Accept-Ranges`, `Cache-Control` or `Last-Modified`
+  `inline; filename=...`, `Cache-Control: private, no-cache`, an `ETag`, and no
+  `Accept-Ranges` or `Last-Modified`
 - a client abort mid-download closes the server's file stream
 
 ### API — observations (`observations.e2e.test.ts`)

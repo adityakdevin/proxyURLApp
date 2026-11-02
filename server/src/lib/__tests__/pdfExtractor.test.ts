@@ -266,6 +266,38 @@ describe('withActiveTimeout', () => {
     await expect(result).resolves.toBe('timed out');
   });
 
+  it('times out on schedule when the wall clock steps back', async () => {
+    let settled: string | undefined;
+    void withActiveTimeout(() => new Promise<string>(() => {}), 1_000, () => 'timed out').then(
+      (v) => (settled = v)
+    );
+    await jest.advanceTimersByTimeAsync(500);
+    // w32time pulling a fast clock back an hour; the monotonic clock does not move.
+    jest.setSystemTime(Date.now() - 3_600_000);
+    await jest.advanceTimersByTimeAsync(600);
+    expect(settled).toBe('timed out');
+  });
+
+  it('arms no timer past the 32-bit limit, and still times out on schedule', async () => {
+    const spy = jest.spyOn(global, 'setTimeout');
+    const maxDelay = () => Math.max(...spy.mock.calls.map((c) => Number(c[1] ?? 0)));
+    try {
+      let settled: string | undefined;
+      void withActiveTimeout(() => new Promise<string>(() => {}), 3_000_000_000, () => 'timed out').then(
+        (v) => (settled = v)
+      );
+      // Node, like the fake clock, fires an oversized delay after 1 ms, and check() would spin.
+      expect(maxDelay()).toBeLessThanOrEqual(2 ** 31 - 1);
+      await jest.advanceTimersByTimeAsync(2 ** 31 - 1);
+      expect(settled).toBeUndefined();
+      await jest.advanceTimersByTimeAsync(3_000_000_000 - (2 ** 31 - 1));
+      expect(settled).toBe('timed out');
+      expect(maxDelay()).toBeLessThanOrEqual(2 ** 31 - 1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('rejects with what onTimeout throws', async () => {
     const result = withActiveTimeout(() => new Promise<string>(() => {}), 50, () => {
       throw new Error('META timed out after 0s');

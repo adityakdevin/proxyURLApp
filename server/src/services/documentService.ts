@@ -139,6 +139,9 @@ export class DocumentService {
         absolutePath = remapped;
       }
     }
+    // A relative storagePath, or a Windows one on a non-Windows host, is not a file we can
+    // name; res.sendFile would throw a TypeError for it and the route would answer 500.
+    if (!path.isAbsolute(absolutePath)) return null;
     return {
       absolutePath,
       fileName: doc.fileName,

@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fsSync from 'fs';
+import { STATUS_CODES } from 'http';
 import path from 'path';
 import { param } from 'express-validator';
 import { ClaimService } from '../services/claimService.js';
@@ -175,6 +176,8 @@ router.get(
         'Content-Disposition',
         `${isInline(resolved.mimeType) ? 'inline' : 'attachment'}; filename="${encodeURIComponent(resolved.fileName)}"`
       );
+      // Revalidate on every view: a scan can be replaced in place on the share.
+      res.setHeader('Cache-Control', 'private, no-cache');
       // send (under sendFile) stats the file, streams only the stat's length (a scan still being
       // written can grow after the stat), and closes the file when the client hangs up, which
       // stepping through claims in the viewer does constantly.
@@ -184,17 +187,33 @@ router.get(
         // No ranges or cache lifetime. Express sets the ETag from the app's 'etag' setting
         // (a per-call etag option is ignored), so a revisit may revalidate to a 304.
         { dotfiles: 'allow', acceptRanges: false, cacheControl: false, lastModified: false },
-        (e?: NodeJS.ErrnoException) => {
+        (e?: NodeJS.ErrnoException & { status?: number }) => {
           if (!e || e.code === 'ECONNABORTED') return;
           // The file can vanish, or the scan share drop, before or during the read.
           console.warn(
             `[documents] ${doc.id} read failed for ${JSON.stringify(resolved.absolutePath)}: ${JSON.stringify(e.message)}`
           );
           if (res.headersSent) return res.destroy(e);
-          // res.json keeps a Content-Type already set, so the file's own would label the JSON.
-          res.removeHeader('Content-Type');
+          // Drop the file's headers. send sets the ETag and Content-Length from the stat before it
+          // opens the file; a kept ETag let the browser cache this error and revalidate it to a
+          // 304 once the file was readable again.
           res.removeHeader('Content-Disposition');
-          res.status(404).json({ error: 'File not found', code: 'FILE_NOT_FOUND' });
+          res.removeHeader('ETag');
+          res.setHeader('Cache-Control', 'no-store');
+          // send gives a missing file 404, a failed precondition 412 and any other read error
+          // (a sharing lock, an ACL) 500; a directory arrives with no status.
+          const status = e.status ?? 404;
+          const body =
+            status === 404
+              ? { error: 'File not found', code: 'FILE_NOT_FOUND' }
+              : // Not e.message: send's read errors carry the file's path.
+                { error: STATUS_CODES[status] ?? 'Error', code: 'FILE_READ_FAILED' };
+          const json = JSON.stringify(body);
+          // Not res.json: it would give the error an ETag of its own (the app's 'etag' setting).
+          // Sized here, as res.json would: the file's Content-Length would leave the client
+          // waiting for the file's bytes or, for a file shorter than the JSON, desync the socket.
+          res.status(status).type('json').setHeader('Content-Length', Buffer.byteLength(json));
+          res.end(json);
         }
       );
     } catch (err) {
