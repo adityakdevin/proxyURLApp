@@ -421,6 +421,7 @@ export default function DocumentView() {
       >
         <div className="min-h-0 flex-1 rounded-lg border border-gray-200 bg-white p-2 shadow-xs">
           <DocumentViewerPanel
+            key={documentId}
             claimId={id!}
             documentId={documentId!}
             fileName={fileName}
