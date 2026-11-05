@@ -95,17 +95,24 @@ const TOWN_LINE_MAX_WORDS = 5;
 /** Guard against a pathological document flooding the table. */
 const MAX_VALUES_PER_CLAIM = 500;
 
-interface Extracted {
-  field: DupField;
+interface Occurrence {
   value: string;
-  norm: string;
   documentId: string;
   page: number | null;
 }
 
+interface Extracted extends Occurrence {
+  field: DupField;
+  norm: string;
+  /** Other pages printing a card number. Findings only: the index keeps one row per value. */
+  alsoOn: Occurrence[];
+}
+
+const isCardNumber = (f: DupField) => (LAYER_COMPARE_FIELDS as string[]).includes(f);
+
 function extractAll(ctx: ValidatorContext): Extracted[] {
   const out: Extracted[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, Extracted>();
   // Also a document whose main read gave META too little text to store: its second reads can
   // still hold the ID number a small, blurry picture showed only to the crop read.
   const documentIds = new Set([...ctx.shared.keys(), ...(ctx.secondReads?.keys() ?? [])]);
@@ -131,7 +138,7 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
     for (const unit of units) {
       const ids = extractIdentifiers(unit.text);
       for (const { field } of DUP_FIELDS) {
-        if (unit.idsOnly && !(LAYER_COMPARE_FIELDS as string[]).includes(field)) continue;
+        if (unit.idsOnly && !isCardNumber(field)) continue;
         const values = isIdentifier(field)
           ? ids.filter((i) => i.field === field).map((i) => i.value)
           : extractField(field, unit.text);
@@ -153,9 +160,19 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
           const norm = normValue(field, value);
           if (norm.replace(/\s/g, '').length < MIN_NORM_LEN) continue;
           const key = `${field}:${norm}`;
-          if (seen.has(key)) continue; // one row per distinct value per claim
-          seen.add(key);
-          out.push({ field, value, norm, documentId, page: unit.page });
+          const first = seen.get(key);
+          if (first) {
+            // One row per distinct value per claim, but a card number also marks each page
+            // printing it: a PAN read first off the invoice must still show on the PAN card
+            // (client feedback, 2026-11). Only card numbers: a statement repeats its account
+            // number on every page, and a row each would bury the list.
+            const known = [first, ...first.alsoOn].some((o) => o.documentId === documentId && o.page === unit.page);
+            if (isCardNumber(field) && !known) first.alsoOn.push({ value, documentId, page: unit.page });
+            continue;
+          }
+          const item: Extracted = { field, value, norm, documentId, page: unit.page, alsoOn: [] };
+          seen.set(key, item);
+          out.push(item);
           if (out.length >= MAX_VALUES_PER_CLAIM) return out;
         }
       }
@@ -196,6 +213,11 @@ export const dupValidator: Validator = {
     for (const m of mine) byField.set(m.field, [...(byField.get(m.field) ?? []), m]);
 
     const findings: FindingInput[] = [];
+    // After every value's own finding: a run stores only its first findings, and a number
+    // repeated down a long document must not push another value out of them.
+    const repeats: FindingInput[] = [];
+    // Data points, not findings: one number printed on two pages is one duplicate.
+    let shown = 0;
     for (const [field, items] of byField) {
       const hard = DUP_FIELDS.find((f) => f.field === field)!.hard;
       const rows = await ctx.prisma.claimFieldValue.findMany({
@@ -219,30 +241,33 @@ export const dupValidator: Validator = {
       for (const item of items) {
         const claims = others.get(item.norm);
         if (!claims || claims.size === 0) continue;
+        if (hard) shown += 1;
         const list = [...claims].slice(0, 5).join(', ');
-        findings.push({
-          documentId: item.documentId,
-          code: `DUP_${field}`,
-          severity: hard ? 'ERROR' : 'WARNING',
-          message:
-            `${LABEL[field] ?? field} "${item.value}" also appears on claim ` +
-            `${list}${claims.size > 5 ? ` and ${claims.size - 5} more` : ''}.`,
-          page: item.page,
-          // Without a box the findings row cannot zoom to the value. Null when the page has
-          // no word coordinates or the value spans more boxes than locate() will join (a long
-          // address); the row then falls back to jumping to the page.
-          bbox:
-            item.page != null
-              ? locate(ctx.wordBoxes.get(item.documentId) ?? [], item.page, item.value)
-              : null,
-          data: { field, value: item.value, claims: [...claims].slice(0, DUP_CLAIMS_CAP) },
-        });
+        for (const at of [item, ...item.alsoOn]) {
+          (at === item ? findings : repeats).push({
+            documentId: at.documentId,
+            code: `DUP_${field}`,
+            severity: hard ? 'ERROR' : 'WARNING',
+            message:
+              `${LABEL[field] ?? field} "${at.value}" also appears on claim ` +
+              `${list}${claims.size > 5 ? ` and ${claims.size - 5} more` : ''}.`,
+            page: at.page,
+            // Without a box the findings row cannot zoom to the value. Null when the page has
+            // no word coordinates or the value spans more boxes than locate() will join (a long
+            // address); the row then falls back to jumping to the page.
+            bbox:
+              at.page != null
+                ? locate(ctx.wordBoxes.get(at.documentId) ?? [], at.page, at.value)
+                : null,
+            data: { field, value: at.value, claims: [...claims].slice(0, DUP_CLAIMS_CAP) },
+          });
+        }
       }
     }
+    findings.push(...repeats);
 
     // A shared name or birth date is a WARNING, hidden from reviewers: it neither fails the
     // claim nor counts in the summary. Only the hard data points are reported.
-    const shown = findings.filter((f) => f.severity !== 'WARNING').length;
     if (shown === 0) {
       return {
         status: 'PASSED' as const,

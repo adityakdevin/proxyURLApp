@@ -107,6 +107,95 @@ describe('dupValidator findings', () => {
     expect(f.severity).toBe('ERROR');
   });
 
+  describe('a shared number printed on more than one page', () => {
+    const run = (pages: string[], match: string | string[], second: { page: number; text: string; kind: 'IMAGE' | 'UPSCALE' | 'RESCALE' }[] = []) => {
+      const rows: { field: string; page: number | null }[] = [];
+      return dupValidator
+        .run({
+          claim: { id: 'c1', claimId: 'THIS-CLAIM', subCategoryId: 's1' },
+          documents: [],
+          prisma: {
+            claimFieldValue: {
+              deleteMany: async () => ({}),
+              createMany: async ({ data }: { data: typeof rows }) => {
+                rows.push(...data);
+                return {};
+              },
+              findMany: async ({ where }: { where: { norm: { in: string[] } } }) =>
+                [match].flat()
+                  .filter((m) => where.norm.in.includes(m))
+                  .map((norm) => ({ norm, claim: { claimId: 'OTHER-CLAIM' } })),
+            },
+          } as never,
+          ocr: {} as never,
+          shared: new Map([['d1', pages.join('\n')]]),
+          pageTexts: new Map([['d1', pages]]),
+          wordBoxes: new Map(),
+          secondReads: new Map([['d1', second]]),
+        })
+        .then((outcome) => ({ outcome, rows }));
+    };
+    const pagesOf = (outcome: Awaited<ReturnType<typeof run>>['outcome'], code: string) =>
+      outcome.findings!.filter((f) => f.code === code).map((f) => f.page);
+
+    const invoice = 'TAX INVOICE\nCustomer PAN: ABCPE1234F';
+
+    // Client feedback, 2026-11: the shared PAN pointed at the invoice alone, so a reviewer
+    // opening the PAN card saw nothing on it.
+    it('flags a PAN on the card as well as on the invoice', async () => {
+      const { outcome } = await run([invoice, H + 'ABCPE1234F'], 'ABCPE1234F');
+      expect(pagesOf(outcome, 'DUP_PAN')).toEqual([1, 2]);
+    });
+
+    it('flags the card when only a second read found the number there', async () => {
+      const { outcome } = await run(
+        [invoice, H + 'Signature'],
+        'ABCPE1234F',
+        [{ page: 2, text: H + 'ABCPE1234F', kind: 'IMAGE' }],
+      );
+      expect(pagesOf(outcome, 'DUP_PAN')).toEqual([1, 2]);
+    });
+
+    it('flags a page once when both reads found the number on it', async () => {
+      const { outcome } = await run(
+        [H + 'ABCPE1234F'],
+        'ABCPE1234F',
+        [{ page: 1, text: H + 'ABCPE1234F', kind: 'IMAGE' }],
+      );
+      expect(pagesOf(outcome, 'DUP_PAN')).toEqual([1]);
+    });
+
+    it('counts one data point in the summary, however many pages print it', async () => {
+      const { outcome } = await run([invoice, H + 'ABCPE1234F'], 'ABCPE1234F');
+      expect(outcome.summary).toMatch(/^1 duplicate data point/);
+    });
+
+    it('indexes the value once, so a repeat cannot crowd other values out of the lookup', async () => {
+      const { rows } = await run([invoice, H + 'ABCPE1234F'], 'ABCPE1234F');
+      expect(rows.filter((r) => r.field === 'PAN')).toHaveLength(1);
+    });
+
+    // A run stores only its first findings. A number repeated down a long document must not
+    // push another value out: that red flag would vanish, and the partner would never name
+    // it, so it would be re-queued on every run.
+    it('lists every shared value before any repeat page', async () => {
+      const card = H + 'ABCPE1234F';
+      const { outcome } = await run([card, card, 'Account No: 5012 3456 7890'], ['ABCPE1234F', '501234567890']);
+      expect(outcome.findings!.map((f) => `${f.code}@${f.page}`)).toEqual([
+        'DUP_PAN@1',
+        'DUP_ACCOUNT_NO@3',
+        'DUP_PAN@2',
+      ]);
+    });
+
+    // A statement prints its account number on every page: one row each would bury the list.
+    it('keeps one finding for a number a document repeats on every page', async () => {
+      const statement = 'Account No: 5012 3456 7890';
+      const { outcome } = await run([statement, statement, statement], '501234567890');
+      expect(pagesOf(outcome, 'DUP_ACCOUNT_NO')).toEqual([1]);
+    });
+  });
+
   it('takes only ID numbers from a second read', async () => {
     const outcome = await runWithSecond(
       'Statement',
