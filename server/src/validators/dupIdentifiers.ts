@@ -33,6 +33,7 @@ export type IdentifierField =
   | 'PF_NO'
   | 'UAN'
   | 'GPF_NO'
+  | 'KGID_NO'
   | 'PRAN'
   | 'ESI_NO'
   | 'PENSION_NO'
@@ -42,7 +43,7 @@ export type IdentifierField =
 
 export const IDENTIFIER_FIELDS: IdentifierField[] = [
   'POLICY_NO', 'PAN', 'AADHAAR', 'DL_NO', 'PASSPORT_NO', 'VOTER_ID', 'GSTIN', 'UDYAM_NO',
-  'FSSAI_NO', 'PF_NO', 'UAN', 'GPF_NO', 'PRAN', 'ESI_NO', 'PENSION_NO', 'CERT_REG_NO', 'KEY_NO', 'RATION_CARD_NO',
+  'FSSAI_NO', 'PF_NO', 'UAN', 'GPF_NO', 'KGID_NO', 'PRAN', 'ESI_NO', 'PENSION_NO', 'CERT_REG_NO', 'KEY_NO', 'RATION_CARD_NO',
 ];
 
 export const IDENTIFIER_LABEL: Record<IdentifierField, string> = {
@@ -58,6 +59,7 @@ export const IDENTIFIER_LABEL: Record<IdentifierField, string> = {
   PF_NO: 'PF number',
   UAN: 'UAN',
   GPF_NO: 'GPF number',
+  KGID_NO: 'KGID number',
   PRAN: 'PRAN',
   ESI_NO: 'ESI number',
   PENSION_NO: 'Pension number',
@@ -288,8 +290,12 @@ export function extractIdentifiers(text: string): { field: IdentifierField; valu
 
   add('GPF_NO', labelled(text, /\bGPF\s*(?:A\/?c\.?\s*)?(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{3,25})/gi));
 
-  // NPS PRAN is 12 digits.
-  add('PRAN', labelled(text, /\bPRAN\s*(?:No|Number)?\.?\s*[:\-]?\s*(\d{12})\b/gi));
+  // Karnataka government employee id. Its own field, not an employee code: a staff card's
+  // "Employee ID" and a payslip's "KGID No" are different numbers of one person.
+  add('KGID_NO', labelled(text, /\bKGID\s*(?:No|Number)?\.?\s*[:\-]?\s*(\d{4,12})\b/gi));
+
+  // NPS PRAN is 12 digits. Payslips print it as "GPF/PRAN Ac No" (client sheet 2026-11, V1/W1).
+  add('PRAN', labelled(text, /\bPRAN\s*(?:A\/?c\.?\s*)?(?:No|Number)?\.?\s*[:\-]?\s*(\d{12})\b/gi));
 
   // ESI / ESIC insurance number. Must start with a digit: a payslip's empty "ESIC No" field is
   // followed by the next label ("PAN : ...") and must not capture it.
@@ -298,7 +304,8 @@ export function extractIdentifiers(text: string): { field: IdentifierField; valu
   // Pension / PPO (Pension Payment Order) number.
   add(
     'PENSION_NO',
-    labelled(text, /\b(?:pension(?:\s+payment\s+order)?|PPO)\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{5,25})/gi)
+    // "EPS A/cNo." (Employees' Pension Scheme), OCR'd as "EPSA/lcNo." too (client sheet 2026-11, Z1).
+    labelled(text, /\b(?:pension(?:\s+payment\s+order)?|PPO|EPS\s*(?:A\/?[l1]?c\.?\s*)?)\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{5,25})/gi)
   );
 
   // "Registration No" alone is also a vehicle's — only a civil certificate's counts here.
