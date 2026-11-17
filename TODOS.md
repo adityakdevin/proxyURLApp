@@ -262,6 +262,88 @@ Found by: /ship review passes 1-3, 2026-10-16/17.
   A policy page's insurer GSTIN label is not taken as a GST certificate.
 Found by: client sheet 2026-10-31 fixes, review, corpus and QA runs, 2026-11-02.
 
+## Validators — client sheet 2026-11 follow-ups
+
+Item-by-item review: `docs/client-feedback/2026-11-16-client-feedback-review.csv`.
+
+### Decisions the client owes before more code
+**Priority:** P1
+- Rule 13 (M1): no check says "the customer's own KYC must be in the claim". Adding "no KYC page
+  carries the customer name -> red" also fails claims whose KYC scan is unreadable.
+- PAN QR must (A1): a PAN page with no readable QR is an INFO note, not a red flag (pre-2018 PAN
+  cards have no QR, client QA 2026-10 #33).
+- Is a relative's KYC in the bundle a red flag under rule 13 (N2)? Is editable text a red flag (S1)?
+- Duplicacy J rows: cross-claim duplicate, or ID card vs payslip inside one claim?
+- Data Compare C1: the old car policy on p17 is insured to the owner on RC p14, so no name red line
+  shows. Does an old car policy in the RC owner's name need one?
+Found by: client sheet 2026-11 review, 2026-11-16.
+
+### Remove the legacy vehicle-number lookup after re-validation
+**Priority:** P2
+`dupValidator.ts` `legacyNorm` also asks the index for the pre-`canonicalPlate` form, because rows
+written before this change keep it until their claim is re-validated. Once every claim has been
+re-validated on production, drop it. It only matches the same printed form, so an O/0 OCR variant
+of an old row is still missed until then.
+Found by: adversarial review, 2026-11-16.
+
+### Review notes left open (false negatives and edge layouts)
+**Priority:** P3
+- A relative whose name appears only as "Father's Name" on the customer's PAN counts as that
+  relative's KYC (`relationKycFindings` searches every name on the card).
+- The EMP_CODE label `pen` needs a ':' or '|', but an address "Tal. Pen: 402107" still reads the
+  PIN, and "Sales Associate ID: DSE1234" reads a dealer code. EMP_CODE is a hard duplicate field
+  read on every page; reading the new labels only on payslips and staff cards would close both.
+- An old RC in a relative's name with no KYC shows two red lines (Diff Name and relation KYC), and
+  one relation KYC line per page (RC front, RC back, policy) for the same person.
+- The relation KYC check ignores a ration card and a firm-owned old car (no firm PAN): client
+  decision with the father's-name item above.
+- One word against the middle of three needs an exact match, so an OCR slip there mismatches.
+- The Bill-To "No" skip drops a buyer followed by a door number on the same line ("No 12").
+- `canonicalPlate` pads a truncated read ("MH 12 AB 12 34" read as "MH 12 AB 12") into another
+  real plate (MH12AB0012).
+- `checkUdyam` stops at the first well-formed number, so a second, malformed one is not checked.
+- A passport file number with no digit now passes, and on an "Old Passport" page a
+  passport-shaped file number is skipped.
+- A time with minutes 13-39 ("17-35-00") still reads as an impossible date.
+- `cleanPersonName` keeps a trailing "SON" ("RAJESH GUPTA SON OF ..." reads "RAJESH GUPTA SON").
+- With no invoice, the Invoice vs RC line uses the DMS name but is still worded "Invoice vs RC".
+- A date label glued to the next word ("DateofJoining: 32-13-20000") or more than 20 characters
+  before its value is not seen, so that bad date passes; "Date & Time: 17-57-00" still reads the
+  time as an impossible date.
+- An all-letter Udyam number ("UDYAM-MH-AB-CDEFGHI") is skipped like the certificate title.
+- A loose payslip name sharing the customer's first two words passes with any surname (owner's
+  trade-off); an old car paper holder runs on only at the listed column words.
+- A Delhi plate with a letter in its RTO code ("DL 3C AB 1234") is read by no plate reader
+  (pre-existing on main).
+Found by: pre-landing and adversarial review, 2026-11-16.
+
+### Invoice vs old car RC now reads the RC owner, so "Diff Name" fires far more
+**Priority:** P1
+The result used to find a name on few RCs; it now reads "Owner Name", skips the claim's own RC and
+falls back to the DMS name. On the 94 reviewed claims 12 more claims get `CROSS_INVOICE_RC_DIFF_NAME`
+(old car in a relative's name), which is what sheet row L asks for. Watch the reviewer load after
+deploy; junk owner reads ("S Eon", "WID OF") were the false reds found so far.
+Found by: 94-claim local re-run, 2026-11-16.
+
+### Not covered: image checks
+**Priority:** P2
+DL signature box (K1/K2), visible Gemini star (Q1-Q3), physical signature on every doc (P1),
+PAN hologram (AA1) and watermark-over-text all need image analysis.
+Found by: client sheet 2026-11 review, 2026-11-16.
+
+### A junk scanner text layer hides the page from OCR
+**Priority:** P2
+One Red Flags claim (sheet item B1) carries a scanner's OCR layer ("Adobe PSL for Canon") that reads as garbage; META
+trusts a text layer, so the PAN card on it is never read. Re-OCR pages whose layer text is mostly
+non-words.
+Found by: client sheet 2026-11 review, 2026-11-16.
+
+### Plates and second reads
+**Priority:** P3
+Second reads are trusted only for card numbers, so a plate seen only in a picture re-read is not
+indexed (M5), and a lower-case OCR state code ("uK-07-...") is not read (M6).
+Found by: client sheet 2026-11 review, 2026-11-16.
+
 ## Found while shipping PR #119
 
 ### Creating an Admin from the Users screen fails validation

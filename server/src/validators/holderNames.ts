@@ -1,8 +1,9 @@
-import { TEMP_RC_RE, classifyDocType, chassisCandidates, chassisMatch, cleanPersonName, isFullChassis, isLabelValue, extractNames, nameMatches, nameTokens, otherNewCarPolicies, sameVehicle, type CrossPage } from './crossDocLogic.js';
+import { TEMP_RC_RE, classifyDocType, chassisCandidates, chassisMatch, cleanPersonName, isFullChassis, isLabelValue, isNewRegistration, extractNames, nameMatches, nameTokens, otherNewCarPolicies, sameVehicle, type CrossPage } from './crossDocLogic.js';
 import { BILL_TO_RE, CAPS_NAME_RE, billToName, documentFields, nameAboveLine } from './docFields.js';
 import type { FindingInput } from './types.js';
 
-export type Holder = { name: string; type: 'INVOICE' | 'STAFF_ID' | 'PAYSLIP' | 'INSURANCE' };
+// `loose`: read without a separator, so the next column's header may trail the name.
+export type Holder = { name: string; type: 'INVOICE' | 'STAFF_ID' | 'PAYSLIP' | 'INSURANCE'; loose?: true };
 
 const LABEL: Record<Holder['type'], string> = {
   INVOICE: 'invoice',
@@ -24,6 +25,18 @@ const CARD_LABEL_FIRST_RE = /^[^A-Za-z]*(?:designation|desig|department|dept|gra
 const EMPLOYER_LAST_RE = /\b(?:limited|ltd|pvt|private|industries|school|college|university|hospital|bank|corporation|company|department|services|solutions|technologies)[^A-Za-z]*$/i;
 const notAHolderLine = (raw: string) => raw.includes(':') || CARD_LABEL_FIRST_RE.test(raw) || EMPLOYER_LAST_RE.test(raw);
 const STAFF_ANCHOR_RE = /\bemp(?:loyee)?\.?\s*(?:id|code|no)\b|\bstaff\s*(?:id|code|no)\b/i;
+// The capitals after an employee-name label; the label's case is free, the name's is not.
+const PAYSLIP_NAME_RE = /\b(?:[Ee]mp(?:loyee)?|EMP(?:LOYEE)?)\.?\s*(?:[Nn]ame|NAME)\b\s*[:\-]?\s*([A-Z]{2,}(?:[ \t]+[A-Z]{2,})+)/;
+// With no separator the capitals run on into the next column: "RAVI SHARMA DEPT ACCOUNTS".
+const PAYSLIP_COLUMN_WORD = /^(?:DEPT|DEPARTMENT|DESIG|DESIGNATION|PF|UAN|ESI|ESIC|NO|CODE|ID|BRANCH|LOCATION|GRADE|PAN|BANK|DOJ|DOB|MONTH|DAYS|BASIC)$/;
+// An old car paper's holder runs on into the next column the same way: "RAVI SHARMA CONTACT NO".
+const PAPER_COLUMN_WORD = /^(?:CONTACT|MOBILE|PHONE|EMAIL|CLIENT|HYPOTHECATED|HYPOTHECATION|FINANCIER|NOMINEE|ADDRESS|OCCUPATION|GENDER|AGE|DOB|COLOUR|COLOR|FUEL|MAKER|MODEL|CLASS)$/i;
+/** The name before the first column header word in it. */
+const cutAtColumn = (v: string, columnWord: RegExp) => {
+  const w = v.split(/[ \t]+/);
+  const k = w.findIndex((x) => columnWord.test(x));
+  return k < 0 ? v : w.slice(0, k).join(' ');
+};
 
 const twoWords = (v: string | null | undefined): v is string => !!v && v.split(/\s+/).filter((t) => /[A-Za-z]{3,}/.test(t)).length >= 2;
 function insuredHolder(text: string): string | null {
@@ -89,7 +102,10 @@ export function holderName(page: CrossPage, newCarPolicyPages: Set<string>): Hol
     }
     case 'PAYSLIP': {
       const n = extractNames(text)[0];
-      return n ? { name: n, type: 'PAYSLIP' } : null;
+      if (n) return { name: n, type: 'PAYSLIP' };
+      // "Emp Name RAVI SHARMA Location ..." has no separator, which extractNames needs (J1).
+      const m = cleanPersonName(cutAtColumn(PAYSLIP_NAME_RE.exec(text)?.[1] ?? '', PAYSLIP_COLUMN_WORD));
+      return twoWords(m) ? { name: m, type: 'PAYSLIP', loose: true } : null;
     }
     case 'INSURANCE': {
       if (!newCarPolicyPages.has(`${page.documentId}:${page.page}`)) return null;
@@ -136,6 +152,15 @@ const isNameRun = (run: string) => {
   return t.length >= 2 && t.some((x) => x.length >= 3);
 };
 
+/** The first two or more words of `name` match `ref`: a loose payslip name that ran on into an
+ *  unknown header ("RAVI SHARMA PAYABLE DAYS 30"). A different surname after two matching words
+ *  passes too, the owner's accepted trade-off (ship review 2026-11-16, D2). */
+function leadingWordsMatch(ref: string, name: string): boolean {
+  const w = name.split(/\s+/);
+  for (let k = 2; k < w.length; k++) if (nameMatches(ref, w.slice(0, k).join(' '))) return true;
+  return false;
+}
+
 /** Does any line carry a name run that is the customer? Then the document is theirs. */
 function carriesCustomer(ref: string, text: string): boolean {
   return text.split(/\r?\n/).some((line) =>
@@ -164,19 +189,30 @@ export function holderNameFindings(dmsName: string | null | undefined, pages: Cr
   const invoiceRef = dms ? null : invoiceReference(pages, claimVin);
   const ref = dms ?? invoiceRef;
   if (!ref) return [];
-  const policyKeys = new Set(otherNewCarPolicies(pages, claimVin).map(({ page }) => `${page.documentId}:${page.page}`));
-  const rcOwners = pages
-    .filter((p) => classifyDocType(p.text) === 'RC')
-    .map((p) => rcOwnerName(p.text) ?? extractNames(p.text)[0])
-    .filter((o): o is string => !!o);
+  const rcPages = pages.filter((p) => classifyDocType(p.text) === 'RC');
+  const rcIds = rcPages.flatMap((p) => chassisCandidates(p.text));
+  const claim = claimVin.toUpperCase();
+  // A policy whose chassis is on an RC here but is not the claim's car is a family car's.
+  const familyCar = (p: CrossPage) => {
+    const ids = chassisCandidates(p.text);
+    return !ids.some((c) => chassisMatch(c, claim)) && ids.some((c) => rcIds.some((r) => chassisMatch(c, r)));
+  };
+  // The claim's own new-car policy too, not only another car's: its insured must be the customer
+  // (Data Compare row 2; client sheet 2026-11 M1, every paper but the invoice in another name).
+  const policyKeys = new Set([
+    ...otherNewCarPolicies(pages, claimVin).map(({ page }) => `${page.documentId}:${page.page}`),
+    ...pages.filter((p) => classifyDocType(p.text) === 'INSURANCE' && isNewRegistration(p.text)).map((p) => `${p.documentId}:${p.page}`),
+  ]);
+  const rcOwners = rcPages.map((p) => rcOwnerName(p.text) ?? extractNames(p.text)[0]).filter((o): o is string => !!o);
   const out: FindingInput[] = [];
   for (const p of pages) {
     const h = holderName(p, policyKeys);
     // Without a DMS name the invoice is the reference itself.
-    if (!h || (!dms && h.type === 'INVOICE') || nameMatches(ref, h.name)) continue;
-    // A listed policy with no readable full chassis may still be a family car whose RC is here;
-    // the chassis rule stays silent on it, so the holder rule must too when the owner agrees.
-    if (h.type === 'INSURANCE' && !chassisCandidates(p.text).some(isFullChassis) && rcOwners.some((o) => nameMatches(o, h.name))) continue;
+    if (!h || (!dms && h.type === 'INVOICE') || nameMatches(ref, h.name) || (h.loose && leadingWordsMatch(ref, h.name))) continue;
+    // A family car's policy (its chassis on an RC here, or no readable full chassis) insured to
+    // that RC's owner is theirs, not the customer's. Insured to someone else, it still flags
+    // (client sheet 2026-11 C1: an old car policy whose name does not match its RC).
+    if (h.type === 'INSURANCE' && (familyCar(p) || !chassisCandidates(p.text).some(isFullChassis)) && rcOwners.some((o) => nameMatches(o, h.name))) continue;
     // The layout readers cannot tell a designation from a name. If the customer's own name is
     // on their staff ID or payslip, the card is theirs and whatever else we read is not the holder.
     if ((h.type === 'STAFF_ID' || h.type === 'PAYSLIP') && carriesCustomer(ref, p.text)) continue;
@@ -192,14 +228,14 @@ export function holderNameFindings(dmsName: string | null | undefined, pages: Cr
   return out;
 }
 
-/** ERROR CROSS_OLD_CAR_NAME_MISMATCH: old RC owner vs insured on the old policy with the same chassis (Rule #3). */
-export function oldCarNameFindings(pages: CrossPage[], claimVin: string): FindingInput[] {
+/** The RC and policy pages that are not this claim's car: the old (or a family) car's papers. */
+function oldCarPapers(pages: CrossPage[], claimVin: string) {
   // Without a full claim VIN the claim's own papers cannot be told from the old car's.
   const claim = claimVin.toUpperCase();
   if (!isFullChassis(claim)) return [];
   const skip = new Set(otherNewCarPolicies(pages, claimVin).map(({ page }) => `${page.documentId}:${page.page}`));
   // chassisMatch, not sameVehicle: an OCR-split own VIN is partial and must still count as the claim's car.
-  const old = pages
+  return pages
     .map((p) => ({ p, ids: chassisCandidates(p.text), type: classifyDocType(p.text) }))
     .filter(({ p, ids, type }) => {
       if (ids.some((c) => chassisMatch(c, claim))) return false;
@@ -207,6 +243,54 @@ export function oldCarNameFindings(pages: CrossPage[], claimVin: string): Findin
       if (type === 'RC') return !TEMP_RC_RE.test(p.text);
       return type === 'INSURANCE' && !skip.has(`${p.documentId}:${p.page}`);
     });
+}
+
+const KYC_CODES = new Set(['PAN', 'AADHAR', 'DL', 'VOTER_ID', 'PASSPORT']);
+/** Each line joined to the next: OCR splits a card's name over two lines ("RAMESH" / "VERMA").
+ *  A possessive goes first: joined to the next line, "Father's Name" read its "s" as an initial. */
+const joinWrapped = (text: string) =>
+  text
+    .replace(/['’]s\b/gi, '')
+    .split(/\r?\n/)
+    .map((l, i, all) => `${l} ${all[i + 1] ?? ''}`)
+    .join('\n');
+
+/**
+ * ERROR CROSS_RELATION_KYC_MISMATCH, Data Compare rows 4-5 (old car policy / RC vs Relation KYC):
+ * an old car paper in the name of someone other than the customer needs that person's KYC in the
+ * claim. These papers are set aside from the customer-name check, so nothing compared them before
+ * (client sheet 2026-11, D1/E1). Silent without KYC pages or a two-word holder name.
+ */
+export function relationKycFindings(dmsName: string | null | undefined, pages: CrossPage[], claimVin: string): FindingInput[] {
+  const kyc = pages.filter((p) => p.govtCode && KYC_CODES.has(p.govtCode));
+  const ref = dmsName?.trim() || invoiceReference(pages, claimVin);
+  if (!kyc.length || !ref) return [];
+  const out: FindingInput[] = [];
+  for (const { p, ids, type } of oldCarPapers(pages, claimVin)) {
+    // A policy with no chassis is not shown to be a car's: a health policy names its insured too.
+    if (type === 'INSURANCE' && !ids.length) continue;
+    const read = type === 'RC' ? (rcOwnerName(p.text) ?? extractNames(p.text)[0]) : insuredHolder(p.text);
+    // Cut at a known column word, never by a looser name match: in a surname-first name the
+    // father's "SHINDE SURESH VITTHAL" shares two words with "SHINDE RAHUL SURESH".
+    const holder = read && cutAtColumn(read, PAPER_COLUMN_WORD);
+    if (!twoWords(holder) || nameMatches(ref, holder)) continue;
+    if (kyc.some((k) => carriesCustomer(holder, k.text) || carriesCustomer(holder, joinWrapped(k.text)))) continue;
+    const paper = type === 'RC' ? 'RC' : 'policy';
+    out.push({
+      documentId: p.documentId,
+      code: 'CROSS_RELATION_KYC_MISMATCH',
+      severity: 'ERROR',
+      message: `The old car ${paper} on page ${p.page} is in the name of "${holder}", who is not the customer "${ref}", and no KYC in this claim carries that name.`,
+      page: p.page,
+      data: { actual: holder, expected: ref, actualType: type, expectedType: 'KYC' },
+    });
+  }
+  return out;
+}
+
+/** ERROR CROSS_OLD_CAR_NAME_MISMATCH: old RC owner vs insured on the old policy with the same chassis (Rule #3). */
+export function oldCarNameFindings(pages: CrossPage[], claimVin: string): FindingInput[] {
+  const old = oldCarPapers(pages, claimVin);
   const out: FindingInput[] = [];
   for (const pol of old.filter((x) => x.type === 'INSURANCE')) {
     const rc = old.find((x) => x.type === 'RC' && x.ids.some((a) => pol.ids.some((b) => sameVehicle(a, b))));

@@ -54,12 +54,15 @@ export interface CrossPage {
 // STRICT margin over the runner-up, else the page is UNKNOWN (spec: unclassifiable).
 const TYPE_MARKERS: Record<DocTypeCode, RegExp[]> = {
   INVOICE: [/\btax\s*invoice\b/i, /\binvoice\s*(?:no|number|date)\b/i, /\bproforma\b/i, /\bex[-\s]?showroom\b/i, /\binvoice\s+value\b/i],
-  // Owner fields catch an OCR-mangled RC title (client sheet 2026-10-31 row 24).
-  RC: [/\bcertificate\s+of\s+registration\b/i, /\bregistration\s+certificate\b/i, /\bregn?\.?\s*(?:no|number)\b/i, /\bregistering\s+authority\b/i, /\bregistered\s+ow/i, /\bownership\s+type\b/i],
+  // Owner fields catch an OCR-mangled RC title (client sheet 2026-10-31 row 24). "Regn. Validity"
+  // and "Owner Serial" break the tie with a variant named "PREMIUM" (sheet 2026-11, E1).
+  RC: [/\bcertificate\s+of\s+registration\b/i, /\bregistration\s+certificate\b/i, /\bregn?\.?\s*(?:no|number)\b/i, /\bregistering\s+authority\b/i, /\bregistered\s+ow/i, /\bownership\s+type\b/i, /\bregn\.?\s*validity\b/i, /\bowner\s+serial\b/i],
   INSURANCE: [/\bpolicy\s*(?:no|number)\b/i, /\binsured\b/i, /\bpremium\b/i, /\bsum\s+insured\b/i, /\bperiod\s+of\s+insurance\b/i, /(^|[^a-z])idv([^a-z]|$)/i],
   KYC: [/\bknow\s+your\s+customer\b/i, /(^|[^a-z])kyc([^a-z]|$)/i, /\bself[-\s]?attested\b/i],
   PAYSLIP: [/\bpay\s*slip\b/i, /\bsalary\s*slip\b/i, /\bnet\s+pay\b/i, /\bgross\s+(?:salary|pay)\b/i, /\bbasic\s+pay\b/i, /\bearnings\b/i],
-  STAFF_ID: [/\bemployee\s+id\b/i, /\bstaff\s+id\b/i, /\bidentity\s+card\b/i, /\bemp(?:loyee)?\s*code\b/i],
+  // "Staff No." alone marks a staff card whose other words OCR lost (client sheet 2026-11, I1); a
+  // voter's "Elector Photo Identity Card" is no staff ID (N2), an "Employee Photo Identity Card" is.
+  STAFF_ID: [/\bemployee\s+id\b/i, /\bstaff\s+(?:id|no)\b/i, /(?<!elector'?s?\s+photo\s+)\bidentity\s+card\b/i, /\bemp(?:loyee)?\.?\s*(?:code|no)\b/i],
   DMS: [/(^|[^a-z])dms([^a-z]|$)/i, /\bdealer\s+management\b/i],
 };
 
@@ -69,7 +72,12 @@ export function classifyDocType(text: string): DocTypeCode | null {
     .sort((a, b) => b.score - a.score);
   const top = scores[0];
   if (!top || top.score === 0) return null;
-  if (scores[1] && scores[1].score === top.score) return null; // tie → unclassifiable
+  if (scores[1] && scores[1].score === top.score) {
+    // A payslip prints the employee number a staff card is marked by: "Employee No" must not
+    // cancel a payslip's title.
+    const tied = scores.filter((s) => s.score === top.score).map((s) => s.code);
+    return tied.length === 2 && tied.includes('PAYSLIP') && tied.includes('STAFF_ID') ? 'PAYSLIP' : null; // tie → unclassifiable
+  }
   return top.code;
 }
 
@@ -153,6 +161,15 @@ export function nameMatches(a: string, b: string): boolean {
     // A clipped last letter on the surname only: "Son" for "Soni" (#23). One letter, at the
     // end, 3+ kept. On a given name it would make "Kumar" and "Kumari" one person.
     (surnames && Math.min(x.length, y.length) >= 3 && Math.abs(x.length - y.length) === 1 && (x.startsWith(y) || y.startsWith(x)));
+  // One word against the middle of three: the middle of an Indian name is usually the father's
+  // given name, so "RAMESHKUMAR" (the father, on the old RC) is not "SURESH RAMESH GUPTA" (L1).
+  // Only an exact middle word counts, for a surname-first name ("KUNAL" in "SHAH KUNAL NITINBHAI").
+  if (sa.length === 1 && sb.length >= 3) return sb.some((u, idx) => (idx === 0 || idx === sb.length - 1 ? aligns(sa[0], u, idx > 0) : u === sa[0]));
+  // A name cut short by the field it was printed in: "ORBIT GLOBAL SE" on an RC. Three words at
+  // least, a prefix of the whole name, a word lost to the cut, and only one or two letters of the
+  // clipped word kept, so "MOHAN LAL" is still not "MOHAN LALIT SHARMA" and "RAVI KUMAR DAS" is not
+  // "RAVI KUMAR DASGUPTA" or "RAVI KUMAR DASGUPTA SINGH".
+  if (sa.length >= 3 && sb.length > sa.length && sa[sa.length - 1].length <= 2 && sb.join(' ').startsWith(sa.join(' '))) return true;
   for (const [ti, t] of sa.entries()) {
     const i = sb.findIndex((u, idx) => !used[idx] && aligns(t, u, ti === sa.length - 1 && idx === sb.length - 1));
     if (i < 0) return false;
@@ -409,10 +426,19 @@ export function cleanPersonName(raw: string): string | null {
   const last = words[words.length - 1];
   if (words.length > 1 && last.length <= 2 && last !== last.toUpperCase()) v = words.slice(0, -1).join(' ');
   if (!v || !/^[A-Z]/.test(v) || /\b(?:the|to|for|of|and|with|subject|from)\b/.test(v)) return null;
+  // A capitalised one in the first two words is a label: an RC's "S/W/D OF" read as "WID OF"
+  // became the owner (client sheet 2026-11). Later it ends the name: "RAJESH GUPTA PLACE OF
+  // SUPPLY" on a GST invoice, "RAJESH GUPTA SON OF RAM GUPTA" on an RC.
+  // The words before the cut still veto: "STEEL AUTHORITY OF INDIA LIMITED" is a company.
   const tokens = v.toLowerCase().split(/[\s.]+/).filter(Boolean);
-  // A name has at least one word of 3+ letters: "Ch" is an OCR fragment of the RC's "Chassis",
-  // and it produced a false Invoice vs RC "Diff Name" on MZBEP812TSN.
-  if (!tokens.some((t) => /^[a-z]{3,}$/.test(t))) return null;
+  const pw = v.split(/\s+/);
+  const at = pw.findIndex((x) => /^(?:the|to|for|of|and|with|subject|from)$/i.test(x));
+  if (at === 0 || at === 1) return null;
+  if (at > 1) v = pw.slice(0, at).join(' ');
+  // A name has at least one capitalised word of 3+ letters: "Ch" is an OCR fragment of the RC's
+  // "Chassis" (a false Invoice vs RC "Diff Name" on MZBEP812TSN), and "A pay" is OCR debris after
+  // a PAN card's "Name" label (client sheet 2026-11, K1).
+  if (!/(?:^|[\s.])[A-Z][A-Za-z]{2,}(?![A-Za-z])/.test(v)) return null;
   if (tokens.some((t) => NOT_A_PERSON_WORD.has(t))) return null;
   return v;
 }
@@ -450,7 +476,8 @@ export function extractRelationNames(text: string): string[] {
 // customer's name is what made every such claim report a bogus name mismatch.
 const NON_PERSON_NAME_LABEL = new Set([
   'bank', 'company', 'firm', 'dealer', 'dealership', 'branch', 'nominee',
-  'product', 'scheme', 'plan', 'trade', 'showroom', 'brand', 'make', 'model', 'group',
+  // 'mode': an RC's "Model Name" as OCR prints it ("Mode Name: S Eon").
+  'product', 'scheme', 'plan', 'trade', 'showroom', 'brand', 'make', 'model', 'mode', 'group',
   // "Partner Name" on a policy is the insurer's sales intermediary.
   'partner',
   'broker', 'agent', 'intermediary', 'surveyor', 'workshop', 'garage', 'financier',
@@ -551,6 +578,9 @@ export function extractNames(text: string): string[] {
     if (name) out.push(name);
   }
   for (const m of text.matchAll(BILL_TO_LOOSE)) {
+    // A value followed by "No" on its own line is the next label: "Bill To IRN No.: ..." read "IRN"
+    // as the customer. A door number on the next line ("No. 12 MG Road") is not.
+    if (/^[ \t]*No\b/i.test(text.slice((m.index ?? 0) + m[0].length))) continue;
     const name = cleanPersonName(m[1].trim());
     if (name) out.push(name);
   }
@@ -574,6 +604,54 @@ const STATE_CODES = new Set(
 /** Any dash OCR or a word processor may print (en/em dash, minus, figure dash) → '-'. */
 export const normDashes = (s: string) => s.replace(/[\u2010-\u2015\u2212]/g, '-');
 
+/** A plate as one string: state, 2-digit RTO code, series, 4-digit number. OCR reads the RTO
+ *  code's 0 as O ("JH O1XY 4321", "JHo01Xy 4321"): both are JH01XY4321. Null when not a plate. */
+export function canonicalPlate(v: string): string | null {
+  // Only O folds: series letters never use O, but L and I are real series letters, and folding them
+  // turned MH02LA1234 and MH21A1234 into one plate.
+  // Series letters required: without them the RTO/number split is a guess, and padding merged
+  // MH1234, MH12304 and MH123004 into one plate (false duplicates).
+  const m = /^([A-Z]{2})([0-9O]{1,3})([A-Z]{1,3})(\d{1,4})$/.exec(v.toUpperCase().replace(/[\s.\-]/g, ''));
+  if (!m || !STATE_CODES.has(m[1])) return null;
+  const rto = Number(m[2].replace(/O/g, '0'));
+  return `${m[1]}${String(rto).padStart(2, '0')}${m[3]}${m[4].padStart(4, '0')}`;
+}
+
+/** Plates on an RC or policy page whether labelled or not: a table prints "Regn. Number" in a
+ *  header row and the plate under it (client sheet 2026-11, L5). Series letters are required, so
+ *  a PIN ("GJ 364001") is not read as one. For the duplicate index only. */
+export function platesOnPage(text: string): string[] {
+  const type = classifyDocType(text);
+  if (type !== 'RC' && type !== 'INSURANCE') return [];
+  const t = normDashes(text);
+  // Not \b at the end: OCR glues the next column's word on ("JH O1XY 4321Unladen Weight", L1),
+  // but a lone trailing letter is a longer id ("Policy No: MH12AB3456A").
+  return [...t.matchAll(/\b([A-Z]{2})[ .\-]{0,2}[0-9Oo]{1,3}[ .\-]{0,2}([A-Za-z]{1,3})[ .\-]{0,2}(\d{4})(?!\d)(?![A-Za-z](?![a-z]))/g)]
+    .filter((m) => STATE_CODES.has(m[1]))
+    // Series letters never use O ("AS 12 OF 2023"), and policy terms and units are no series:
+    // "OD 1 YR 2024", "HP 88 BHP 1197"; a time or date one ("TN 5 PM 2024") only with a year.
+    .filter((m) => !/o/i.test(m[2]) && !TERM_SERIES_RE.test(m[2]))
+    // A policy period "OD 01-Apr-2024" has the shape of a plate.
+    .filter((m) => !((MONTH_RE.test(m[2]) || DATE_SERIES_RE.test(m[2])) && /^(?:19|20)/.test(m[3])))
+    .filter((m) => {
+      const start = m.index ?? 0;
+      const end = start + m[0].length;
+      // Part of a longer id ("3001/MH12AB3456/2026", "OG-MH12AB3456-00") is no plate; a label's
+      // ":-" before it is fine.
+      if (/(?:[A-Za-z0-9][\/\-]|\/)$/.test(t.slice(Math.max(0, start - 2), start)) || /^[\/\-][A-Za-z0-9]/.test(t.slice(end, end + 2))) return false;
+      // An id after its label, on the same line or alone under it ("Policy No:\nMH12AB3456").
+      const lineStart = t.lastIndexOf('\n', start - 1) + 1;
+      const before = t.slice(lineStart, start);
+      const lineAbove = lineStart > 0 ? t.slice(t.lastIndexOf('\n', lineStart - 2) + 1, lineStart - 1) : '';
+      return !ID_LABEL_BEFORE_RE.test(before) && !(before.trim() === '' && ID_LABEL_BEFORE_RE.test(lineAbove));
+    })
+    .map((m) => m[0]);
+}
+const MONTH_RE = /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i;
+const TERM_SERIES_RE = /^(?:yrs?|bhp|kw|cc)$/i;
+const DATE_SERIES_RE = /^(?:am|pm|mm|dd|yy)$/i;
+const ID_LABEL_BEFORE_RE = /(?:policy|certificate|cert|proposal|receipt|cover\s*note|invoice|engine|chassis)\s*(?:no|number)?\.?\s*[:\-#]?\s*$/i;
+
 export function extractVehicleNos(text: string): string[] {
   // A new-car invoice has no registration yet ("NEW"/"APPLIED FOR") — treat as absent.
   return allMatches(normDashes(text), VEHICLE_RE).filter((v) => {
@@ -596,7 +674,12 @@ const FIELD_RE: Partial<Record<CrossField, RegExp>> = {
   ENGINE: /engine\s*(?:no|number)?\.?\s*[:\-\n]\s*([A-Z0-9]{5,20})/gi,
   MODEL: /(?:model|variant|make\s*(?:&|and)?\s*model)\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .\-]{1,40})/gi,
   // `\.?` after the noise word: "Employee No. : E1234" read nothing (client QA 2026-10, #16).
-  EMP_CODE: /(?:emp(?:loyee)?\.?\s*(?:code|id|no|number)|staff\s*(?:id|code|no))\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/]{1,20})/gi,
+  // The rest are the client's Duplicacy sheet labels (2026-11, J/K rows): "EmplID 5012345",
+  // "UNIQUE ID No: 123456789", "PEN: 612345", "Associate No 2612345", "Personnel No. 13012345",
+  // and a table's "Employee ID | 11012345". PEN needs its ':' or '|': the town Pen's PIN
+  // ("PEN-402107") on an address is no employee code.
+  EMP_CODE:
+    /(?:emp(?:l|loyee)?\.?\s*(?:code|id|no|number)|staff\s*(?:id|code|no)|unique\s*id\s*no|\bpen(?:\s*no)?\.?\s*(?=[:|])|associate\s*(?:id|no)|personnel\s*no)\.?\s*[:\-|]?\s*([A-Z0-9][A-Z0-9\-/]{1,20})/gi,
   // Runs to the end of the line: the character class excludes newlines, so a following
   // field on the next line cannot be swallowed into the address.
   ADDRESS:
@@ -857,6 +940,10 @@ export function crossDocFieldFindings(pages: CrossPage[], claimVin?: string): Fi
           if (holder && !customers.some((c) => nameMatches(c, holder))) vals.splice(i, 1);
         }
       }
+    }
+    // A page settled by one value agreeing with another document drops its other values: a
+    // relation card's second name, or a payslip's "PEN" beside its "Employee ID".
+    if (check.field.startsWith('RELATION_') || check.field === 'EMP_CODE') {
       const pageOf = (v: Val) => `${v.documentId}:${v.page}`;
       const agrees = (v: Val) => vals.some((o) => pageOf(o) !== pageOf(v) && check.match(o.value, v.value));
       const settled = new Set(vals.filter(agrees).map(pageOf));
@@ -981,16 +1068,31 @@ export function dmsNameFindings(dmsName: string | null | undefined, pages: Cross
     }));
 }
 
+/** The claim's own (or temporary) RC page: a temporary registration, or the claim's chassis. */
+export function isOwnRcPage(p: CrossPage, claimVin = ''): boolean {
+  const claim = claimVin.toUpperCase();
+  return TEMP_RC_RE.test(p.text) || (isFullChassis(claim) && chassisCandidates(p.text).some((c) => chassisMatch(c, claim)));
+}
+
 /**
  * Data Compare, Invoice vs Old car RC: "If details are different with both documents - Red
  * Flag — Same Name / Diff Name". Diff Name IS the red flag for this pair (compareValidator
  * drops the claim-wide name check's line for it, so it is not reported twice); Same Name is
  * a note stating the result.
  */
-export function invoiceRcNameResult(pages: CrossPage[]): FindingInput[] {
-  const inv = namesOn(pages, 'INVOICE')[0];
-  const rc = namesOn(pages, 'RC')[0];
-  if (!inv || !rc) return [];
+export function invoiceRcNameResult(
+  pages: CrossPage[],
+  opts: { claimVin?: string; dmsName?: string | null; ownerOf?: (text: string) => string | null } = {}
+): FindingInput[] {
+  const dms = opts.dmsName?.trim();
+  const inv = namesOn(pages, 'INVOICE')[0] ?? (dms ? { value: dms, documentId: '', page: null } : undefined);
+  // The OLD car's RC: never this claim's own (or temporary) RC, and its owner as the RC labels
+  // it. Both were missed when a bundle held the new and the old RC (client sheet 2026-11, K1/L1).
+  const rc = pages
+    .filter((p) => pageType(p) === 'RC' && !isOwnRcPage(p, opts.claimVin))
+    .map((p) => ({ value: opts.ownerOf?.(p.text) ?? extractField('NAME', p.text)[0], documentId: p.documentId, page: p.page }))
+    .find((r) => r.value);
+  if (!inv || !rc?.value) return [];
   const same = nameMatches(inv.value, rc.value);
   return [
     {

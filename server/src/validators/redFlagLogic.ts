@@ -323,14 +323,29 @@ export function checkDl(text: string, page: number | null = null): RedFlagFindin
 
 // ── Udyam ──────────────────────────────────────────────────────────────────────
 const UDYAM_RE = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
+// Letters allowed in the code groups so a malformed number is still read and rejected; the last
+// group runs to a word boundary so a 20-character number is not cut back to a valid 19. Its
+// digits stop before a glued word: "UDYAM-MH-12-1234567TYPE" is a valid number.
+const UDYAM_CAND_RE = /\bUDYAM[\s-]*([A-Z0-9]{2})[\s-]*([A-Z0-9]{2})[\s-]*(\d{1,12}(?=[A-Z]{2}|[^A-Z0-9]|$)|[A-Z0-9]{1,12}\b)/gi;
 export function checkUdyam(text: string, page: number | null = null): RedFlagFinding[] {
-  // Capture permissively (letters allowed in every group) so a malformed number is
-  // still extracted and then rejected by UDYAM_RE, rather than silently missed.
-  const m = /UDYAM[-\s]?[A-Z0-9]{2}[-\s]?[A-Z0-9]{2}[-\s]?[A-Z0-9]{7}/i.exec(text);
-  if (!m) return [];
-  const cand = m[0].toUpperCase().replace(/[\s]/g, '-').replace(/-+/g, '-');
-  if (UDYAM_RE.test(cand)) return [];
-  return [err('REDFLAG_UDYAM_FORMAT', `Udyam number "${cand}" is not UDYAM-SS-DD-NNNNNNN`, page, { udyam: cand })];
+  const re = new RegExp(UDYAM_CAND_RE);
+  for (let m: RegExpExecArray | null; (m = re.exec(text)); ) {
+    // The certificate's title "UDYAM REGISTRATION ..." is no number (client sheet 2026-11, M1/M2).
+    // Rescan right after its "UDYAM": "Udyam No UDYAM-MH-1A-1234567" read "No UD YAM" first and
+    // would have skipped past the number.
+    if (!/\d/.test(m[2] + m[3])) {
+      re.lastIndex = m.index + 'UDYAM'.length;
+      continue;
+    }
+    // OCR splits a short digit run with a space ("UDYAM-MH-12-123 4567"): join the rest of it
+    // rather than call a partial read malformed.
+    const rest = /^\d{1,7}$/.test(m[3]) && m[3].length < 7 ? /^[ \t]+(\d+)(?![A-Z0-9])/i.exec(text.slice(m.index + m[0].length)) : null;
+    const cand = `UDYAM-${m[1]}-${m[2]}-${m[3]}${rest?.[1] ?? ''}`.toUpperCase();
+    if (UDYAM_RE.test(cand)) return [];
+    const why = cand.length === 19 ? 'is not UDYAM-SS-DD-NNNNNNN' : `is ${cand.length} characters, not 19 (UDYAM-SS-DD-NNNNNNN)`;
+    return [err('REDFLAG_UDYAM_FORMAT', `Udyam number "${cand}" ${why}`, page, { udyam: cand })];
+  }
+  return [];
 }
 
 // ── Passport MRZ (ICAO 9303 TD3, second line) ───────────────────────────────────
@@ -493,7 +508,12 @@ export function checkPassportNumber(text: string, page: number | null = null): R
 
 // ── Passport file number (12-15 alphanumeric) ───────────────────────────────────
 export function checkPassportFileNo(text: string, page: number | null = null): RedFlagFinding[] {
-  const m = /file\s*(?:no|number)\s*[:\-]?\s*([A-Z0-9]{3,20})/i.exec(text);
+  // A passport number after the label is the "Old Passport No." of a bilingual back page, not the
+  // file number (client sheet 2026-11). A file number has a digit; a word is the next label ("Old").
+  const oldPassportPage = /old\s*passport/i.test(text);
+  const m = [...text.matchAll(/file\s*(?:no|number)\.?\s*[:\-]?\s*(?=[A-Z]*\d)([A-Z0-9]{3,20})/gi)].find(
+    (x) => !(oldPassportPage && PASSPORT_NO_RE.test(x[1].toUpperCase())),
+  );
   if (!m) return [];
   const cand = m[1].toUpperCase();
   if (cand.length >= 12 && cand.length <= 15) return [];
@@ -1092,6 +1112,10 @@ function isRealDay(day: number, month: number, year: number): boolean {
   return day <= (month === 2 && isLeap(year) ? 29 : DAYS_IN_MONTH[month - 1]);
 }
 
+// Right before the value, with no other number between: "Invoice Date: 01-04-2024 Invoice No:
+// INV/24-25/20012" labels its first date, not the invoice number.
+const DATE_LABEL_RE = /\b(?:dated?|dt|dob|d\.o\.b|doj|birth|joining)\b[^0-9]{0,20}$/i;
+
 /** Reject calendar-impossible dates (31 in a 30-day month, 29+ Feb in a non-leap year).
  *
  *  Impossible means impossible in BOTH orders. Indian paperwork prints day-first, but system-
@@ -1135,11 +1159,19 @@ export function checkDates(fileText: string, page: number | null = null): RedFla
     seen.add(raw);
     const day = +m[1];
     const month = +m[2];
+    // A date label right before the value ("Joining Date:", "DOB", "Dt.") says it is a date.
+    const lineBefore = fileText.slice(fileText.lastIndexOf('\n', m.index - 1) + 1, m.index);
+    const labelled = DATE_LABEL_RE.test(lineBefore);
     // "19.10.20000" — a five-digit year on a salary slip DOB. With \d{2,4} it never matched
-    // and the date went unchecked (client QA 2026-10). Only a 19xxx/20xxx year on an
-    // otherwise real day counts, so a phone-number run is still not read as a date.
+    // and the date went unchecked (client QA 2026-10). Only a 19xxx/20xxx year counts, on a real
+    // day either way round ("11.12.20000"), or on any day after a date label: "Joining Date:
+    // 32-13-20000" is the client's own bad-date sample (sheet 2026-11). Unlabelled, a reference
+    // number is no date ("Policy No: 20/20/20012", a phone run "+91-20-20012"). A value after a
+    // slash is part of a document number even under a combined label: "Invoice No. & Date :
+    // INV/24-25/20012".
     if (m[3].length === 5) {
-      if (/^(?:19|20)\d{3}$/.test(m[3]) && (isRealDay(day, month, 2000) || isRealDay(month, day, 2000))) {
+      const realDay = isRealDay(day, month, 2000) || isRealDay(month, day, 2000);
+      if (/^(?:19|20)\d{3}$/.test(m[3]) && !lineBefore.endsWith('/') && (labelled || realDay)) {
         out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}" (year has 5 digits)`, page, { date: raw }));
       }
       continue;
@@ -1152,6 +1184,10 @@ export function checkDates(fileText: string, page: number | null = null): RedFla
     // No document in a claim is dated outside this range.
     if (year < 1900 || year > 2100) continue;
     if (isRealDay(day, month, year) || isRealDay(month, day, year)) continue;
+    // With a two-digit year and a part over 39 it is a time ("17-57-00") or OCR junk ("88/80/97"),
+    // not a calendar date (client sheet 2026-11, P1 false reds), unless a label says it is a date
+    // ("DOB: 99/02/24"). "15/13/21" and "32/01/21" still flag.
+    if (m[3].length === 2 && Math.max(day, month) > 39 && !labelled) continue;
     if (month < 1 || month > 12 || day < 1) {
       out.push(err('REDFLAG_BAD_DATE', `Impossible date "${raw}"`, page, { date: raw }));
       continue;

@@ -57,6 +57,8 @@ uploads/
 
 # Sample claim PDFs (6.6 MB of binary/PII source docs — keep local, not in git)
 docs/samples/
+# Client feedback review sheets (they list real client VINs; this repo is public, keep local)
+docs/client-feedback/
 # PM2 logs
 logs/
 

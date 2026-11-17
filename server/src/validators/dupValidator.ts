@@ -1,5 +1,5 @@
 import { Validator, ValidatorContext, FindingInput } from './types.js';
-import { CrossField, extractField } from './crossDocLogic.js';
+import { CrossField, canonicalPlate, extractField, platesOnPage } from './crossDocLogic.js';
 import { locate } from './redFlagValidator.js';
 import {
   extractIdentifiers,
@@ -82,6 +82,7 @@ export function normValue(field: DupField, v: string): string {
       .sort()
       .join(' ');
   }
+  if (field === 'VEHICLE_NO') return canonicalPlate(v) ?? v.toUpperCase().replace(/[^A-Z0-9]/g, '');
   return v.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
@@ -106,9 +107,16 @@ interface Extracted extends Occurrence {
   norm: string;
   /** Other pages printing a card number. Findings only: the index keeps one row per value. */
   alsoOn: Occurrence[];
+  /** Other printed forms of a vehicle number with the same canonical plate ("MH1AB1234"). */
+  spellings: string[];
 }
 
 const isCardNumber = (f: DupField) => (LAYER_COMPARE_FIELDS as string[]).includes(f);
+/** A vehicle number's norms before canonicalPlate, one per printed form, which rows indexed
+ *  earlier still carry.
+ *  shortcut: matches only the same printed forms; drop once every claim is re-validated. */
+const legacyNorms = (m: Extracted) =>
+  m.field === 'VEHICLE_NO' ? [...new Set([m.value, ...m.spellings].map((v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '')))] : [];
 
 function extractAll(ctx: ValidatorContext): Extracted[] {
   const out: Extracted[] = [];
@@ -141,7 +149,9 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
         if (unit.idsOnly && !isCardNumber(field)) continue;
         const values = isIdentifier(field)
           ? ids.filter((i) => i.field === field).map((i) => i.value)
-          : extractField(field, unit.text);
+          : field === 'VEHICLE_NO'
+            ? [...extractField(field, unit.text), ...platesOnPage(unit.text)]
+            : extractField(field, unit.text);
         for (const value of values) {
           // "HANUMANGARH , RAJASTHAN-335512" — a policy's wrapped address tail — is a town, not
           // a home: it "matched" unrelated claims from the same town as a hard duplicate
@@ -168,9 +178,10 @@ function extractAll(ctx: ValidatorContext): Extracted[] {
             // number on every page, and a row each would bury the list.
             const known = [first, ...first.alsoOn].some((o) => o.documentId === documentId && o.page === unit.page);
             if (isCardNumber(field) && !known) first.alsoOn.push({ value, documentId, page: unit.page });
+            if (field === 'VEHICLE_NO') first.spellings.push(value);
             continue;
           }
-          const item: Extracted = { field, value, norm, documentId, page: unit.page, alsoOn: [] };
+          const item: Extracted = { field, value, norm, documentId, page: unit.page, alsoOn: [], spellings: [] };
           seen.set(key, item);
           out.push(item);
           if (out.length >= MAX_VALUES_PER_CLAIM) return out;
@@ -223,7 +234,7 @@ export const dupValidator: Validator = {
       const rows = await ctx.prisma.claimFieldValue.findMany({
         where: {
           field,
-          norm: { in: items.map((i) => i.norm) },
+          norm: { in: [...new Set(items.flatMap((i) => [i.norm, ...legacyNorms(i)]))] },
           claimId: { not: ctx.claim.id },
           // Sub-project scope, and never match against a soft-deleted claim.
           claim: { subCategoryId: ctx.claim.subCategoryId, status: 'ACTIVE' },
@@ -239,8 +250,8 @@ export const dupValidator: Validator = {
         others.set(r.norm, set);
       }
       for (const item of items) {
-        const claims = others.get(item.norm);
-        if (!claims || claims.size === 0) continue;
+        const claims = new Set([item.norm, ...legacyNorms(item)].flatMap((n) => [...(others.get(n) ?? [])]));
+        if (claims.size === 0) continue;
         if (hard) shown += 1;
         const list = [...claims].slice(0, 5).join(', ');
         for (const at of [item, ...item.alsoOn]) {
